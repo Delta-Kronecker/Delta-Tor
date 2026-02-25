@@ -2,9 +2,7 @@
 
 A Windows GUI tool that downloads Tor Expert Bundle, bridge lists, and optionally routes system traffic through Tor via a SOCKS5 proxy.
 
-
-
-https://github.com/user-attachments/assets/9189c81a-f4cd-462a-9475-138e1034f9b6
+![Video_2026_02_26-2 (1)](https://github.com/user-attachments/assets/545802c0-45f9-47a0-bdaa-e965949996fc)
 
 
 ---
