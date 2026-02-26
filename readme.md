@@ -289,7 +289,7 @@ When OFF, Tor falls back to any country if none of the preferred exit countries 
 
 ## 🔥 Experimental Settings
 
-> ⚠ All options in this section are **OFF / 0 by default**. These map directly to `torrc` directives. Incorrect values can break connectivity. Restart Tor after any change.
+>  All options in this section are **OFF / 0 by default**. These map directly to `torrc` directives. Incorrect values can break connectivity. Restart Tor after any change.
 
 ---
 
