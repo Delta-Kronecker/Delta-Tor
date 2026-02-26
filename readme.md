@@ -8,22 +8,22 @@ https://github.com/user-attachments/assets/961a0b81-64e4-4dd9-bf49-fe74105d2110
 
 ---
 
-## ✨ Features
+## 🔥 Features
 
-- **🤖 Auto-Connect** — Automatically cycles through up to 9 bridge configurations until a successful connection is established
-- **🌉 Bridge Management** — Fetches and manages obfs4, webtunnel, and vanilla bridges from the [Delta-Kronecker Tor-Bridges-Collector](https://github.com/Delta-Kronecker/Tor-Bridges-Collector)
-- **📦 Automatic Tor Setup** — Downloads and extracts Tor Expert Bundle on first run with no manual steps
-- **🌐 HTTP Proxy** — Built-in HTTP-to-SOCKS5 proxy works with Chrome, Edge, Telegram, and most Windows apps out of the box
-- **🔒 System Proxy Integration** — Automatically configures Windows system proxy on successful connection
-- **🔄 New Circuit** — Request a fresh Tor circuit (new exit IP) without restarting
-- **🌍 Exit Node Filtering** — Optionally restrict exit nodes to specific countries
-- **💓 Keep-Alive** — Periodic background requests prevent ISP from dropping idle Tor connections
-- **🐕 Watchdog** — Monitors and automatically restarts Tor if it crashes or stalls
-- **⚙️ Full Settings UI** — Configurable timeouts, circuit parameters, DNS-over-Tor, experimental torrc options, and more
+- ** Auto-Connect** — Automatically cycles through up to 9 bridge configurations until a successful connection is established
+- ** Bridge Management** — Fetches and manages obfs4, webtunnel, and vanilla bridges from the [Delta-Kronecker Tor-Bridges-Collector](https://github.com/Delta-Kronecker/Tor-Bridges-Collector)
+- ** Automatic Tor Setup** — Downloads and extracts Tor Expert Bundle on first run with no manual steps
+- ** HTTP Proxy** — Built-in HTTP-to-SOCKS5 proxy works with Chrome, Edge, Telegram, and most Windows apps out of the box
+- ** System Proxy Integration** — Automatically configures Windows system proxy on successful connection
+- ** New Circuit** — Request a fresh Tor circuit (new exit IP) without restarting
+- ** Exit Node Filtering** — Optionally restrict exit nodes to specific countries
+- ** Keep-Alive** — Periodic background requests prevent ISP from dropping idle Tor connections
+- ** Watchdog** — Monitors and automatically restarts Tor if it crashes or stalls
+- **️ Full Settings UI** — Configurable timeouts, circuit parameters, DNS-over-Tor, experimental torrc options, and more
 
 ---
 
-## 🖥️ Requirements
+## 🔥 Requirements
 
 - Windows 10 / 11 (x86_64)
 - **EXE:** no requirements — runs standalone
@@ -31,9 +31,9 @@ https://github.com/user-attachments/assets/961a0b81-64e4-4dd9-bf49-fe74105d2110
 
 ---
 
-## 🚀 Quick Start
+## 🔥 Quick Start
 
-### ⬇️ Recommended: Download the EXE
+###  Recommended: Download the EXE
 
 The easiest way to run Tor Client is to download the pre-built executable directly from the **[Releases](../../releases)** page. No Python, no dependencies, no setup — just download and run.
 
@@ -63,11 +63,11 @@ python Tor-Windows.py
 | Transport | obfs4 |
 | IP Version | IPv4 |
 
-Then click **🤖 Auto Connect**.
+Then click ** Auto Connect**.
 
 ---
 
-## 📦 Tor Expert Bundle
+## 🔥 Tor Expert Bundle
 
 On first run, the application automatically downloads **Tor Expert Bundle v15.0.6** for Windows (x86_64):
 
@@ -81,7 +81,7 @@ https://github.com/Delta-Kronecker/Tor-Expert-Bundle/raw/refs/heads/main/tor-exp
 https://archive.torproject.org/tor-package-archive/torbrowser/15.0.6/tor-expert-bundle-windows-x86_64-15.0.6.tar.gz
 ```
 
-### ✅ Verifying the Bundle
+###  Verifying the Bundle
 
 You can verify the authenticity of `tor-expert-bundle-windows-x86_64-15.0.6.tar.gz` using the official Tor Project signature:
 
@@ -97,11 +97,11 @@ A valid signature will show `Good signature from "Tor Browser Developers"`.
 
 ---
 
-## 🤖 Auto-Connect & Connection Memory
+## 🔥 Auto-Connect & Connection Memory
 
 ### How Auto-Connect Works
 
-Clicking **🤖 Auto Connect** launches a background thread that works in two distinct phases without blocking the UI.
+Clicking ** Auto Connect** launches a background thread that works in two distinct phases without blocking the UI.
 
 **Phase 1 — Connection Memory**
 
@@ -110,8 +110,8 @@ Before trying anything new, the app checks whether a previously successful confi
 ```
 Last session used: Tested & Active / obfs4 / IPv4
 → Try that first (up to timeout seconds)
-  ├─ ✅ Connected → done, no further attempts
-  └─ ❌ Timed out → move to Phase 2
+  ├─  Connected → done, no further attempts
+  └─  Timed out → move to Phase 2
 ```
 
 **Phase 2 — Priority Sequence**
@@ -137,8 +137,8 @@ Fresh bridges are tried first since recently collected bridges are more likely t
 The timeout logic is smarter than a simple countdown. The timer **resets every time the bootstrap percentage changes**. A configuration is only abandoned if the bootstrap percentage stays completely frozen for longer than the configured timeout (default: **180 seconds**).
 
 ```
-Bootstrap at 15% → progress moves to 20% → timer resets ✅
-Bootstrap at 15% → no movement for 180s → "Stuck at 15%" → kill → next config ❌
+Bootstrap at 15% → progress moves to 20% → timer resets 
+Bootstrap at 15% → no movement for 180s → "Stuck at 15%" → kill → next config 
 ```
 
 This means a slow but progressing connection is never cut off prematurely. The app reads Tor's `stdout` line by line in a blocking loop — there is no polling or `sleep()`. Everything is event-driven from Tor's own log output.
@@ -151,7 +151,7 @@ When bootstrap reaches **100%**, the following happen atomically:
 2. Windows system proxy is enabled automatically (if setting is on)
 
 
-## 🌐 Proxy Configuration
+## 🔥 Proxy Configuration
 
 | Protocol | Address |
 |---|---|
@@ -165,7 +165,7 @@ DNS is resolved remotely by Tor — no DNS leaks.
 
 ---
 
-## 🔄 Bridge Update Behavior
+## 🔥 Bridge Update Behavior
 
 **Fresh (72h) bridges are updated automatically every time the app launches.** On startup, all Fresh bridge files are fetched in parallel in the background before any connection attempt — no manual action needed. This ensures the most recently collected bridges are always available.
 
@@ -173,19 +173,19 @@ For all other bridge categories (Tested & Active and Full Archive), updates can 
 
 | Bridge Category | Update Method |
 |---|---|
-| Fresh (72h) | ✅ Automatic on every launch |
-| Tested & Active | 🔘 Manual — "Update All Bridges" button |
-| Full Archive | 🔘 Manual — "Update All Bridges" button |
+| Fresh (72h) |  Automatic on every launch |
+| Tested & Active |  Manual — "Update All Bridges" button |
+| Full Archive |  Manual — "Update All Bridges" button |
 
 ---
 
 
 
-## 🔎 Bridge Categories
+## 🔥 Bridge Categories
 
 | Category | Description |
 |---|---|
-| **Tested & Active** ⭐ | Verified working bridges — best choice |
+| **Tested & Active**  | Verified working bridges — best choice |
 | **Fresh (72h)** | Bridges collected in the last 72 hours |
 | **Full Archive** | Complete historical bridge list |
 | **Default** | Bridges bundled inside Tor itself |
@@ -200,13 +200,13 @@ For all other bridge categories (Tested & Active and Full Archive), updates can 
 
 ---
 
-## ⚙️ Settings
+## 🔥 Settings
 
 Settings are stored in `%LOCALAPPDATA%\TorClient\tor_client_config.json` and are accessible via the **⚙️ Settings** button in the main window. All changes take effect after clicking **Apply & Save**; changes to torrc-level options require restarting Tor.
 
 ---
 
-### 🔄 Auto-Connect
+###  Auto-Connect
 
 **Timeout per config** — `default: 180s` — range: 30–600s
 How many seconds to wait at a frozen bootstrap percentage before giving up on the current bridge group and moving to the next one. This is a stall-based timeout, not a total elapsed time — the timer resets every time the bootstrap percentage moves. Lower values make the auto-connect cycle faster but may abandon slow bridges prematurely.
@@ -216,7 +216,7 @@ Automatically activates the Windows system proxy (`127.0.0.1:19052`) as soon as 
 
 ---
 
-### 🌉 Bridges
+###  Bridges
 
 **Bridges written to torrc** — `default: 100` — range: 5–300
 How many bridge lines are written to the `torrc` file for each connection attempt. With shuffle enabled, a different random subset is selected each time.
@@ -226,14 +226,14 @@ Randomises the order of bridges written to `torrc` each session. This ensures di
 
 ---
 
-### 🔒 Privacy / DNS
+###  Privacy / DNS
 
 **DNS over Tor (DNSPort 9053)** — `default: OFF`
 Opens a local DNS port at `127.0.0.1:9053` that routes all DNS queries through the Tor network. Requires applications to be manually configured to use this DNS port. By default this is unnecessary — the built-in HTTP proxy already handles DNS resolution via Tor for most apps.
 
 ---
 
-### ⚡ Circuit Building
+###  Circuit Building
 
 These three settings are tuned for maximum stability and are written directly to `torrc`.
 
@@ -248,7 +248,7 @@ Number of guard nodes Tor keeps in rotation as entry points. More guards means m
 
 ---
 
-### 💓 Keep-Alive
+###  Keep-Alive
 
 **Keep-Alive enabled** — `default: ON`
 Periodically sends a lightweight request through Tor to prevent idle connections from being dropped by ISPs or middleboxes that time out inactive TCP connections.
@@ -258,7 +258,7 @@ How often the keep-alive request is sent. 120 seconds is well within the timeout
 
 ---
 
-### 🐕 Watchdog
+###  Watchdog
 
 **Watchdog enabled** — `default: ON`
 Runs a background monitor that checks whether the Tor process is still alive. If Tor has crashed or stopped responding, the watchdog automatically restarts it.
@@ -268,7 +268,7 @@ How often the watchdog checks the Tor process. 30 seconds is a good balance betw
 
 ---
 
-### 🌍 Exit Nodes
+###  Exit Nodes
 
 **Enable Exit Nodes filter** — `default: OFF`
 When enabled, restricts which countries Tor may use as exit nodes. Useful when services like YouTube or Instagram block traffic from certain exit node countries.
@@ -281,15 +281,15 @@ When OFF, Tor falls back to any country if none of the preferred exit countries 
 
 ---
 
-### 🗑️ Maintenance
+### ️ Maintenance
 
 **Clear Data Directory** — clears Tor's cached state, consensus documents, and built circuits. Tor will rebuild everything from scratch on next start. Useful when Tor is stuck or behaving abnormally.
 
 ---
 
-## 🧪 Experimental Settings
+## 🔥 Experimental Settings
 
-> ⚠️ All options in this section are **OFF / 0 by default**. These map directly to `torrc` directives. Incorrect values can break connectivity. Restart Tor after any change.
+> ⚠ All options in this section are **OFF / 0 by default**. These map directly to `torrc` directives. Incorrect values can break connectivity. Restart Tor after any change.
 
 ---
 
@@ -375,7 +375,7 @@ Number of circuits Tor builds before its path bias detection algorithm begins ev
 ---
 
 
-## 📁 File Structure
+##🔥  File Structure
 
 ```
 <extract_dir>/
@@ -388,7 +388,7 @@ Number of circuits Tor builds before its path bias detection algorithm begins ev
 
 ---
 
-## 🔗 Related Projects
+## 🔥 Related Projects
 
 - [Delta-Kronecker/Tor-Bridges-Collector](https://github.com/Delta-Kronecker/Tor-Bridges-Collector) — Bridge source used by this app
 - [Delta-Kronecker/Tor-Expert-Bundle](https://github.com/Delta-Kronecker/Tor-Expert-Bundle) — GitHub mirror of Tor Expert Bundle
