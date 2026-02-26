@@ -202,20 +202,175 @@ For all other bridge categories (Tested & Active and Full Archive), updates can 
 
 ## ⚙️ Settings
 
-- Auto-connect timeout per configuration
-- Number of bridges written to `torrc`
-- Bridge shuffling
-- DNS-over-Tor (port 9053)
-- `MaxCircuitDirtiness`, `NewCircuitPeriod`, `NumEntryGuards`
-- Keep-alive interval
-- Watchdog check interval
-- Exit node country filter + StrictNodes
+Settings are stored in `%LOCALAPPDATA%\TorClient\tor_client_config.json` and are accessible via the **⚙️ Settings** button in the main window. All changes take effect after clicking **Apply & Save**; changes to torrc-level options require restarting Tor.
+
+---
+
+### 🔄 Auto-Connect
+
+**Timeout per config** — `default: 180s` — range: 30–600s
+How many seconds to wait at a frozen bootstrap percentage before giving up on the current bridge group and moving to the next one. This is a stall-based timeout, not a total elapsed time — the timer resets every time the bootstrap percentage moves. Lower values make the auto-connect cycle faster but may abandon slow bridges prematurely.
+
+**Auto-enable proxy on connect** — `default: ON`
+Automatically activates the Windows system proxy (`127.0.0.1:19052`) as soon as Tor reaches 100%. Disable this if you want to control the proxy manually.
+
+---
+
+### 🌉 Bridges
+
+**Bridges written to torrc** — `default: 100` — range: 5–300
+How many bridge lines are written to the `torrc` file for each connection attempt. With shuffle enabled, a different random subset is selected each time.
+
+**Shuffle bridge order** — `default: ON`
+Randomises the order of bridges written to `torrc` each session. This ensures different bridges are attempted across restarts, improving the chance of finding a working one.
+
+---
+
+### 🔒 Privacy / DNS
+
+**DNS over Tor (DNSPort 9053)** — `default: OFF`
+Opens a local DNS port at `127.0.0.1:9053` that routes all DNS queries through the Tor network. Requires applications to be manually configured to use this DNS port. By default this is unnecessary — the built-in HTTP proxy already handles DNS resolution via Tor for most apps.
+
+---
+
+### ⚡ Circuit Building
+
+These three settings are tuned for maximum stability and are written directly to `torrc`.
+
+**MaxCircuitDirtiness** — `default: 1800s` — range: 60–7200s
+How long a circuit can be reused for new streams before Tor builds a fresh one. A higher value means circuits live longer, resulting in fewer rebuilds and more stable connections. The Tor default is 600s; this app uses 1800s for better stability.
+
+**NewCircuitPeriod** — `default: 10s` — range: 5–300s
+How frequently Tor pre-builds new circuits in the background so one is always ready. Lower values mean a fresh circuit is available sooner. The Tor default is 30s; this app uses 10s.
+
+**NumEntryGuards** — `default: 15` — range: 1–30
+Number of guard nodes Tor keeps in rotation as entry points. More guards means more fallback options if a guard becomes unreachable. The Tor default is 1; this app uses 15 for resilience in censored environments.
+
+---
+
+### 💓 Keep-Alive
+
+**Keep-Alive enabled** — `default: ON`
+Periodically sends a lightweight request through Tor to prevent idle connections from being dropped by ISPs or middleboxes that time out inactive TCP connections.
+
+**Keep-Alive interval** — `default: 120s` — range: 30–600s
+How often the keep-alive request is sent. 120 seconds is well within the timeout window of most ISPs while avoiding unnecessary bandwidth use.
+
+---
+
+### 🐕 Watchdog
+
+**Watchdog enabled** — `default: ON`
+Runs a background monitor that checks whether the Tor process is still alive. If Tor has crashed or stopped responding, the watchdog automatically restarts it.
+
+**Check interval** — `default: 30s` — range: 10–300s
+How often the watchdog checks the Tor process. 30 seconds is a good balance between responsiveness and overhead.
+
+---
+
+### 🌍 Exit Nodes
+
+**Enable Exit Nodes filter** — `default: OFF`
+When enabled, restricts which countries Tor may use as exit nodes. Useful when services like YouTube or Instagram block traffic from certain exit node countries.
+
+**Countries (torrc format)** — `default: {nl},{de},{fr},{ch},{at},{se},{no},{fi},{is}`
+Comma-separated list of two-letter country codes in torrc format (wrapped in curly braces). The default set covers Netherlands, Germany, France, Switzerland, Austria, Sweden, Norway, Finland, and Iceland — all generally less restricted by Google and Meta.
+
+**StrictNodes** — `default: OFF`
+When OFF, Tor falls back to any country if none of the preferred exit countries are available. When ON, Tor refuses to connect if no circuit through the specified countries can be built. Keep OFF unless a specific country is strictly required.
+
+---
+
+### 🗑️ Maintenance
+
+**Clear Data Directory** — clears Tor's cached state, consensus documents, and built circuits. Tor will rebuild everything from scratch on next start. Useful when Tor is stuck or behaving abnormally.
 
 ---
 
 ## 🧪 Experimental Settings
 
-Advanced torrc options (all `OFF` by default) are available in Settings → Experimental. These map directly to torrc directives. Incorrect values may break connectivity — restart Tor after any change.
+> ⚠️ All options in this section are **OFF / 0 by default**. These map directly to `torrc` directives. Incorrect values can break connectivity. Restart Tor after any change.
+
+---
+
+### ― Connection & Padding
+
+**ConnectionPadding** — `default: OFF`
+Sends dummy traffic between Tor and its guards to make traffic patterns harder to analyse. Increases bandwidth usage noticeably. Enable only if traffic-shape analysis by your ISP is a concern.
+
+**ReducedConnectionPadding** — `default: OFF`
+A lighter version of ConnectionPadding. Provides some resistance to traffic analysis with less bandwidth overhead. Mutually exclusive with ConnectionPadding — enable one or the other, not both.
+
+---
+
+### ― Streams & Timeouts
+
+**CircuitStreamTimeout** — `default: 0 (Tor default)` — range: 0–3600s
+How long an idle stream can be attached to a circuit before it is closed. `0` lets Tor use its internal default. Common value: `60`.
+
+**SocksTimeout** — `default: 0 (Tor default ≈ 120s)` — range: 0–600s
+How long Tor waits for an unanswered SOCKS connection before giving up. `0` lets Tor use its internal default of approximately 120 seconds. Common value: `60`.
+
+---
+
+### ― Stream Isolation
+
+**IsolateDestAddr** — `default: OFF`
+Assigns a separate circuit to each distinct destination IP address. Increases privacy by preventing correlation between connections to different sites, but uses significantly more circuits and memory. Common use: privacy-sensitive multi-tab browsing.
+
+**IsolateDestPort** — `default: OFF`
+Assigns a separate circuit to each distinct destination port. Can be combined with IsolateDestAddr for maximum stream isolation.
+
+---
+
+### ― Security & Disk
+
+**SafeLogging** — `default: OFF`
+Scrubs potentially identifying information (IP addresses, hostnames) from Tor's log output. Recommended if log files might be inspected by a third party.
+
+**AvoidDiskWrites** — `default: OFF`
+Minimises how often Tor writes state to disk. Useful on SSDs to reduce write wear, and adds a small privacy benefit by keeping less on disk.
+
+**HardwareAccel** — `default: OFF`
+Enables CPU hardware AES acceleration for Tor's cryptographic operations. Can improve throughput on CPUs with AES-NI. Most modern CPUs support this; try enabling it if CPU usage is high.
+
+**ClientDNSRejectInternalAddresses** — `default: OFF`
+Rejects DNS responses that resolve to private or internal IP ranges (e.g. 192.168.x.x, 10.x.x.x). Protects against DNS rebinding attacks where a malicious site's DNS resolves to a local network address.
+
+---
+
+### ― Firewall & Network
+
+**FascistFirewall** — `default: OFF`
+Restricts Tor to only connect through ports 80 and 443. Use this if you are behind a corporate or government firewall that blocks all non-web ports. Must be combined with the FirewallPorts setting.
+
+**FirewallPorts** — `default: "80,443"` (only active when FascistFirewall is ON)
+Comma-separated list of allowed outbound ports when FascistFirewall is enabled. Common value: `80,443`.
+
+**ReachableAddresses** — `default: empty (all addresses allowed)`
+Restricts Tor to only connect to IP ranges specified in CIDR notation. Leave empty unless your network blocks outbound connections to specific IP ranges. Common value: `*:80,*:443`.
+
+**NumCPUs** — `default: 0 (auto-detect)`
+Number of CPU threads Tor may use. `0` lets Tor detect the available core count automatically. Set to a specific number only to cap CPU usage.
+
+---
+
+### ― Node Selection
+
+**ExcludeNodes** — `default: empty`
+Countries or specific nodes that Tor should never use in any position in a circuit. Example: `{ru},{cn},{ir}`. Use with caution — excluding too many countries reduces the available node pool.
+
+**ExcludeExitNodes** — `default: empty`
+Same as ExcludeNodes but only applies to the exit position. Useful for blocking specific country exit nodes without affecting guard or middle nodes. Example: `{ru},{cn}`.
+
+**Reject exit ports** — `default: empty`
+Comma-separated list of destination ports Tor should refuse to exit to. Example: `25,587` blocks outbound email ports, which are commonly abused and may get the exit node flagged.
+
+**UseEntryGuardsAsDirGuards** — `default: OFF`
+Reuses entry guard nodes for directory fetches instead of contacting separate directory servers. Reduces the number of distinct Tor nodes your client contacts, improving fingerprinting resistance slightly.
+
+**PathBiasCircThreshold** — `default: 0 (Tor default)`
+Number of circuits Tor builds before its path bias detection algorithm begins evaluating whether certain paths are suspiciously unreliable. `0` uses Tor's internal default. Common value: `20`.
 
 ---
 
