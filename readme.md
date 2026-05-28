@@ -1,3 +1,7 @@
+# ورژن بتای جدید دادم از لینک زیر دانلود کنید و باگ هاش رو بهم توی گروه تلگرام بگید یکی دو روز دیگه ورژن اپدیت جدید رو می زارم
+https://github.com/Delta-Kronecker/Delta-Tor/releases/download/1.1.0/Delta_Tor_1.1.0.zip
+t.me/DeltaSNI
+
 # 🧅 Tor Client — Windows GUI
 
 A desktop application for connecting to the Tor network with bridge support.
