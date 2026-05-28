@@ -1,4 +1,3 @@
-
 import os
 import sys
 import json
@@ -13,6 +12,7 @@ import time
 import subprocess
 import urllib.request
 import winreg
+import webbrowser
 import ctypes
 import ctypes.wintypes
 import select
@@ -20,17 +20,20 @@ from concurrent.futures import ThreadPoolExecutor
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
+# ─────────────────────────────────────────────
+#  PORTS & CONFIGS
+# ─────────────────────────────────────────────
 TOR_SOCKS_PORT  = 9050
 TOR_CTRL_PORT   = 9051
 HTTP_PROXY_PORT = 19052
 
 AUTO_SEQUENCE = [
-    ("Fresh (72h)",     "obfs4",     "IPv4"),
-    ("Fresh (72h)",     "vanilla",   "IPv4"),
-    ("Fresh (72h)",     "webtunnel", "IPv4"),
     ("Tested & Active", "obfs4",     "IPv4"),
     ("Tested & Active", "vanilla",   "IPv4"),
     ("Tested & Active", "webtunnel", "IPv4"),
+    ("Fresh (72h)",     "obfs4",     "IPv4"),
+    ("Fresh (72h)",     "vanilla",   "IPv4"),
+    ("Fresh (72h)",     "webtunnel", "IPv4"),
     ("Full Archive",    "obfs4",     "IPv4"),
     ("Full Archive",    "vanilla",   "IPv4"),
     ("Full Archive",    "webtunnel", "IPv4"),
@@ -51,7 +54,11 @@ DEFAULT_CFG = {
     "exit_nodes_enabled":   False,
     "exit_nodes_countries": "{nl},{de},{fr},{ch},{at},{se},{no},{fi},{is}",
     "strict_exit_nodes":    False,
-    "auto_proxy_on_connect": True,
+    "auto_proxy_on_connect": False,
+    "sni_enabled":           False,
+    "sni_host":              "www.google.com",
+    "custom_bridges":        "",
+    "use_custom_bridges":    False,
     "exp_connection_padding":             False,
     "exp_reduced_connection_padding":     False,
     "exp_circuit_stream_timeout":         0,
@@ -73,26 +80,65 @@ DEFAULT_CFG = {
     "exp_no_exit_stream_ports":           "",
 }
 
+# ─────────────────────────────────────────────
+#  COLOUR PALETTE (Original Tor Dark Palette)
+# ─────────────────────────────────────────────
 C = {
-    "BG":   "#1E1E2E",
-    "DRK":  "#181825",
-    "FG":   "#CDD6F4",
-    "ACC":  "#89B4FA",
-    "BTN":  "#313244",
-    "BTN2": "#45475A",
-    "GRN":  "#A6E3A1",
-    "RED":  "#F38BA8",
-    "YLW":  "#F9E2AF",
-    "BLK":  "#11111B",
-    "ORG":  "#FAB387",
-    "PRP":  "#CBA6F7",
+    "BG":    "#1A1D24",   # dark background
+    "PANEL": "#22262F",   # panel bg
+    "CARD":  "#272B35",   # inner card bg
+    "BORDER":"#333848",   # borders
+    "FG":    "#E8ECF4",   # primary text
+    "FG2":   "#8A93A8",   # secondary text
+    "ACC":   "#7D4CDB",   # Tor purple accent
+    "ACC2":  "#9B6EF5",   # lighter purple
+    "GRN":   "#3FCF8E",   # success green
+    "RED":   "#F04E4E",   # error red
+    "YLW":   "#F0B429",   # warning yellow
+    "ORG":   "#F07540",   # orange
+    "CYAN":  "#4EC9F0",   # info cyan
+    "BTN":   "#2B3040",   # button bg
+    "BTN2":  "#363D58",   # button hover
+    "SEL":   "#2D1F5E",   # selected / active
+    "BLK":   "#1A1D24",   # log background
+    "PRP":   "#B99EFF",   # light purple
 }
 
 
+# ─────────────────────────────────────────────
+#  UTILITIES
+# ─────────────────────────────────────────────
 def resource_path(filename):
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, filename)
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
+
+def verify_file_sha256(filepath, expected_hash=None):
+    """Verify SHA-256 checksum of a file."""
+    import hashlib
+    sha256_hash = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    computed_hash = sha256_hash.hexdigest()
+    if expected_hash:
+        return computed_hash.lower() == expected_hash.lower()
+    return computed_hash
+
+
+def set_window_icon(window):
+    """تنظیم آیکون برای هر پنجره به صورت کاملاً پایدار در محیط اسکریپت و EXE"""
+    try:
+        ico = resource_path("icon.ico")
+        if os.path.exists(ico):
+            window.iconbitmap(ico)
+    except Exception:
+        try:
+            img = tk.PhotoImage(file=resource_path("icon.ico"))
+            window.iconphoto(True, img)
+        except Exception:
+            pass
 
 
 def _bootstrap_config_path():
@@ -152,9 +198,9 @@ def apply_dark_titlebar(widget):
         dwm = ctypes.windll.dwmapi
         one = ctypes.c_int(1)
         dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(one), ctypes.sizeof(one))
-        cap = ctypes.c_int(0x2E1E1E)
+        cap = ctypes.c_int(0x100C0A)
         dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
-        txt = ctypes.c_int(0xF4D6CD)
+        txt = ctypes.c_int(0xF4ECE8)
         dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
     except Exception:
         pass
@@ -178,6 +224,20 @@ def _load_tray_icon():
         return 0
 
 
+# ─────────────────────────────────────────────
+#  NETWORK  (SOCKS5 / HTTP proxy)
+# ─────────────────────────────────────────────
+def recv_exact(sock, n):
+    """Receive exactly n bytes from socket."""
+    data = b""
+    while len(data) < n:
+        chunk = sock.recv(n - len(data))
+        if not chunk:
+            raise ConnectionError("Socket closed unexpectedly")
+        data += chunk
+    return data
+
+
 def socks5_request(host, port, path,
                    proxy_host="127.0.0.1", proxy_port=TOR_SOCKS_PORT,
                    use_ssl=True, timeout=20):
@@ -185,11 +245,11 @@ def socks5_request(host, port, path,
     s.settimeout(timeout)
     s.connect((proxy_host, proxy_port))
     s.sendall(b'\x05\x01\x00')
-    if s.recv(2)[1] != 0x00:
+    if recv_exact(s, 2)[1] != 0x00:  # Fixed: recv_exact instead of recv(2)
         raise ConnectionError("SOCKS5 handshake failed")
     hb = host.encode()
     s.sendall(b'\x05\x01\x00\x03' + bytes([len(hb)]) + hb + port.to_bytes(2, 'big'))
-    r = s.recv(10)
+    r = recv_exact(s, 10)  # Fixed: recv_exact instead of recv(10)
     if r[1] != 0x00:
         raise ConnectionError(f"SOCKS5 connect error {r[1]}")
     if use_ssl:
@@ -197,13 +257,16 @@ def socks5_request(host, port, path,
         s = ctx.wrap_socket(s, server_hostname=host)
     s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\n"
                f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode())
-    data = b""
+    # Use BytesIO instead of data += chunk for O(n) instead of O(n²)
+    import io
+    buf = io.BytesIO()
     while True:
         chunk = s.recv(4096)
         if not chunk:
             break
-        data += chunk
+        buf.write(chunk)
     s.close()
+    data = buf.getvalue()
     sep = data.find(b"\r\n\r\n")
     return (data[sep + 4:] if sep != -1 else data).decode(errors="replace")
 
@@ -214,11 +277,11 @@ def _http_proxy_relay(client_sock, socks_host, socks_port, host, port, initial_d
         tor.settimeout(30)
         tor.connect((socks_host, socks_port))
         tor.sendall(b'\x05\x01\x00')
-        if tor.recv(2)[1] != 0x00:
+        if recv_exact(tor, 2)[1] != 0x00:  # Fixed: recv_exact
             client_sock.close(); tor.close(); return
         host_b = host.encode()
         tor.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) + host_b + port.to_bytes(2, 'big'))
-        resp = tor.recv(10)
+        resp = recv_exact(tor, 10)  # Fixed: recv_exact
         if resp[1] != 0x00:
             client_sock.close(); tor.close(); return
         if initial_data:
@@ -227,7 +290,8 @@ def _http_proxy_relay(client_sock, socks_host, socks_port, host, port, initial_d
         client_sock.settimeout(None)
         while True:
             try:
-                r, _, _ = select.select([client_sock, tor], [], [], 120)
+                # Reduced from 120s to 30s for unstable networks
+                r, _, _ = select.select([client_sock, tor], [], [], 30)
             except Exception:
                 break
             if not r:
@@ -257,11 +321,14 @@ def _http_proxy_handle(client_sock, socks_host, socks_port):
     try:
         client_sock.settimeout(15)
         buf = b""
+        MAX_HEADER_SIZE = 65536  # Fixed: limit buffer to 64KB
         while b"\r\n\r\n" not in buf:
             chunk = client_sock.recv(4096)
             if not chunk:
                 client_sock.close(); return
             buf += chunk
+            if len(buf) > MAX_HEADER_SIZE:  # Close if header too large
+                client_sock.close(); return
         header_end = buf.index(b"\r\n\r\n")
         headers_raw = buf[:header_end].decode(errors="replace")
         body = buf[header_end + 4:]
@@ -323,6 +390,9 @@ def run_http_proxy_server(stop_event, socks_host="127.0.0.1", socks_port=TOR_SOC
     srv.close()
 
 
+# ─────────────────────────────────────────────
+#  WINDOWS NOTIFICATION
+# ─────────────────────────────────────────────
 def _win_notify(title: str, msg: str, hwnd: int = 0):
     try:
         NIM_ADD    = 0x00000000
@@ -367,6 +437,48 @@ def _win_notify(title: str, msg: str, hwnd: int = 0):
         pass
 
 
+# ─────────────────────────────────────────────
+#  BRIDGE DATA
+# ─────────────────────────────────────────────
+BRIDGE_DATA = [
+    ("Tested & Active", "obfs4",     "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_tested.txt"),
+    ("Tested & Active", "webtunnel", "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_tested.txt"),
+    ("Tested & Active", "vanilla",   "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_tested.txt"),
+    ("Fresh (72h)",     "obfs4",     "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_72h.txt"),
+    ("Fresh (72h)",     "obfs4",     "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_ipv6_72h.txt"),
+    ("Fresh (72h)",     "webtunnel", "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_72h.txt"),
+    ("Fresh (72h)",     "webtunnel", "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_ipv6_72h.txt"),
+    ("Fresh (72h)",     "vanilla",   "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_72h.txt"),
+    ("Fresh (72h)",     "vanilla",   "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_ipv6_72h.txt"),
+    ("Full Archive",    "obfs4",     "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4.txt"),
+    ("Full Archive",    "obfs4",     "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_ipv6.txt"),
+    ("Full Archive",    "webtunnel", "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel.txt"),
+    ("Full Archive",    "webtunnel", "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_ipv6.txt"),
+    ("Full Archive",    "vanilla",   "IPv4",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla.txt"),
+    ("Full Archive",    "vanilla",   "IPv6",
+     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_ipv6.txt"),
+]
+
+FRESH_DATA = [(c, t, v, u) for c, t, v, u in BRIDGE_DATA if c == "Fresh (72h)"]
+
+
+# ─────────────────────────────────────────────
+#  FIRST-RUN SETUP DIALOG
+# ─────────────────────────────────────────────
 class FolderSetupDialog:
     DEFAULT = os.path.join(
         os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
@@ -376,42 +488,47 @@ class FolderSetupDialog:
         self.result = None
         w = tk.Toplevel(parent)
         w.title("First-Time Setup")
-        w.geometry("620x290")
+        w.geometry("640x300")
         w.configure(bg=C["BG"])
         w.resizable(False, False)
         w.grab_set()
         w.update()
         apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
 
-        tk.Label(w, text="📁  Choose Tor Installation Folder",
+        # Header bar
+        hdr = tk.Frame(w, bg=C["ACC"], height=4)
+        hdr.pack(fill='x')
+
+        tk.Label(w, text="⬡  Choose Installation Folder",
                  font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(18, 4))
         tk.Label(w,
                  text=("Tor Expert Bundle and bridge files will be stored here.\n"
                        "The recommended default (AppData\\Local) is always writable.\n"
                        "Avoid C:\\Program Files or paths with spaces."),
-                 font=('Segoe UI', 9), bg=C["BG"], fg=C["FG"],
+                 font=('Segoe UI', 9), bg=C["BG"], fg=C["FG2"],
                  justify='left', wraplength=560).pack(padx=24, pady=4)
 
         row = tk.Frame(w, bg=C["BG"])
         row.pack(fill='x', padx=24, pady=(10, 4))
         self._pv = tk.StringVar(value=self.DEFAULT)
-        tk.Entry(row, textvariable=self._pv, font=('Segoe UI', 9),
-                 bg=C["BTN"], fg=C["FG"], insertbackground=C["FG"],
-                 relief="flat", bd=6).pack(side='left', fill='x', expand=True)
+        tk.Entry(row, textvariable=self._pv, font=('Consolas', 9),
+                 bg=C["CARD"], fg=C["FG"], insertbackground=C["ACC"],
+                 relief="flat", bd=8).pack(side='left', fill='x', expand=True)
         tk.Button(row, text="Browse…", command=self._browse,
                   bg=C["BTN2"], fg=C["FG"], font=('Segoe UI', 9),
                   relief="flat", cursor="hand2").pack(side='left', padx=(6, 0))
 
-        tk.Button(w, text="Continue →", command=lambda: self._ok(w),
-                  bg=C["ACC"], fg=C["BLK"], font=('Segoe UI', 11, 'bold'),
+        tk.Button(w, text="Continue  →", command=lambda: self._ok(w),
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 11, 'bold'),
                   relief="flat", cursor="hand2",
-                  activebackground="#B4BEFE").pack(pady=(14, 0), padx=80, fill='x')
+                  activebackground=C["ACC2"]).pack(pady=(14, 0), padx=80, fill='x', ipady=6)
         parent.wait_window(w)
 
     def _browse(self):
-        d = filedialog.askdirectory(initialdir=os.path.dirname(self._pv.get()))
+        d = filedialog.askdirectory()
         if d:
-            self._pv.set(os.path.join(d, "tor_custom_client"))
+            self._pv.set(d)
 
     def _ok(self, w):
         p = self._pv.get().strip()
@@ -422,20 +539,399 @@ class FolderSetupDialog:
         w.destroy()
 
 
+# ─────────────────────────────────────────────
+#  CUSTOM BRIDGE MANAGER  (Feature #1 — Mahsa)
+# ─────────────────────────────────────────────
+class CustomBridgeWindow:
+    """
+    Window to add/edit custom bridge lines and run ping tests on each.
+    """
+    def __init__(self, parent, cfg: dict, on_save):
+        self.on_save = on_save
+        self.cfg = cfg
+        w = tk.Toplevel(parent)
+        w.title("Custom Bridges")
+        w.geometry("700x650")
+        w.configure(bg=C["BG"])
+        w.resizable(True, True)
+        w.grab_set()
+        w.update()
+        apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
+
+        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+        tk.Label(w, text="⬡  Custom Bridge Lines",
+                 font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(12, 2))
+        tk.Label(w,
+                 text="Enter one bridge per line.  Format: obfs4 1.2.3.4:1234 FINGERPRINT cert=… iat-mode=0",
+                 font=('Segoe UI', 8), bg=C["BG"], fg=C["FG2"]).pack()
+
+        # Display buttons AT THE TOP (Feature #3)
+        bf = tk.Frame(w, bg=C["BG"])
+        bf.pack(fill='x', padx=20, pady=(10, 6))
+        tk.Button(bf, text="🔍  Ping All Bridges", command=self._ping_all,
+                  bg=C["BTN2"], fg=C["CYAN"], font=('Segoe UI', 9, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["CARD"]).pack(side='left', ipady=4, padx=(0, 6))
+        tk.Button(bf, text="✔  Save", command=self._save,
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["ACC2"]).pack(side='left', ipady=4, padx=(0, 6))
+        tk.Button(bf, text="Cancel", command=w.destroy,
+                  bg=C["BTN"], fg=C["FG2"], font=('Segoe UI', 10),
+                  relief="flat", cursor="hand2").pack(side='left', ipady=4)
+
+        # Toggle packed below buttons
+        top_row = tk.Frame(w, bg=C["BG"])
+        top_row.pack(fill='x', padx=20, pady=(4, 0))
+        self._use_var = tk.BooleanVar(value=cfg.get("use_custom_bridges", False))
+        ttk.Checkbutton(top_row, text="Use custom bridges (overrides category selection)",
+                        variable=self._use_var).pack(side='left')
+
+        # Text area packed below toggle
+        txt_frame = tk.Frame(w, bg=C["BLK"], bd=0)
+        txt_frame.pack(fill='both', expand=True, padx=20, pady=8)
+        self._txt = tk.Text(txt_frame, font=('Consolas', 9),
+                            bg=C["BLK"], fg=C["GRN"], insertbackground=C["ACC"],
+                            wrap='none', relief="flat", padx=10, pady=8)
+        sb = ttk.Scrollbar(txt_frame, command=self._txt.yview)
+        self._txt.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        self._txt.pack(fill='both', expand=True)
+        self._txt.insert('1.0', cfg.get("custom_bridges", ""))
+
+        # Ping results area
+        res_lbl = tk.Label(w, text="Ping Results:", font=('Segoe UI', 9, 'bold'),
+                           bg=C["BG"], fg=C["FG2"])
+        res_lbl.pack(anchor='w', padx=20)
+        res_frame = tk.Frame(w, bg=C["CARD"], height=100)
+        res_frame.pack(fill='x', padx=20, pady=(0, 4))
+        res_frame.pack_propagate(False)
+        self._res_text = tk.Text(res_frame, font=('Consolas', 8),
+                                 bg=C["CARD"], fg=C["FG2"],
+                                 wrap='word', relief="flat", padx=8, pady=6,
+                                 state='disabled')
+        self._res_text.tag_configure("ok",  foreground=C["GRN"])
+        self._res_text.tag_configure("bad", foreground=C["RED"])
+        self._res_text.tag_configure("inf", foreground=C["CYAN"])
+        sb2 = ttk.Scrollbar(res_frame, command=self._res_text.yview)
+        self._res_text.configure(yscrollcommand=sb2.set)
+        sb2.pack(side='right', fill='y')
+        self._res_text.pack(fill='both', expand=True)
+
+        self._win = w
+
+    def _log_res(self, msg, tag="inf"):
+        self._res_text.configure(state='normal')
+        self._res_text.insert(tk.END, msg, tag)
+        self._res_text.see(tk.END)
+        self._res_text.configure(state='disabled')
+
+    def _ping_bridge(self, line):
+        """Extract host:port from a bridge line and TCP-ping it."""
+        line = line.strip()
+        if not line or line.startswith('#'):
+            return
+        m = re.search(r'(\d{1,3}(?:\.\d{1,3}){3}):(\d+)', line)
+        if not m:
+            m = re.search(r'\[([0-9a-fA-F:]+)\]:(\d+)', line)
+            if not m:
+                self._win.after(0, self._log_res, f"  ⚠ Could not parse: {line[:60]}\n", "bad")
+                return
+        host = m.group(1)
+        port = int(m.group(2))
+        t0 = time.time()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(5)
+            s.connect((host, port))
+            s.close()
+            ms = int((time.time() - t0) * 1000)
+            tag = "ok" if ms < 500 else "inf"
+            self._win.after(0, self._log_res,
+                            f"  ✔ {host}:{port}  {ms} ms\n", tag)
+        except Exception as e:
+            self._win.after(0, self._log_res,
+                            f"  ✘ {host}:{port}  {e}\n", "bad")
+
+    def _ping_all(self):
+        lines = self._txt.get("1.0", tk.END).strip().splitlines()
+        valid = [l for l in lines if l.strip() and not l.strip().startswith('#')]
+        if not valid:
+            messagebox.showinfo("No Bridges", "Enter at least one bridge line first.",
+                                parent=self._win)
+            return
+        self._res_text.configure(state='normal')
+        self._res_text.delete('1.0', tk.END)
+        self._res_text.configure(state='disabled')
+        self._log_res(f"Pinging {len(valid)} bridges…\n", "inf")
+
+        def _run():
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                ex.map(self._ping_bridge, valid)
+            self._win.after(0, self._log_res, "Done.\n", "inf")
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _save(self):
+        text = self._txt.get("1.0", tk.END).strip()
+        self.cfg["custom_bridges"]   = text
+        self.cfg["use_custom_bridges"] = self._use_var.get()
+        self.on_save(self.cfg)
+        self._win.destroy()
+
+
+# ─────────────────────────────────────────────
+#  BRIDGE SCANNER  (Feature #3 — PRINCO)
+# ─────────────────────────────────────────────
+class BridgeScannerWindow:
+    """
+    Scan all downloaded bridges in a category/transport for reachability,
+    display ping, and optionally export working ones.
+    """
+    def __init__(self, parent, bridges_dir, get_safe_filename):
+        self.bridges_dir = bridges_dir
+        self.get_safe_filename = get_safe_filename
+        self._stop = False
+
+        w = tk.Toplevel(parent)
+        w.title("Bridge Scanner")
+        w.geometry("780x600")
+        w.configure(bg=C["BG"])
+        w.resizable(True, True)
+        w.update()
+        apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
+        self._win = w
+
+        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+        tk.Label(w, text="⬡  Bridge Scanner",
+                 font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(10, 2))
+        tk.Label(w,
+                 text="TCP-ping each bridge in the selected file. Green = reachable, Red = unreachable.",
+                 font=('Segoe UI', 8), bg=C["BG"], fg=C["FG2"]).pack()
+
+        # Controls
+        ctrl = tk.Frame(w, bg=C["PANEL"])
+        ctrl.pack(fill='x', padx=16, pady=8)
+        tk.Label(ctrl, text="Category:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).grid(row=0, column=0, padx=(12,4), pady=8)
+        self._cat_v = tk.StringVar(value="Tested & Active")
+        ttk.Combobox(ctrl, textvariable=self._cat_v,
+                     values=["Tested & Active", "Fresh (72h)", "Full Archive"],
+                     state="readonly", width=18).grid(row=0, column=1, padx=4)
+
+        tk.Label(ctrl, text="Transport:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).grid(row=0, column=2, padx=(12,4))
+        self._trans_v = tk.StringVar(value="obfs4")
+        ttk.Combobox(ctrl, textvariable=self._trans_v,
+                     values=["obfs4", "webtunnel", "vanilla"],
+                     state="readonly", width=12).grid(row=0, column=3, padx=4)
+
+        tk.Label(ctrl, text="IP:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).grid(row=0, column=4, padx=(12,4))
+        self._ip_v = tk.StringVar(value="IPv4")
+        ttk.Combobox(ctrl, textvariable=self._ip_v,
+                     values=["IPv4", "IPv6"],
+                     state="readonly", width=7).grid(row=0, column=5, padx=4)
+
+        tk.Label(ctrl, text="Workers:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).grid(row=0, column=6, padx=(12,4))
+        self._workers_v = tk.IntVar(value=20)
+        tk.Spinbox(ctrl, textvariable=self._workers_v, from_=1, to=50, width=5,
+                   bg=C["BTN"], fg=C["FG"], buttonbackground=C["BTN2"],
+                   relief="flat").grid(row=0, column=7, padx=4)
+
+        tk.Label(ctrl, text="Timeout(s):", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).grid(row=0, column=8, padx=(12,4))
+        self._timeout_v = tk.IntVar(value=5)
+        tk.Spinbox(ctrl, textvariable=self._timeout_v, from_=1, to=30, width=5,
+                   bg=C["BTN"], fg=C["FG"], buttonbackground=C["BTN2"],
+                   relief="flat").grid(row=0, column=9, padx=4)
+
+        # Progress
+        prog_f = tk.Frame(w, bg=C["BG"])
+        prog_f.pack(fill='x', padx=16)
+        self._prog_var = tk.IntVar(value=0)
+        self._prog_lbl = tk.StringVar(value="Ready.")
+        tk.Label(prog_f, textvariable=self._prog_lbl, bg=C["BG"], fg=C["FG2"],
+                 font=('Segoe UI', 8)).pack(anchor='w')
+        ttk.Progressbar(prog_f, variable=self._prog_var,
+                        maximum=100, mode='determinate').pack(fill='x', pady=(2,4))
+
+        # Results table (Treeview)
+        cols = ("bridge", "host", "port", "ping", "status")
+        tree_f = tk.Frame(w, bg=C["BLK"])
+        tree_f.pack(fill='both', expand=True, padx=16, pady=(0,4))
+        self._tree = ttk.Treeview(tree_f, columns=cols, show='headings',
+                                  selectmode='browse')
+        self._tree.heading("bridge", text="Bridge Type")
+        self._tree.heading("host",   text="Host")
+        self._tree.heading("port",   text="Port")
+        self._tree.heading("ping",   text="Ping (ms)")
+        self._tree.heading("status", text="Status")
+        self._tree.column("bridge", width=110, minwidth=80)
+        self._tree.column("host",   width=200, minwidth=120)
+        self._tree.column("port",   width=60,  minwidth=50)
+        self._tree.column("ping",   width=80,  minwidth=60)
+        self._tree.column("status", width=120, minwidth=80)
+        self._tree.tag_configure("ok",  foreground=C["GRN"])
+        self._tree.tag_configure("bad", foreground=C["RED"])
+        self._tree.tag_configure("slow",foreground=C["YLW"])
+        vsb = ttk.Scrollbar(tree_f, orient='vertical', command=self._tree.yview)
+        self._tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        self._tree.pack(fill='both', expand=True)
+
+        # Summary
+        self._summary_var = tk.StringVar(value="")
+        tk.Label(w, textvariable=self._summary_var, bg=C["BG"], fg=C["GRN"],
+                 font=('Segoe UI', 9, 'bold')).pack(pady=(0,4))
+
+        # Buttons
+        bf = tk.Frame(w, bg=C["BG"])
+        bf.pack(fill='x', padx=16, pady=(0,12))
+        self._scan_btn = tk.Button(bf, text="▶  Start Scan", command=self._start_scan,
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["ACC2"])
+        self._scan_btn.pack(side='left', ipady=5, padx=(0,6))
+        tk.Button(bf, text="⏹  Stop", command=self._stop_scan,
+                  bg=C["BTN2"], fg=C["RED"], font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2").pack(side='left', ipady=5, padx=(0,6))
+        tk.Button(bf, text="💾  Export Working", command=self._export,
+                  bg=C["BTN"], fg=C["CYAN"], font=('Segoe UI', 9, 'bold'),
+                  relief="flat", cursor="hand2").pack(side='left', ipady=5)
+
+        self._working = []
+        self._lock = threading.Lock()
+
+    def _stop_scan(self):
+        self._stop = True
+
+    def _start_scan(self):
+        fn = os.path.join(
+            self.bridges_dir,
+            self.get_safe_filename(self._cat_v.get(),
+                                   self._trans_v.get(),
+                                   self._ip_v.get()))
+        if not os.path.exists(fn):
+            messagebox.showwarning("Not Found",
+                "Bridge file not found. Update bridges first.",
+                parent=self._win)
+            return
+        with open(fn, encoding="utf-8") as f:
+            lines = [l.strip() for l in f if l.strip()]
+        if not lines:
+            messagebox.showinfo("Empty", "Bridge file is empty.", parent=self._win)
+            return
+
+        # clear
+        for item in self._tree.get_children():
+            self._tree.delete(item)
+        self._working.clear()
+        self._stop = False
+        self._prog_var.set(0)
+        self._summary_var.set("")
+        self._scan_btn.configure(state='disabled')
+
+        total = len(lines)
+        done_count = [0]
+        lock = threading.Lock()
+        trans = self._cat_v.get().split()[0] if self._cat_v.get() else "?"
+        timeout = self._timeout_v.get()
+
+        def _scan_one(line):
+            if self._stop:  # Fixed: added check for stop flag
+                return
+            m = re.search(r'(\d{1,3}(?:\.\d{1,3}){3}):(\d+)', line)
+            if not m:
+                m6 = re.search(r'\[([0-9a-fA-F:]+)\]:(\d+)', line)
+                if m6:
+                    host, port = m6.group(1), int(m6.group(2))
+                else:
+                    with lock:
+                        done_count[0] += 1
+                    return
+            else:
+                host, port = m.group(1), int(m.group(2))
+
+            t0 = time.time()
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(timeout)
+                s.connect((host, port))
+                s.close()
+                ms = int((time.time() - t0) * 1000)
+                tag = "ok" if ms < 500 else "slow"
+                status = f"✔ {ms} ms"
+                with self._lock:
+                    self._working.append(line)
+            except Exception as e:
+                ms = None
+                tag = "bad"
+                status = f"✘ {str(e)[:30]}"
+
+            self._win.after(0, self._tree.insert, '', 'end',
+                            values=(self._trans_v.get(), host, port,
+                                    str(ms) if ms is not None else "—", status),
+                            tags=(tag,))
+            with lock:
+                done_count[0] += 1
+                pct = int(done_count[0] * 100 / total)
+                self._win.after(0, self._prog_var.set, pct)
+                self._win.after(0, self._prog_lbl.set,
+                                f"Scanning… {done_count[0]}/{total}")
+
+        def _run():
+            with ThreadPoolExecutor(max_workers=self._workers_v.get()) as ex:
+                ex.map(_scan_one, lines)
+            ok = len(self._working)
+            self._win.after(0, self._prog_lbl.set, "Done.")
+            self._win.after(0, self._summary_var.set,
+                            f"✔ {ok} reachable  /  {total - ok} unreachable  /  {total} total")
+            self._win.after(0, self._scan_btn.configure, {"state": "normal"})
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _export(self):
+        if not self._working:
+            messagebox.showinfo("No Results",
+                "Run a scan first, then export working bridges.",
+                parent=self._win)
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt",
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            title="Export Working Bridges",
+            parent=self._win)
+        if not path:
+            return
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(self._working))
+        messagebox.showinfo("Exported",
+            f"Saved {len(self._working)} working bridges to:\n{path}",
+            parent=self._win)
+
+
+# ─────────────────────────────────────────────
+#  SETTINGS WINDOW
+# ─────────────────────────────────────────────
 class SettingsWindow:
     def __init__(self, parent, cfg: dict, on_save, on_clear_data=None):
         self.on_save = on_save
         w = tk.Toplevel(parent)
         w.title("Settings")
-        w.geometry("560x720")
+        w.geometry("580x760")
         w.configure(bg=C["BG"])
         w.resizable(False, True)
         w.grab_set()
         w.update()
         apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
 
-        tk.Label(w, text="⚙️  Settings",
-                 font=('Segoe UI', 14, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(14, 6))
+        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+        tk.Label(w, text="⬡  Settings",
+                 font=('Segoe UI', 14, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(12, 6))
 
         canvas = tk.Canvas(w, bg=C["BG"], highlightthickness=0)
         sb = ttk.Scrollbar(w, orient='vertical', command=canvas.yview)
@@ -456,10 +952,8 @@ class SettingsWindow:
             widget.bind("<MouseWheel>",
                         lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
-        canvas.bind("<MouseWheel>",
-                    lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
-        inner.bind("<MouseWheel>",
-                   lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        canvas.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
+        inner.bind("<MouseWheel>",  lambda e: canvas.yview_scroll(-1 * (e.delta // 120), "units"))
 
         def _section(t, color=C["BTN"], fg=C["ACC"]):
             lbl = tk.Label(inner, text=t, font=('Segoe UI', 10, 'bold'),
@@ -468,7 +962,7 @@ class SettingsWindow:
             _bind_scroll(lbl)
 
         def _hint(t):
-            lbl = tk.Label(inner, text=t, bg=C["BG"], fg="#6C7086",
+            lbl = tk.Label(inner, text=t, bg=C["BG"], fg=C["FG2"],
                            font=('Segoe UI', 8), anchor='w', justify='left')
             lbl.pack(fill='x', padx=14)
             _bind_scroll(lbl)
@@ -508,8 +1002,7 @@ class SettingsWindow:
         _section("🔄  Auto-Connect")
         v_act = tk.IntVar(value=cfg.get("auto_connect_timeout", 180))
         _row("Timeout per config (sec):", lambda p: _spin(p, v_act, 30, 600))
-        _hint("  How long to wait at a stuck bootstrap % before trying the next bridge group.")
-
+        _hint("  How long to wait at a stuck bootstrap % before trying next bridge group.")
         v_apc = tk.BooleanVar(value=cfg.get("auto_proxy_on_connect", True))
         _row("Auto-enable proxy on connect:", lambda p: _chk(p, v_apc))
         _hint("  Automatically turns on System Proxy when Tor reaches 100%.")
@@ -521,11 +1014,19 @@ class SettingsWindow:
         _row("Shuffle bridge order:", lambda p: _chk(p, v_shuf))
         _hint("  Randomising ensures different bridges are tried each session.")
 
+        _section("🔐  SNI Settings  (Pedram)")
+        v_sni_e = tk.BooleanVar(value=cfg.get("sni_enabled", False))
+        _row("Enable SNI override:", lambda p: _chk(p, v_sni_e))
+        _hint("  Overrides the TLS SNI hostname sent during bridge handshake.\n"
+              "  Useful to mimic popular HTTPS traffic and bypass DPI/censorship.")
+        v_sni_h = tk.StringVar(value=cfg.get("sni_host", "www.google.com"))
+        _row("SNI hostname:", lambda p: _entry(p, v_sni_h, 28))
+        _hint("  Example: www.google.com  |  cloudflare.com  |  cdn.jsdelivr.net")
+
         _section("🔒  Privacy / DNS")
         v_dns = tk.BooleanVar(value=cfg.get("dns_over_tor", False))
         _row("DNS over Tor (DNSPort 9053):", lambda p: _chk(p, v_dns))
-        _hint("  Routes DNS queries through Tor. Requires apps to use 127.0.0.1:9053.\n"
-              "  Default: OFF — the HTTP proxy already handles DNS for most apps.")
+        _hint("  Routes DNS queries through Tor. Requires apps to use 127.0.0.1:9053.")
 
         _section("⚡  Circuit Building")
         v_mcd = tk.IntVar(value=cfg.get("max_circuit_dirtiness", 1800))
@@ -534,23 +1035,18 @@ class SettingsWindow:
         _row("NewCircuitPeriod (sec):", lambda p: _spin(p, v_ncp, 5, 300))
         v_neg = tk.IntVar(value=cfg.get("num_entry_guards", 15))
         _row("NumEntryGuards:", lambda p: _spin(p, v_neg, 1, 30))
-        _hint("  Optimized for maximum connection stability.\n"
-              "  Higher MaxCircuitDirtiness = circuits live longer, fewer rebuilds.\n"
-              "  Lower NewCircuitPeriod = fresh circuits always ready faster.")
 
         _section("💓  Keep-Alive")
         v_kae = tk.BooleanVar(value=cfg.get("keep_alive_enabled", True))
         _row("Keep-Alive enabled:", lambda p: _chk(p, v_kae))
         v_kai = tk.IntVar(value=cfg.get("keep_alive_interval", 120))
         _row("Keep-Alive interval (sec):", lambda p: _spin(p, v_kai, 30, 600))
-        _hint("  Sends a tiny request through Tor to prevent ISP from closing idle connections.")
 
         _section("🐕  Watchdog")
         v_wde = tk.BooleanVar(value=cfg.get("watchdog_enabled", True))
         _row("Watchdog enabled:", lambda p: _chk(p, v_wde))
         v_wdi = tk.IntVar(value=cfg.get("watchdog_interval", 30))
         _row("Check interval (sec):", lambda p: _spin(p, v_wdi, 10, 300))
-        _hint("  Automatically restarts Tor if the process crashes or goes dormant.")
 
         _section("🌍  Exit Nodes")
         v_ene = tk.BooleanVar(value=cfg.get("exit_nodes_enabled", False))
@@ -568,114 +1064,86 @@ class SettingsWindow:
                  insertbackground=C["FG"], relief="flat", bd=4,
                  font=('Segoe UI', 9)).pack(side='left', fill='x', expand=True)
         v_sne = tk.BooleanVar(value=cfg.get("strict_exit_nodes", False))
-        _row("StrictNodes (only these countries):", lambda p: _chk(p, v_sne))
-        _hint("  Recommended: {nl} {de} {fr} {ch} {at} {se} {no} {fi} {is}\n"
-              "  Default OFF. Enable if YouTube/Instagram do not load via Tor.\n"
-              "  StrictNodes OFF = fall back to any country if chosen ones fail.")
+        _row("StrictNodes:", lambda p: _chk(p, v_sne))
 
         _section("🗑️  Maintenance")
-        _hint("  Clear cached Tor circuits and state (data directory).\n"
-              "  Tor will rebuild circuits from scratch on next start.")
+        _hint("  Clear cached Tor circuits and state (data directory).")
 
         def _do_clear():
             if on_clear_data:
                 on_clear_data()
             messagebox.showinfo("Done", "Data directory cleared.", parent=w)
 
-        btn_clr = tk.Button(inner, text="🗑️  Clear Data Directory",
-                            command=_do_clear,
-                            bg=C["BTN2"], fg=C["RED"],
-                            font=('Segoe UI', 9, 'bold'),
-                            relief="flat", cursor="hand2",
-                            activebackground=C["BTN"])
-        btn_clr.pack(fill='x', padx=14, pady=(4, 6))
+        tk.Button(inner, text="🗑️  Clear Data Directory", command=_do_clear,
+                  bg=C["BTN2"], fg=C["RED"], font=('Segoe UI', 9, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["BTN"]).pack(fill='x', padx=14, pady=(4, 6))
 
         _section("🧪  Experimental (Advanced torrc)",
-                 color="#2A1F3D", fg=C["PRP"])
-
+                 color="#1A0F2E", fg=C["PRP"])
         warn_lbl = tk.Label(inner,
                             text="  ⚠️  All options below are OFF by default.\n"
                                  "  Wrong settings can break connectivity. Use with caution.",
-                            bg="#2A1F3D", fg=C["YLW"],
+                            bg="#1A0F2E", fg=C["YLW"],
                             font=('Segoe UI', 8, 'bold'), anchor='w', justify='left')
-        warn_lbl.pack(fill='x', padx=0, pady=(0, 4))
+        warn_lbl.pack(fill='x', pady=(0, 4))
         _bind_scroll(warn_lbl)
 
         def _exp_section(t):
             lbl = tk.Label(inner, text=t, font=('Segoe UI', 9, 'bold'),
-                           bg="#241B2F", fg=C["PRP"], anchor='w', padx=14)
+                           bg="#1A1030", fg=C["PRP"], anchor='w', padx=14)
             lbl.pack(fill='x', pady=(6, 1))
             _bind_scroll(lbl)
 
         _exp_section("― Connection & Padding")
-        v_cp = tk.BooleanVar(value=cfg.get("exp_connection_padding", False))
+        v_cp  = tk.BooleanVar(value=cfg.get("exp_connection_padding", False))
         _row("ConnectionPadding:", lambda p: _chk(p, v_cp))
-        _hint("  Send dummy traffic to resist traffic-analysis by ISP. Increases bandwidth usage.")
         v_rcp = tk.BooleanVar(value=cfg.get("exp_reduced_connection_padding", False))
         _row("ReducedConnectionPadding:", lambda p: _chk(p, v_rcp))
-        _hint("  Lighter version of ConnectionPadding. Less bandwidth overhead.")
 
         _exp_section("― Streams & Timeouts")
         v_cst = tk.IntVar(value=cfg.get("exp_circuit_stream_timeout", 0))
         _row("CircuitStreamTimeout (sec):", lambda p: _spin(p, v_cst, 0, 3600))
-        _hint("  Idle stream timeout before circuit is closed. 0 = Tor default.")
-        v_st = tk.IntVar(value=cfg.get("exp_socks_timeout", 0))
+        v_st  = tk.IntVar(value=cfg.get("exp_socks_timeout", 0))
         _row("SocksTimeout (sec):", lambda p: _spin(p, v_st, 0, 600))
-        _hint("  Timeout for unanswered SOCKS connections. 0 = Tor default (120s).")
 
         _exp_section("― Stream Isolation")
         v_ida = tk.BooleanVar(value=cfg.get("exp_isolate_dest_addr", False))
         _row("IsolateDestAddr:", lambda p: _chk(p, v_ida))
-        _hint("  Each destination address gets its own circuit. More privacy,\n"
-              "  but uses more circuits and memory.")
         v_idp = tk.BooleanVar(value=cfg.get("exp_isolate_dest_port", False))
         _row("IsolateDestPort:", lambda p: _chk(p, v_idp))
-        _hint("  Each destination port gets its own circuit.")
 
         _exp_section("― Security & Disk")
-        v_sl = tk.BooleanVar(value=cfg.get("exp_safe_logging", False))
+        v_sl   = tk.BooleanVar(value=cfg.get("exp_safe_logging", False))
         _row("SafeLogging:", lambda p: _chk(p, v_sl))
-        _hint("  Scrub sensitive data (IPs, addresses) from logs.")
-        v_adw = tk.BooleanVar(value=cfg.get("exp_avoid_disk_writes", False))
+        v_adw  = tk.BooleanVar(value=cfg.get("exp_avoid_disk_writes", False))
         _row("AvoidDiskWrites:", lambda p: _chk(p, v_adw))
-        _hint("  Minimize writing to disk. Good for SSDs and privacy.")
-        v_ha = tk.BooleanVar(value=cfg.get("exp_hardware_accel", False))
+        v_ha   = tk.BooleanVar(value=cfg.get("exp_hardware_accel", False))
         _row("HardwareAccel:", lambda p: _chk(p, v_ha))
-        _hint("  Use CPU hardware AES for faster encryption.")
         v_cdri = tk.BooleanVar(value=cfg.get("exp_client_dns_reject_internal", False))
         _row("ClientDNSRejectInternalAddresses:", lambda p: _chk(p, v_cdri))
-        _hint("  Reject DNS responses pointing to private/internal IPs (DNS rebinding protection).")
 
         _exp_section("― Firewall & Network")
         v_ff = tk.BooleanVar(value=cfg.get("exp_fascist_firewall", False))
         _row("FascistFirewall:", lambda p: _chk(p, v_ff))
-        _hint("  Only connect via ports 80 and 443. Useful behind strict firewalls.")
         v_fp = tk.StringVar(value=cfg.get("exp_firewall_ports", "80,443"))
         _row("FirewallPorts:", lambda p: _entry(p, v_fp, 20))
-        _hint("  Comma-separated ports allowed when FascistFirewall is ON.")
         v_ra = tk.StringVar(value=cfg.get("exp_reachable_addresses", ""))
         _row("ReachableAddresses:", lambda p: _entry(p, v_ra, 30))
-        _hint("  Only connect to these IP ranges (CIDR). Empty = all.")
         v_nc = tk.IntVar(value=cfg.get("exp_num_cpus", 0))
         _row("NumCPUs:", lambda p: _spin(p, v_nc, 0, 32))
-        _hint("  CPU threads for Tor. 0 = auto-detect.")
 
-        _exp_section("― Node Selection")
-        v_en = tk.StringVar(value=cfg.get("exp_exclude_nodes", ""))
+        _section("― Node Selection")
+        v_en    = tk.StringVar(value=cfg.get("exp_exclude_nodes", ""))
         _row("ExcludeNodes:", lambda p: _entry(p, v_en, 30))
-        _hint("  Nodes/countries to NEVER use. Example: {ru},{cn},{ir}")
-        v_een = tk.StringVar(value=cfg.get("exp_exclude_exit_nodes", ""))
+        v_een   = tk.StringVar(value=cfg.get("exp_exclude_exit_nodes", ""))
         _row("ExcludeExitNodes:", lambda p: _entry(p, v_een, 30))
-        _hint("  Countries/nodes excluded only from exit position.")
-        v_nesp = tk.StringVar(value=cfg.get("exp_no_exit_stream_ports", ""))
+        v_nesp  = tk.StringVar(value=cfg.get("exp_no_exit_stream_ports", ""))
         _row("Reject exit ports:", lambda p: _entry(p, v_nesp, 20))
-        _hint("  Ports Tor must NOT exit to. Example: 25,587")
-        v_ueag = tk.BooleanVar(value=cfg.get("exp_use_entry_guards_as_dir_guards", False))
+        v_ueag  = tk.BooleanVar(value=cfg.get("exp_use_entry_guards_as_dir_guards", False))
         _row("UseEntryGuardsAsDirGuards:", lambda p: _chk(p, v_ueag))
-        _hint("  Reuse entry guards for directory fetches (fewer distinct nodes contacted).")
-        v_pbct = tk.IntVar(value=cfg.get("exp_path_bias_circ_threshold", 0))
+        v_pbct  = tk.IntVar(value=cfg.get("exp_path_bias_circ_threshold", 0))
         _row("PathBiasCircThreshold:", lambda p: _spin(p, v_pbct, 0, 200))
-        _hint("  Circuits to build before path bias detection kicks in. 0 = Tor default.")
 
         bf = tk.Frame(w, bg=C["BG"])
         bf.pack(fill='x', padx=20, pady=10)
@@ -697,6 +1165,8 @@ class SettingsWindow:
                 "exit_nodes_countries":              v_enc.get().strip(),
                 "strict_exit_nodes":                 v_sne.get(),
                 "auto_proxy_on_connect":             v_apc.get(),
+                "sni_enabled":                       v_sni_e.get(),
+                "sni_host":                          v_sni_h.get().strip(),
                 "exp_connection_padding":            v_cp.get(),
                 "exp_reduced_connection_padding":    v_rcp.get(),
                 "exp_circuit_stream_timeout":        v_cst.get(),
@@ -722,113 +1192,771 @@ class SettingsWindow:
             w.destroy()
 
         tk.Button(bf, text="✔  Apply & Save", command=_apply,
-                  bg=C["ACC"], fg=C["BLK"], font=('Segoe UI', 10, 'bold'),
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 10, 'bold'),
                   relief="flat", cursor="hand2",
-                  activebackground="#B4BEFE").pack(side='left', fill='x',
-                                                   expand=True, padx=(0, 5), ipady=4)
+                  activebackground=C["ACC2"]).pack(side='left', fill='x',
+                                                    expand=True, padx=(0, 5), ipady=4)
         tk.Button(bf, text="Cancel", command=w.destroy,
-                  bg=C["BTN"], fg=C["FG"], font=('Segoe UI', 10),
+                  bg=C["BTN"], fg=C["FG2"], font=('Segoe UI', 10),
                   relief="flat", cursor="hand2").pack(side='left', ipady=4, padx=40)
 
 
-BRIDGE_DATA = [
-    ("Tested & Active", "obfs4",     "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_tested.txt"),
-    ("Tested & Active", "webtunnel", "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_tested.txt"),
-    ("Tested & Active", "vanilla",   "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_tested.txt"),
-    ("Fresh (72h)",     "obfs4",     "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_72h.txt"),
-    ("Fresh (72h)",     "obfs4",     "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_ipv6_72h.txt"),
-    ("Fresh (72h)",     "webtunnel", "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_72h.txt"),
-    ("Fresh (72h)",     "webtunnel", "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_ipv6_72h.txt"),
-    ("Fresh (72h)",     "vanilla",   "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_72h.txt"),
-    ("Fresh (72h)",     "vanilla",   "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_ipv6_72h.txt"),
-    ("Full Archive",    "obfs4",     "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4.txt"),
-    ("Full Archive",    "obfs4",     "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/obfs4_ipv6.txt"),
-    ("Full Archive",    "webtunnel", "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel.txt"),
-    ("Full Archive",    "webtunnel", "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/webtunnel_ipv6.txt"),
-    ("Full Archive",    "vanilla",   "IPv4",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla.txt"),
-    ("Full Archive",    "vanilla",   "IPv6",
-     "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge/vanilla_ipv6.txt"),
-]
+# ─────────────────────────────────────────────
+#  PARALLEL MULTI-CONNECT WINDOW
+# ─────────────────────────────────────────────
+class ParallelConnectWindow:
+    """
+    Launch multiple Tor instances simultaneously on different ports.
+    All connections stay alive; each has its own proxy button.
+    Only 'Tested' category of bridges is used.
+    """
 
-FRESH_DATA = [(c, t, v, u) for c, t, v, u in BRIDGE_DATA if c == "Fresh (72h)"]
+    # Tested obfs4 v6 has been removed (Feature #2). Sequential ports rebuilt.
+    SLOT_DEFS = [
+        # label,               socks,  ctrl,   http,   no_bridge, cat,              trans,        ip
+        ("No Bridge",          9061,   9062,   19061,  True,  None,             None,         None),
+        ("Tested obfs4 v4",    9063,   9064,   19063,  False, "Tested & Active","obfs4",      "IPv4"),
+        ("Tested webtunnel v4",9065,   9066,   19065,  False, "Tested & Active","webtunnel",  "IPv4"),
+        ("Tested webtunnel v6",9067,   9068,   19067,  False, "Tested & Active","webtunnel",  "IPv6"),
+        ("Tested vanilla v4",  9069,   9070,   19069,  False, "Tested & Active","vanilla",    "IPv4"),
+        ("Tested vanilla v6",  9071,   9072,   19071,  False, "Tested & Active","vanilla",    "IPv6"),
+    ]
+
+    CHECK_URL_HOST = "www.gstatic.com"
+    CHECK_URL_PATH = "/generate_204"
+    SPEED_HOST     = "cachefly.cachefly.net"
+    SPEED_PATH     = "/0.5b.test"
+
+    def __init__(self, parent, extract_dir, bridges_dir,
+                 get_safe_filename, generate_torrc_fn, cfg, on_connected):
+        self.extract_dir       = extract_dir
+        self.bridges_dir       = bridges_dir
+        self.get_safe_filename = get_safe_filename
+        self.cfg               = cfg
+        self.on_connected      = on_connected
+
+        self._procs   = {}
+        self._running = False
+        self._lock    = threading.Lock()
+        self._stop_events = {}
+        self._active_proxy_label = None
+        self._proxy_stop_ev = None
+        self._slot_health = {}
+
+        w = tk.Toplevel(parent)
+        w.title("Multi-Connect")
+        w.geometry("910x600")
+        w.configure(bg=C["BG"])
+        w.resizable(True, True)
+        w.update()
+        apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
+        self._win = w
+        w.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+
+        hdr = tk.Frame(w, bg=C["BG"])
+        hdr.pack(fill='x', padx=16, pady=(10, 4))
+        tk.Label(hdr, text="⬡  Parallel Multi-Connect (Tested Only)",
+                 font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(side='left')
+
+        ctrl_f = tk.Frame(w, bg=C["BG"])
+        ctrl_f.pack(fill='x', padx=16, pady=(0, 6))
+        self._start_btn = tk.Button(ctrl_f, text="▶  Launch All",
+                                    command=self._start_all,
+                                    bg=C["ACC"], fg="white",
+                                    font=('Segoe UI', 10, 'bold'),
+                                    relief="flat", cursor="hand2",
+                                    activebackground=C["ACC2"])
+        self._start_btn.pack(side='left', ipady=6, padx=(0, 6))
+        tk.Button(ctrl_f, text="⏹  Stop All",
+                  command=self._stop_all,
+                  bg=C["BTN2"], fg=C["FG"],
+                  font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2").pack(side='left', ipady=6)
+
+        self._auto_proxy_var = tk.BooleanVar(value=False)
+        self._auto_proxy_chk = tk.Checkbutton(ctrl_f, text="🔄 Auto System Proxy (Best Ping)",
+                                              variable=self._auto_proxy_var,
+                                              bg=C["BG"], fg=C["FG"], selectcolor=C["PANEL"],
+                                              activebackground=C["BG"], activeforeground=C["FG"],
+                                              font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2")
+        self._auto_proxy_chk.pack(side='right', padx=12)
+
+        self._info_lbl = tk.Label(ctrl_f, text="",
+                                  font=('Segoe UI', 9), bg=C["BG"], fg=C["FG2"])
+        self._info_lbl.pack(side='left', padx=12)
+
+        tk.Label(w,
+                 text="All connections stay alive. Auto System Proxy will automatically assign system proxy to the lowest-latency active slot.",
+                 font=('Segoe UI', 8), bg=C["BG"], fg=C["FG2"]).pack(padx=16, anchor='w')
+
+        canvas_frame = tk.Frame(w, bg=C["BG"])
+        canvas_frame.pack(fill='both', expand=True, padx=16, pady=6)
+        slots_canvas = tk.Canvas(canvas_frame, bg=C["BG"], highlightthickness=0)
+        vsb = ttk.Scrollbar(canvas_frame, orient='vertical', command=slots_canvas.yview)
+
+        slots_canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side='right', fill='y')
+        slots_canvas.pack(fill='both', expand=True)
+        slots_inner = tk.Frame(slots_canvas, bg=C["BG"])
+        slots_canvas.create_window((0, 0), window=slots_inner, anchor='nw')
+        slots_inner.bind("<Configure>", lambda e: slots_canvas.configure(
+            scrollregion=slots_canvas.bbox("all")))
+        slots_canvas.bind("<MouseWheel>",
+                          lambda e: slots_canvas.yview_scroll(-1*(e.delta//120), "units"))
+
+        slots_inner.columnconfigure(0, weight=1)
+        slots_inner.columnconfigure(1, weight=1)
+
+        self._slot_widgets = {}
+
+        for i, (label, socks, ctrl, http, no_bridge, cat, trans, ip) in enumerate(self.SLOT_DEFS):
+            sf = tk.Frame(slots_inner, bg=C["PANEL"], bd=0)
+            sf.grid(row=i // 2, column=i % 2, padx=6, pady=6, sticky="nsew")
+
+            # All connection slot accent bars are colorful (Feature #4)
+            tk.Frame(sf, bg=C["ACC"], width=4).pack(side='left', fill='y')
+            inner = tk.Frame(sf, bg=C["PANEL"])
+            inner.pack(fill='x', expand=True, padx=8, pady=6)
+
+            top_r = tk.Frame(inner, bg=C["PANEL"])
+            top_r.pack(fill='x')
+            tk.Label(top_r, text=label,
+                     font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"],
+                     width=18, anchor='w').pack(side='left')
+            
+            tk.Label(top_r, text=f"SOCKS:{socks}  HTTP:{http}",
+                     font=('Consolas', 10, 'bold'), bg=C["PANEL"], fg=C["CYAN"]).pack(side='left', padx=6)
+            
+            status_lbl = tk.Label(top_r, text="Idle",
+                                  font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
+            status_lbl.pack(side='right')
+
+            prog_row = tk.Frame(inner, bg=C["PANEL"])
+            prog_row.pack(fill='x', pady=(3, 0))
+            prog_var = tk.IntVar(value=0)
+            bar = ttk.Progressbar(prog_row, variable=prog_var,
+                                  maximum=100, mode='determinate')
+            bar.pack(side='left', fill='x', expand=True)
+            pct_lbl = tk.Label(prog_row, text="0%",
+                               font=('Segoe UI', 8, 'bold'), bg=C["PANEL"], fg=C["FG2"],
+                               width=5)
+            pct_lbl.pack(side='right')
+
+            info_row = tk.Frame(inner, bg=C["PANEL"])
+            info_row.pack(fill='x', pady=(2, 0))
+            health_lbl = tk.Label(info_row, text="⬤ —",
+                                  font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
+            health_lbl.pack(side='left')
+            speed_lbl = tk.Label(info_row, text="",
+                                 font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
+            speed_lbl.pack(side='left', padx=(10, 0))
+            
+            log_lbl = tk.Label(inner, text="",
+                               font=('Consolas', 7), bg=C["PANEL"], fg=C["FG2"],
+                               anchor='w', wraplength=380)
+            log_lbl.pack(fill='x')
+
+            btn_row = tk.Frame(inner, bg=C["PANEL"])
+            btn_row.pack(fill='x', pady=(4, 0))
+
+            proxy_btn = tk.Button(btn_row, text="🌐 Set Proxy",
+                                  bg=C["BTN"], fg=C["FG"],
+                                  font=('Segoe UI', 8, 'bold'),
+                                  relief="flat", cursor="hand2",
+                                  activebackground=C["BTN2"])
+            proxy_btn.pack(side='left', ipady=3, padx=(0, 4))
+            proxy_btn.configure(
+                command=lambda lbl=label, hp=http, sp=socks: self._set_proxy_to_slot(lbl, sp, hp))
+
+            retry_btn = tk.Button(btn_row, text="↺ Retry",
+                                  bg=C["BTN"], fg=C["FG"],
+                                  font=('Segoe UI', 8, 'bold'),
+                                  relief="flat", cursor="hand2",
+                                  activebackground=C["BTN2"])
+            retry_btn.pack(side='left', ipady=3, padx=(0, 4))
+            retry_btn.configure(
+                command=lambda lbl=label, s=socks, c=ctrl, hp=http, nb=no_bridge,
+                                   ca=cat, tr=trans, iip=ip: self._retry_slot(lbl, s, c, hp, nb, ca, tr, iip))
+
+            speed_btn = tk.Button(btn_row, text="⚡ Speed Test",
+                                  bg=C["BTN"], fg=C["FG"],
+                                  font=('Segoe UI', 8, 'bold'),
+                                  relief="flat", cursor="hand2",
+                                  activebackground=C["BTN2"])
+            speed_btn.pack(side='left', ipady=3)
+            speed_btn.configure(
+                command=lambda lbl=label, s=socks: self._manual_speed_test(lbl, s))
+
+            health_btn = tk.Button(btn_row, text="🔍 Health",
+                                   bg=C["BTN"], fg=C["FG"],
+                                   font=('Segoe UI', 8, 'bold'),
+                                   relief="flat", cursor="hand2",
+                                   activebackground=C["BTN2"])
+            health_btn.pack(side='left', ipady=3, padx=(4, 0))
+            health_btn.configure(
+                command=lambda lbl=label, s=socks: self._manual_health_check(lbl, s))
+
+            self._slot_widgets[label] = {
+                "frame":      sf,
+                "prog_var":   prog_var,
+                "pct_lbl":    pct_lbl,
+                "status_lbl": status_lbl,
+                "log_lbl":    log_lbl,
+                "bar":        bar,
+                "health_lbl": health_lbl,
+                "speed_lbl":  speed_lbl,
+                "proxy_btn":  proxy_btn,
+                "socks_port": socks,
+                "http_port":  http,
+            }
+
+    def _on_close(self):
+        self._stop_all()
+        self._win.destroy()
+
+    def _update_slot(self, label, pct=None, status=None, log=None,
+                     connected=False, failed=False):
+        w = self._slot_widgets.get(label)
+        if not w:
+            return
+        if pct is not None:
+            w["prog_var"].set(pct)
+            w["pct_lbl"].configure(text=f"{pct}%",
+                                   fg=C["FG"] if pct < 100 else C["FG"])
+        if status is not None:
+            color = C["FG"] if connected else (C["FG2"] if not failed else C["FG2"])
+            w["status_lbl"].configure(text=status, fg=color)
+        if log is not None:
+            w["log_lbl"].configure(text=log[:120])
+        if connected:
+            w["frame"].configure(bg=C["PANEL"])
+            w["bar"].configure(style='Won.Horizontal.TProgressbar')
+        if failed:
+            w["bar"].configure(style='Horizontal.TProgressbar')
+
+    # ── Health Check ──────────────────────────
+    def _check_health_once(self, socks_port, timeout=8) -> tuple:
+        """TCP-connect through Tor SOCKS5 to gstatic generate_204. Returns (is_online, latency_ms)"""
+        t0 = time.time()
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(timeout)
+            s.connect(("127.0.0.1", socks_port))
+            host_b = self.CHECK_URL_HOST.encode()
+            s.sendall(b'\x05\x01\x00')
+            if s.recv(2)[1] != 0x00:
+                s.close(); return False, 999999.0
+            s.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) + host_b + (443).to_bytes(2, 'big'))
+            r = s.recv(10)
+            if r[1] != 0x00:
+                s.close(); return False, 999999.0
+            ctx = ssl.create_default_context()
+            s = ctx.wrap_socket(s, server_hostname=self.CHECK_URL_HOST)
+            s.sendall((f"GET {self.CHECK_URL_PATH} HTTP/1.1\r\nHost: {self.CHECK_URL_HOST}\r\n"
+                       f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode())
+            resp = s.recv(512).decode(errors="replace")
+            s.close()
+            latency = (time.time() - t0) * 1000.0
+            if "204" in resp or "HTTP/1." in resp:
+                return True, latency
+            return False, 999999.0
+        except Exception:
+            return False, 999999.0
+
+    def _run_health_loop(self, label, socks_port, stop_ev, auto_speed_done):
+        """Every 10 seconds check health; run speed test once on first success."""
+        first_success = False
+        while not stop_ev.wait(10):
+            ok, latency = self._check_health_once(socks_port)
+            with self._lock:
+                self._slot_health[label] = (ok, latency)
+
+            if ok:
+                health_txt = f"⬤ Online ({int(latency)} ms)"
+                health_fg  = C["GRN"]
+                if not first_success:
+                    first_success = True
+                    auto_speed_done.append(True)
+                    threading.Thread(
+                        target=self._run_speed_test,
+                        args=(label, socks_port, True), daemon=True).start()
+            else:
+                health_txt = "⬤ Offline"
+                health_fg  = C["FG2"]
+
+            w = self._slot_widgets.get(label)
+            if w:
+                self._win.after(0, w["health_lbl"].configure,
+                                {"text": health_txt, "fg": health_fg})
+
+            if self._auto_proxy_var.get():
+                self._evaluate_best_proxy()
+
+    def _evaluate_best_proxy(self):
+        """Determines the slot with the lowest latency and sets it as the system proxy."""
+        with self._lock:
+            best_label = None
+            best_latency = 999999.0
+            for label, (ok, latency) in self._slot_health.items():
+                if ok and latency < best_latency:
+                    best_latency = latency
+                    best_label = label
+
+            if best_label and best_label != self._active_proxy_label:
+                for label_def, socks, ctrl, http, *rest in self.SLOT_DEFS:
+                    if label_def == best_label:
+                        self._win.after(0, self._set_proxy_to_slot, best_label, socks, http)
+                        break
+
+    # ── Speed Test ────────────────────────────
+    def _run_speed_test(self, label, socks_port, auto=False):
+        w = self._slot_widgets.get(label)
+        if not w:
+            return
+        self._win.after(0, w["speed_lbl"].configure, {"text": "⏳ Testing…"})
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(30)
+            s.connect(("127.0.0.1", socks_port))
+            host_b = self.SPEED_HOST.encode()
+            s.sendall(b'\x05\x01\x00')
+            if s.recv(2)[1] != 0x00:
+                raise ConnectionError("SOCKS5 auth failed")
+            s.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) + host_b + (80).to_bytes(2, 'big'))
+            r = s.recv(10)
+            if r[1] != 0x00:
+                raise ConnectionError("SOCKS5 connect failed")
+            request = (f"GET {self.SPEED_PATH} HTTP/1.1\r\nHost: {self.SPEED_HOST}\r\n"
+                       f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode()
+            s.sendall(request)
+            buf = b""
+            while b"\r\n\r\n" not in buf:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+            t0 = time.time()
+            received = 0
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received >= 1024 * 1024:
+                    break
+            elapsed = time.time() - t0
+            s.close()
+            if elapsed > 0 and received > 0:
+                kbps = received / elapsed / 1024
+                if kbps >= 1024:
+                    speed_str = f"⚡ {kbps/1024:.1f} MB/s"
+                else:
+                    speed_str = f"⚡ {kbps:.0f} KB/s"
+            else:
+                speed_str = "⚡ —"
+        except Exception as e:
+            speed_str = f"✗ Speed: {str(e)[:20]}"
+        self._win.after(0, w["speed_lbl"].configure, {"text": speed_str})
+
+    def _manual_speed_test(self, label, socks_port):
+        w = self._slot_widgets.get(label)
+        if not w:
+            return
+        status = w["status_lbl"].cget("text")
+        if "Connected" not in status and "Bootstrapped 100" not in status:
+            self._win.after(0, w["speed_lbl"].configure,
+                            {"text": "⚠ Not connected"})
+            return
+        threading.Thread(
+            target=self._run_speed_test, args=(label, socks_port, False),
+            daemon=True).start()
+
+    def _manual_health_check(self, label, socks_port):
+        def _run():
+            ok, latency = self._check_health_once(socks_port)
+            w = self._slot_widgets.get(label)
+            if w:
+                health_txt = f"⬤ Online ({int(latency)} ms)" if ok else "⬤ Offline"
+                self._win.after(0, w["health_lbl"].configure, {
+                    "text": health_txt,
+                    "fg": C["GRN"] if ok else C["FG2"]})
+        threading.Thread(target=_run, daemon=True).start()
+
+    # ── Proxy Management ─────────────────────
+    def _set_proxy_to_slot(self, label, socks_port, http_port):
+        if self._proxy_stop_ev is not None:
+            self._proxy_stop_ev.set()
+            self._proxy_stop_ev = None
+
+        for lbl, wgt in self._slot_widgets.items():
+            wgt["proxy_btn"].configure(
+                text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
+
+        if self._active_proxy_label == label and not self._auto_proxy_var.get():
+            self._active_proxy_label = None
+            self._disable_system_proxy()
+            self._win.after(0, self._info_lbl.configure,
+                            {"text": "Proxy disabled."})
+            return
+
+        ev = threading.Event()
+        self._proxy_stop_ev = ev
+        threading.Thread(target=run_http_proxy_server,
+                         args=(ev, "127.0.0.1", socks_port, http_port),
+                         daemon=True).start()
+        self._enable_system_proxy(http_port)
+        self._active_proxy_label = label
+
+        w = self._slot_widgets.get(label)
+        if w:
+            w["proxy_btn"].configure(
+                text="🌐 Proxy ON", bg="#0E2A1A", fg=C["FG"])
+        self._win.after(0, self._info_lbl.configure,
+                        {"text": f"Proxy → {label}  HTTP:{http_port}  SOCKS:{socks_port}"})
+
+    def _enable_system_proxy(self, http_port):
+        """Sets Windows system proxy using the standardized 127.0.0.1:PORT structure."""
+        try:
+            import winreg as _wr
+            key = _wr.OpenKey(
+                _wr.HKEY_CURRENT_USER,
+                r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+                0, _wr.KEY_ALL_ACCESS)
+            proxy_str = f'127.0.0.1:{http_port}'
+            _wr.SetValueEx(key, 'ProxyEnable',   0, _wr.REG_DWORD, 1)
+            _wr.SetValueEx(key, 'ProxyServer',   0, _wr.REG_SZ, proxy_str)
+            _wr.SetValueEx(key, 'ProxyOverride', 0, _wr.REG_SZ, '127.0.0.1;localhost;<local>')
+            _wr.CloseKey(key)
+            ctypes.windll.wininet.InternetSetOptionW(0, 39, 0, 0)
+            ctypes.windll.wininet.InternetSetOptionW(0, 37, 0, 0)
+        except Exception:
+            pass
+
+    def _disable_system_proxy(self):
+        try:
+            import winreg as _wr
+            key = _wr.OpenKey(
+                _wr.HKEY_CURRENT_USER,
+                r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+                0, _wr.KEY_ALL_ACCESS)
+            _wr.SetValueEx(key, 'ProxyEnable', 0, _wr.REG_DWORD, 0)
+            _wr.SetValueEx(key, 'ProxyServer',  0, _wr.REG_SZ, '')
+            _wr.CloseKey(key)
+            ctypes.windll.wininet.InternetSetOptionW(0, 39, 0, 0)
+            ctypes.windll.wininet.InternetSetOptionW(0, 37, 0, 0)
+        except Exception:
+            pass
+
+    # ── Slot Runner ──────────────────────────
+    def _run_slot(self, label, socks_port, ctrl_port, http_port,
+                  no_bridge, cat, trans, ip, retry_count=0, max_retries=5):
+        tor_exe = os.path.join(self.extract_dir, "tor", "tor.exe")
+        if not os.path.exists(tor_exe):
+            self._win.after(0, self._update_slot, label,
+                            None, "tor.exe not found", None, False, True)
+            return
+
+        with self._lock:
+            old = self._procs.get(label)
+            if old:
+                try: old.terminate()
+                except: pass
+
+        data_dir   = os.path.join(self.extract_dir, f"data_par_{socks_port}")
+        os.makedirs(data_dir, exist_ok=True)
+        torrc_path = os.path.join(data_dir, "torrc")
+
+        pt_dir   = os.path.join(self.extract_dir, "tor", "pluggable_transports")
+        lyrebird = os.path.join(pt_dir, "lyrebird.exe")
+        conjure  = os.path.join(pt_dir, "conjure-client.exe")
+
+        if no_bridge:
+            bridge_lines = []
+            use = "0"
+        else:
+            bridge_lines = []
+            limit = self.cfg.get("bridges_in_torrc", 100)
+            do_shuffle = self.cfg.get("shuffle_bridges", True)
+            for c, t, v, _ in BRIDGE_DATA:
+                if c == cat and t == trans and (ip == "Both" or ip == v):
+                    fn = os.path.join(self.bridges_dir,
+                                      self.get_safe_filename(c, t, v))
+                    if os.path.exists(fn):
+                        with open(fn, encoding="utf-8") as f:
+                            lines = [l.strip() for l in f if l.strip()]
+                        if do_shuffle:
+                            random.shuffle(lines)
+                        for line in lines[:limit]:
+                            bridge_lines.append(f"Bridge {line}\n")
+            use = "1" if bridge_lines else "0"
+
+        content  = "Log notice stdout\n"
+        content += f"DataDirectory {data_dir}\n"
+        content += f"GeoIPFile {os.path.join(data_dir, 'geoip')}\n"
+        content += f"GeoIPv6File {os.path.join(data_dir, 'geoip6')}\n"
+        content += f"SOCKSPort 127.0.0.1:{socks_port}\n"
+        content += f"ControlPort 127.0.0.1:{ctrl_port}\n"
+        content += "CookieAuthentication 1\n"
+        content += "DormantClientTimeout 24 hours\n"
+        content += "DormantOnFirstStartup 0\n"
+        content += "DormantCanceledByStartup 1\n"
+        content += f"UseBridges {use}\n"
+        content += f"MaxCircuitDirtiness {self.cfg.get('max_circuit_dirtiness', 1800)}\n"
+        content += f"NewCircuitPeriod {self.cfg.get('new_circuit_period', 10)}\n"
+        content += f"NumEntryGuards {self.cfg.get('num_entry_guards', 15)}\n"
+        content += "AllowNonRFC953Hostnames 1\n"
+        content += "EnforceDistinctSubnets 0\n"
+        content += "MaxClientCircuitsPending 64\n"
+        content += "CircuitBuildTimeout 30\n"  # Fixed: reduced from 60 to 30 seconds
+        content += "LearnCircuitBuildTimeout 0\n"
+        content += "GuardLifetime 90 days\n"
+        content += "NumDirectoryGuards 6\n"
+        content += "TokenBucketRefillInterval 10 msec\n"
+        content += (f"ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,"
+                    f"scramblesuit,webtunnel exec {lyrebird}\n")
+        content += f"ClientTransportPlugin snowflake exec {lyrebird}\n"
+        content += (f"ClientTransportPlugin conjure exec {conjure}"
+                    f" -registerURL \"https://registration.refraction.network/api\"\n\n")
+        if use == "1":
+            content += "".join(bridge_lines)
+
+        with open(torrc_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        try:
+            proc = subprocess.Popen(
+                [tor_exe, "-f", torrc_path],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+        except Exception as e:
+            self._win.after(0, self._update_slot, label,
+                            None, f"Launch error: {e}", None, False, True)
+            return
+
+        with self._lock:
+            self._procs[label] = proc
+
+        self._win.after(0, self._update_slot, label, 0, "Connecting…")
+
+        last_pct  = -1
+        last_move = time.time()
+        timeout_s = self.cfg.get("auto_connect_timeout", 180)
+        connected = False
+
+        for line in iter(proc.stdout.readline, ''):
+            if not self._running:
+                break
+            self._win.after(0, self._update_slot, label, None, None, line.strip()[:80])
+            m = re.search(r'Bootstrapped (\d+)%', line)
+            if m:
+                pct = int(m.group(1))
+                self._win.after(0, self._update_slot, label, pct, f"Bootstrapped {pct}%")
+                if pct != last_pct:
+                    last_pct  = pct
+                    last_move = time.time()
+                if pct == 100 and not connected:
+                    connected = True
+                    self._win.after(0, self._update_slot, label,
+                                    100, "✔ Connected!", None, True, False)
+                    stop_ev = threading.Event()
+                    self._stop_events[label] = stop_ev
+                    auto_done = []
+                    threading.Thread(
+                        target=self._run_health_loop,
+                        args=(label, socks_port, stop_ev, auto_done),
+                        daemon=True).start()
+                    self._win.after(0, self._info_lbl.configure,
+                                    {"text": f"✔ {label} connected on SOCKS:{socks_port}"})
+                    if self.on_connected:
+                        self._win.after(0, self.on_connected,
+                                        label, socks_port, ctrl_port, http_port)
+
+            if last_pct >= 0 and not connected and time.time() - last_move > timeout_s:
+                self._win.after(0, self._update_slot, label,
+                                None, f"⚠ Timed out at {last_pct}%", None, False, True)
+                break
+
+        try:
+            proc.stdout.close()
+        except Exception:
+            pass
+
+        if not connected:
+            # محدود کردن retries تا 5 بار
+            if retry_count >= max_retries:
+                self._win.after(0, self._update_slot, label,
+                                None, f"❌ Failed after {max_retries} retries", None, False, True)
+                return
+            
+            delay = min(3 * (retry_count + 1), 15)  # exponential backoff: 3s, 6s, 9s, 12s, 15s
+            self._win.after(0, self._update_slot, label,
+                            None, f"↺ Retrying in {delay}s…", None, False, False)
+            time.sleep(delay)
+            if self._running:
+                self._win.after(0, self._update_slot, label, 0, "Retrying…")
+                self._run_slot(label, socks_port, ctrl_port, http_port,
+                               no_bridge, cat, trans, ip, retry_count + 1, max_retries)
+        else:
+            try:
+                proc.wait()
+            except Exception:
+                pass
+            if self._running:
+                w = self._slot_widgets.get(label)
+                if w:
+                    self._win.after(0, w["health_lbl"].configure,
+                                    {"text": "⬤ Offline", "fg": C["FG2"]})
+                self._win.after(0, self._update_slot, label,
+                                0, "Died — retrying…", None, False, True)
+                delay = min(3 * (retry_count + 1), 15)
+                time.sleep(delay)
+                if self._running:
+                    self._run_slot(label, socks_port, ctrl_port, http_port,
+                                   no_bridge, cat, trans, ip, retry_count + 1, max_retries)
+
+    def _retry_slot(self, label, socks_port, ctrl_port, http_port,
+                    no_bridge, cat, trans, ip):
+        """Manual retry for a single slot."""
+        ev = self._stop_events.get(label)
+        if ev:
+            ev.set()
+        with self._lock:
+            old = self._procs.get(label)
+            if old:
+                try: old.terminate()
+                except: pass
+        self._win.after(0, self._update_slot, label, 0, "Retrying…")
+        threading.Thread(
+            target=self._run_slot,
+            args=(label, socks_port, ctrl_port, http_port,
+                  no_bridge, cat, trans, ip),
+            daemon=True).start()
+
+    def _start_all(self):
+        if self._running:
+            return
+        self._running = True
+        self._start_btn.configure(state='disabled')
+
+        for label, wgt in self._slot_widgets.items():
+            wgt["prog_var"].set(0)
+            wgt["pct_lbl"].configure(text="0%")
+            wgt["status_lbl"].configure(text="Waiting…", fg=C["FG2"])
+            wgt["log_lbl"].configure(text="")
+            wgt["health_lbl"].configure(text="⬤ —", fg=C["FG2"])
+            wgt["speed_lbl"].configure(text="")
+            wgt["bar"].configure(style='Horizontal.TProgressbar')
+
+        for label, socks, ctrl, http, no_bridge, cat, trans, ip in self.SLOT_DEFS:
+            threading.Thread(
+                target=self._run_slot,
+                args=(label, socks, ctrl, http, no_bridge, cat, trans, ip),
+                daemon=True).start()
+
+    def _stop_all(self):
+        self._running = False
+        for ev in self._stop_events.values():
+            try: ev.set()
+            except: pass
+        self._stop_events.clear()
+        with self._lock:
+            for lbl, p in self._procs.items():
+                try: p.terminate()
+                except: pass
+        self._procs.clear()
+        self._slot_health.clear()
+        if self._proxy_stop_ev:
+            self._proxy_stop_ev.set()
+            self._proxy_stop_ev = None
+        if self._active_proxy_label:
+            self._disable_system_proxy()
+            self._active_proxy_label = None
+        self._start_btn.configure(state='normal')
+        for label, wgt in self._slot_widgets.items():
+            wgt["status_lbl"].configure(text="Stopped", fg=C["FG2"])
+            wgt["health_lbl"].configure(text="⬤ —", fg=C["FG2"])
 
 
+# ─────────────────────────────────────────────
+#  MAIN GUI
+# ─────────────────────────────────────────────
 class TorClientGUI:
 
     TOR_URL      = ("https://github.com/Delta-Kronecker/Tor-Expert-Bundle/raw/refs/heads/main/"
-                    "tor-expert-bundle-windows-x86_64-15.0.6.tar.gz")
-    TOR_FALLBACK = ("https://archive.torproject.org/tor-package-archive/torbrowser/15.0.6/"
-                    "tor-expert-bundle-windows-x86_64-15.0.6.tar.gz")
+                    "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz")
+    TOR_FALLBACK = ("https://archive.torproject.org/tor-package-archive/torbrowser/15.0.14/"
+                    "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz")
 
     def __init__(self, root):
-        self.root = root
-        self.root.title("Tor Client")
-        self.root.configure(bg=C["BG"])
+            self.root = root
+            self.root.title("Tor Client")
+            
+            try:
+                self.root.attributes("-alpha", 0.0)
+            except Exception:
+                pass
 
-        self.cfg = load_config()
-        if "extract_dir" not in self.cfg:
-            dlg = FolderSetupDialog(root)
-            self.cfg["extract_dir"] = dlg.result or FolderSetupDialog.DEFAULT
-            save_config(self.cfg, self.cfg["extract_dir"])
+            self.root.configure(bg=C["BG"])
+            self.root.geometry("800x980")
+            apply_dark_titlebar(self.root)
+            set_window_icon(self.root)
 
-        self.extract_dir   = self.cfg["extract_dir"]
-        self.archive_name  = os.path.join(
-            os.path.dirname(self.extract_dir), "tor-expert-bundle.tar.gz")
-        self.bridges_dir   = os.path.join(self.extract_dir, "bridges")
-        self.logs_dir      = os.path.join(self.extract_dir, "logs")
+            self.setup_theme()
 
-        self.tor_process           = None
-        self.tor_connected         = False
-        self.connect_time          = None
-        self._uptime_id            = None
-        self._auto_test_id         = None
-        self._watchdog_id          = None
-        self._keepalive_id         = None
-        self._auto_connect_active  = False
-        self._http_proxy_stop      = None
-        self._tray_hwnd            = 0
+            self.cfg = load_config()
+            if "extract_dir" not in self.cfg:
+                dlg = FolderSetupDialog(root)
+                self.cfg["extract_dir"] = dlg.result or FolderSetupDialog.DEFAULT
+                save_config(self.cfg, self.cfg["extract_dir"])
 
-        self.status_var         = tk.StringVar(value="Status: Initializing…")
-        self.proxy_var          = tk.BooleanVar()
-        self.source_var         = tk.StringVar(value="Delta-Kronecker Tor-Bridges-Collector")
-        self.cat_var            = tk.StringVar(value="Tested & Active")
-        self.trans_var          = tk.StringVar()
-        self.ip_var             = tk.StringVar(value="IPv4")
-        self.conn_progress_var  = tk.IntVar(value=0)
-        self.conn_pct_var       = tk.StringVar(value="0%")
-        self.stat_ip_var        = tk.StringVar(value="—")
-        self.stat_country_var   = tk.StringVar(value="—")
-        self.stat_uptime_var    = tk.StringVar(value="—")
-        self.stat_tor_var       = tk.StringVar(value="—")
-        self._dl_bar_var        = tk.IntVar(value=0)
-        self.bridge_count_var   = tk.StringVar(value="")
-        self.bridge_updated_var = tk.StringVar(value="")
+            self.extract_dir   = self.cfg["extract_dir"]
+            self.archive_name  = os.path.join(
+                os.path.dirname(self.extract_dir), "tor-expert-bundle.tar.gz")
+            self.bridges_dir   = os.path.join(self.extract_dir, "bridges")
+            self.logs_dir      = os.path.join(self.extract_dir, "logs")
 
-        self.setup_theme()
-        self.setup_ui()
+            self.tor_process           = None
+            self.tor_connected         = False
+            self.connect_time          = None
+            self._uptime_id            = None
+            self._auto_test_id         = None
+            self._watchdog_id          = None
+            self._keepalive_id         = None
+            self._auto_connect_active  = False
+            self._http_proxy_stop      = None
+            self._tray_hwnd            = 0
 
-        self.root.update()
-        self._set_window_icon()
-        apply_dark_titlebar(self.root)
-        self.root.geometry("750x980")
-        self.root.protocol("WM_DELETE_WINDOW", self._on_close_btn)
+            self.status_var         = tk.StringVar(value="Initializing…")
+            self.proxy_var          = tk.BooleanVar()
+            self.source_var         = tk.StringVar(value="Delta-Kronecker Tor-Bridges-Collector")
+            self.cat_var            = tk.StringVar(value="Tested & Active")
+            self.trans_var          = tk.StringVar()
+            self.ip_var             = tk.StringVar(value="IPv4")
+            self.no_bridge_var      = tk.BooleanVar(value=False)
+            self.conn_progress_var  = tk.IntVar(value=0)
+            self.conn_pct_var       = tk.StringVar(value="0%")
+            self.stat_ip_var        = tk.StringVar(value="—")
+            self.stat_country_var   = tk.StringVar(value="—")
+            self.stat_uptime_var    = tk.StringVar(value="—")
+            self.stat_tor_var       = tk.StringVar(value="—")
+            self._dl_bar_var        = tk.IntVar(value=0)
+            self.bridge_count_var   = tk.StringVar(value="")
+            self.bridge_updated_var = tk.StringVar(value="")
 
-        threading.Thread(target=self.auto_initialize, daemon=True).start()
+            self.setup_ui()
 
+            self.root.update_idletasks()
+            self.root.protocol("WM_DELETE_WINDOW", self._on_close_btn)
+
+            self.root.after(1000, lambda: self.root.attributes("-alpha", 1.0))
+
+            threading.Thread(target=self.auto_initialize, daemon=True).start()
+
+
+    # ── CLOSE / TRAY ──────────────────────────
     def _on_close_btn(self):
         dlg = tk.Toplevel(self.root)
         dlg.title("Close")
@@ -839,6 +1967,7 @@ class TorClientGUI:
         dlg.transient(self.root)
         dlg.update()
         apply_dark_titlebar(dlg)
+        set_window_icon(dlg)  # Applied icon loader
         tk.Label(dlg, text="What would you like to do?",
                  font=('Segoe UI', 10), bg=C["BG"], fg=C["FG"]).pack(pady=(18, 10))
         bf = tk.Frame(dlg, bg=C["BG"])
@@ -852,16 +1981,24 @@ class TorClientGUI:
                 threading.Thread(target=self._tray_icon_loop, daemon=True).start()
 
         def _quit():
-            dlg.destroy()
-            self.stop_tor()
-            self.root.destroy()
+                    dlg.destroy()
+                    self.stop_tor()
+                    try:
+                        import subprocess as _sp
+                        my_pid = os.getpid()
+                        _sp.run(
+                            ["taskkill", "/F", "/FI", f"PID ne {my_pid}", "/IM", "tor.exe"],
+                            creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0x08000000),
+                            capture_output=True, timeout=5)
+                    except Exception: pass
+                    self.root.destroy()
 
         tk.Button(bf, text="🗕  Minimize to Tray", command=_tray,
                   bg=C["BTN2"], fg=C["FG"], font=('Segoe UI', 9, 'bold'),
                   relief="flat", cursor="hand2"
                   ).pack(side='left', fill='x', expand=True, padx=(0, 4), ipady=4)
         tk.Button(bf, text="✕  Quit", command=_quit,
-                  bg="#4A1E1E", fg=C["RED"], font=('Segoe UI', 9, 'bold'),
+                  bg="#3A1010", fg=C["RED"], font=('Segoe UI', 9, 'bold'),
                   relief="flat", cursor="hand2"
                   ).pack(side='left', fill='x', expand=True, padx=(4, 0), ipady=4)
 
@@ -947,7 +2084,6 @@ class TorClientGUI:
             self._tray_hwnd = hwnd
 
             hIcon = _load_tray_icon()
-
             nid = NOTIFYICONDATA()
             nid.cbSize           = ctypes.sizeof(NOTIFYICONDATA)
             nid.hWnd             = hwnd
@@ -973,18 +2109,22 @@ class TorClientGUI:
         threading.Thread(
             target=_win_notify, args=(title, msg, self._tray_hwnd),
             daemon=True).start()
+    
+    def open_github_project(self):
+        webbrowser.open("https://github.com/Delta-Kronecker/Tor-Windows")
 
+    # ── THEME ──────────────────────────────────
     def setup_theme(self):
         s = ttk.Style()
         s.theme_use('clam')
         s.configure('.', background=C["BG"], foreground=C["FG"], font=('Segoe UI', 10))
-        s.configure('TLabel',       background=C["BG"], foreground=C["FG"])
-        s.configure('TLabelframe',  background=C["BG"], foreground=C["ACC"],
-                    bordercolor=C["BTN"])
+        s.configure('TLabel',      background=C["BG"], foreground=C["FG"])
+        s.configure('TLabelframe', background=C["BG"], foreground=C["ACC"],
+                    bordercolor=C["BORDER"])
         s.configure('TLabelframe.Label', background=C["BG"], foreground=C["ACC"],
                     font=('Segoe UI', 10, 'bold'))
-        s.configure('TCombobox',    fieldbackground=C["BTN"], background=C["BTN"],
-                    foreground=C["FG"], borderwidth=0, arrowcolor=C["FG"],
+        s.configure('TCombobox', fieldbackground=C["BTN"], background=C["BTN"],
+                    foreground=C["FG"], borderwidth=0, arrowcolor=C["ACC"],
                     selectbackground=C["BTN"], selectforeground=C["FG"])
         s.map('TCombobox',
               fieldbackground=[('readonly', C["BTN"])],
@@ -994,263 +2134,381 @@ class TorClientGUI:
                     font=('Segoe UI', 10))
         s.map('TCheckbutton', background=[('active', C["BG"])])
         s.configure('Horizontal.TProgressbar',
-                    background=C["GRN"], troughcolor=C["BTN"],
-                    bordercolor=C["BG"], lightcolor=C["GRN"], darkcolor=C["GRN"])
-        s.configure('Stat.TLabel',    background=C["DRK"], foreground="#A6ADC8",
+                    background=C["ACC"], troughcolor=C["BORDER"],
+                    bordercolor=C["BG"], lightcolor=C["ACC2"], darkcolor=C["ACC"])
+        s.configure('Won.Horizontal.TProgressbar',
+                    background=C["GRN"], troughcolor=C["BORDER"])
+        s.configure('Stat.TLabel',    background=C["CARD"], foreground=C["FG2"],
                     font=('Segoe UI', 9))
-        s.configure('StatVal.TLabel', background=C["DRK"], foreground=C["GRN"],
+        s.configure('StatVal.TLabel', background=C["CARD"], foreground=C["GRN"],
                     font=('Segoe UI', 9, 'bold'))
         self.root.option_add('*TCombobox*Listbox.background', C["BTN"])
         self.root.option_add('*TCombobox*Listbox.foreground', C["FG"])
         self.root.option_add('*TCombobox*Listbox.selectBackground', C["ACC"])
-        self.root.option_add('*TCombobox*Listbox.selectForeground', C["BLK"])
+        self.root.option_add('*TCombobox*Listbox.selectForeground', "white")
 
+        # Config table styles (removes the default white background) (Feature #2)
+        s.configure('Treeview', background=C["BLK"], foreground=C["FG"], fieldbackground=C["BLK"])
+        s.configure('Treeview.Heading', background=C["BTN"], foreground=C["FG"], fieldbackground=C["BTN"])
+
+        s.configure('Treeview', 
+                    background=C["BLK"], 
+                    foreground=C["FG"], 
+                    fieldbackground=C["BLK"])
+        
+        s.configure('Treeview.Heading', 
+                    background=C["BTN"], 
+                    foreground=C["FG"])
+
+    # ── UI ─────────────────────────────────────
     def setup_ui(self):
-        BG = C["BG"]; FG = C["FG"]; BTN = C["BTN"]
+        BG = C["BG"]
 
-        top = tk.Frame(self.root, bg=BG)
-        top.pack(fill='x', padx=40, pady=(10, 0))
-        top.columnconfigure(0, weight=1)
-        top.columnconfigure(1, weight=1)
-        tk.Button(top, text="📖  How to Use",
-                  command=self.show_help_window,
-                  bg=C["BTN2"], fg=FG, font=('Segoe UI', 9, 'bold'),
-                  relief="flat", cursor="hand2",
-                  activebackground="#585B70"
-                  ).grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=3)
-        tk.Button(top, text="⚙️  Settings",
-                  command=self.show_settings_window,
-                  bg=C["BTN2"], fg=FG, font=('Segoe UI', 9, 'bold'),
-                  relief="flat", cursor="hand2",
-                  activebackground="#585B70"
-                  ).grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=3)
+        # ── Top accent bar ──
+        tk.Frame(self.root, bg=C["ACC"], height=3).pack(fill='x')
 
-        tk.Label(self.root, text="Tor Client",
-                 font=('Segoe UI', 17, 'bold'), bg=BG, fg=C["ACC"]).pack(pady=(6, 1))
+        # ── Navbar ──
+        nav = tk.Frame(self.root, bg=C["PANEL"], height=46)
+        nav.pack(fill='x')
+        nav.pack_propagate(False)
 
-        tk.Label(self.root, textvariable=self.status_var, wraplength=680,
-                 font=('Segoe UI', 9, 'italic'), bg=BG, fg=C["RED"]).pack(pady=2)
+        # Tor logo text
+        tk.Label(nav, text="𝜹 Tor Client 1.1.0 Beta",
+                 font=('Segoe UI', 11, 'bold'), bg=C["PANEL"], fg=C["ACC"]).pack(
+                 side='left', padx=18)
 
-        self._dl_outer = tk.Frame(self.root, bg=BG)
-        dl_hdr = tk.Frame(self._dl_outer, bg=BG)
-        dl_hdr.pack(fill='x', padx=40)
-        self._dl_title_lbl = tk.Label(dl_hdr, text="", bg=BG, fg=FG, font=('Segoe UI', 9))
+        # Nav buttons (right side)
+        for txt, cmd in [
+            ("📖 Help",     self.show_help_window),
+            ("⚙ Settings", self.show_settings_window),
+        ]:
+            tk.Button(nav, text=txt, command=cmd,
+                      bg=C["PANEL"], fg=C["FG2"],
+                      font=('Segoe UI', 9), relief="flat", cursor="hand2",
+                      activebackground=C["BTN"],
+                      activeforeground=C["FG"],
+                      bd=0, padx=12
+                      ).pack(side='right', fill='y')
+            
+        tk.Button(nav, text="Visit GitHub Page", 
+                command=self.open_github_project,
+                bg="#251A4D", fg=C["CYAN"], 
+                font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                activebackground="#34246B", activeforeground="white",
+                bd=0, padx=16
+                ).pack(side='right', fill='y')
+
+        # ── Status pill ──
+        status_bar = tk.Frame(self.root, bg=C["CARD"], height=32)
+        status_bar.pack(fill='x')
+        status_bar.pack_propagate(False)
+        self._status_dot = tk.Label(status_bar, text="●",
+                                    font=('Segoe UI', 10), bg=C["CARD"], fg=C["RED"])
+        self._status_dot.pack(side='left', padx=(16, 4))
+        tk.Label(status_bar, textvariable=self.status_var,
+                 font=('Segoe UI', 9), bg=C["CARD"], fg=C["FG2"]).pack(side='left')
+
+        # ── Download progress bar ──
+        self._dl_outer = tk.Frame(self.root, bg=C["BG"])
+        dl_hdr = tk.Frame(self._dl_outer, bg=C["BG"])
+        dl_hdr.pack(fill='x', padx=20)
+        self._dl_title_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["FG2"], font=('Segoe UI', 8))
         self._dl_title_lbl.pack(side='left')
-        self._dl_pct_lbl = tk.Label(dl_hdr, text="", bg=BG, fg=C["GRN"],
-                                    font=('Segoe UI', 9, 'bold'))
+        self._dl_pct_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["GRN"],
+                                    font=('Segoe UI', 8, 'bold'))
         self._dl_pct_lbl.pack(side='right')
+        self._dl_speed_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["CYAN"],
+                                      font=('Segoe UI', 8))
+        self._dl_speed_lbl.pack(side='right', padx=(10, 0))
         ttk.Progressbar(self._dl_outer, variable=self._dl_bar_var,
                         maximum=100, mode='determinate'
-                        ).pack(fill='x', padx=40, pady=(2, 3))
+                        ).pack(fill='x', padx=20, pady=(2, 3))
 
-        self.update_btn = tk.Button(
-            self.root, text="🔄  Update All Bridges",
-            command=self.start_download_bridges,
-            bg=BTN, fg=FG, font=('Segoe UI', 9), relief="flat", cursor="hand2",
-            activebackground=C["BTN2"])
-        self.update_btn.pack(pady=3, fill='x', padx=40)
+        # ── Main content area ──
+        main = tk.Frame(self.root, bg=BG)
+        main.pack(fill='both', expand=True, padx=20, pady=8)
 
-        frame = ttk.LabelFrame(self.root, text=" Bridge Configuration ")
-        frame.pack(pady=5, padx=40, fill='x')
+        # ── Left panel: Bridge config + actions ──
+        left = tk.Frame(main, bg=BG)
+        left.pack(side='left', fill='both', expand=True)
 
-        ttk.Label(frame, text="Bridge Source:").grid(
-            row=0, column=0, padx=12, pady=5, sticky="w")
-        self.source_combo = ttk.Combobox(
-            frame, textvariable=self.source_var,
-            values=["Default (Built-in)", "Delta-Kronecker Tor-Bridges-Collector"],
-            state="readonly")
-        self.source_combo.grid(row=0, column=1, padx=12, pady=5, sticky="ew")
-        self.source_combo.bind("<<ComboboxSelected>>", self.on_source_changed)
+        # Bridge config card
+        cfg_card = tk.Frame(left, bg=C["PANEL"], bd=0)
+        cfg_card.pack(fill='x', pady=(0, 6))
+        tk.Frame(cfg_card, bg=C["ACC"], height=2).pack(fill='x')
 
-        self.cat_label = ttk.Label(frame, text="Category:")
-        self.cat_label.grid(row=1, column=0, padx=12, pady=5, sticky="w")
-        self.cat_combo = ttk.Combobox(
-            frame, textvariable=self.cat_var,
-            values=["Tested & Active", "Fresh (72h)", "Full Archive"],
-            state="readonly")
-        self.cat_combo.grid(row=1, column=1, padx=12, pady=5, sticky="ew")
+        cfg_inner = tk.Frame(cfg_card, bg=C["PANEL"])
+        cfg_inner.pack(fill='x', padx=14, pady=10)
+
+        # Title row
+        ttl_row = tk.Frame(cfg_inner, bg=C["PANEL"])
+        ttl_row.pack(fill='x', pady=(0, 8))
+        tk.Label(ttl_row, text="Bridge Configuration",
+                 font=('Segoe UI', 10, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='left')
+        self.update_btn = tk.Button(ttl_row, text="↺ Update Bridges",
+                                    command=self.start_download_bridges,
+                                    bg=C["BTN"], fg=C["CYAN"],
+                                    font=('Segoe UI', 8), relief="flat", cursor="hand2",
+                                    activebackground=C["BTN2"])
+        self.update_btn.pack(side='right')
+
+        def _lbl_combo(parent, text, var, values, width=22, command=None):
+            row = tk.Frame(parent, bg=C["PANEL"])
+            row.pack(fill='x', pady=3)
+            tk.Label(row, text=text, width=13, anchor='w',
+                     bg=C["PANEL"], fg=C["FG2"],
+                     font=('Segoe UI', 9)).pack(side='left')
+            cb = ttk.Combobox(row, textvariable=var, values=values,
+                              state="readonly", width=width)
+            cb.pack(side='left', fill='x', expand=True)
+            if command:
+                cb.bind("<<ComboboxSelected>>", command)
+            return cb
+
+        _lbl_combo(cfg_inner, "Source:", self.source_var,
+                   ["Default (Built-in)", "Delta-Kronecker Tor-Bridges-Collector", "Custom Bridges"],
+                   command=self.on_source_changed)
+
+        self.cat_row = tk.Frame(cfg_inner, bg=C["PANEL"])
+        self.cat_row.pack(fill='x', pady=3)
+        tk.Label(self.cat_row, text="Category:", width=13, anchor='w',
+                 bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 9)).pack(side='left')
+        self.cat_combo = ttk.Combobox(self.cat_row, textvariable=self.cat_var,
+                                      values=["Tested & Active", "Fresh (72h)", "Full Archive"],
+                                      state="readonly", width=22)
+        self.cat_combo.pack(side='left', fill='x', expand=True)
         self.cat_combo.bind("<<ComboboxSelected>>", self._on_bridge_selection_change)
 
-        ttk.Label(frame, text="Transport:").grid(
-            row=2, column=0, padx=12, pady=5, sticky="w")
-        self.trans_combo = ttk.Combobox(frame, textvariable=self.trans_var, state="readonly")
-        self.trans_combo.grid(row=2, column=1, padx=12, pady=5, sticky="ew")
-        self.trans_combo.bind("<<ComboboxSelected>>", self._on_bridge_selection_change)
+        self.trans_combo = _lbl_combo(cfg_inner, "Transport:", self.trans_var,
+                                      [], command=self._on_bridge_selection_change)
 
-        ttk.Label(frame, text="IP Version:").grid(
-            row=3, column=0, padx=12, pady=5, sticky="w")
-        ip_combo = ttk.Combobox(frame, textvariable=self.ip_var,
-                                values=["Both", "IPv4", "IPv6"], state="readonly")
-        ip_combo.grid(row=3, column=1, padx=12, pady=5, sticky="ew")
-        ip_combo.bind("<<ComboboxSelected>>", self._on_bridge_selection_change)
+        self.ip_combo = _lbl_combo(cfg_inner, "IP Version:", self.ip_var,
+                                   ["Both", "IPv4", "IPv6"],
+                                   command=self._on_bridge_selection_change)
 
-        info_row = tk.Frame(frame, bg=BG)
-        info_row.grid(row=4, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 6))
-        ttk.Label(info_row, text="Bridges available:", style='Stat.TLabel').pack(side='left')
-        ttk.Label(info_row, textvariable=self.bridge_count_var,
-                  style='StatVal.TLabel').pack(side='left', padx=(4, 20))
-        ttk.Label(info_row, text="Last updated:", style='Stat.TLabel').pack(side='left')
-        ttk.Label(info_row, textvariable=self.bridge_updated_var,
-                  style='StatVal.TLabel').pack(side='left', padx=(4, 0))
+        nb_row = tk.Frame(cfg_inner, bg=C["PANEL"])
+        nb_row.pack(fill='x', pady=3)
+        ttk.Checkbutton(nb_row, text="Connect without bridge  (direct Tor)",
+                        variable=self.no_bridge_var,
+                        command=self._on_no_bridge_toggle).pack(side='left')
 
-        frame.columnconfigure(1, weight=1)
-        self.update_transports()
-        self.on_source_changed()
+        # Bridge info
+        info_row = tk.Frame(cfg_inner, bg=C["PANEL"])
+        info_row.pack(fill='x', pady=(4, 0))
+        tk.Label(info_row, text="Available:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 8)).pack(side='left')
+        tk.Label(info_row, textvariable=self.bridge_count_var,
+                 bg=C["PANEL"], fg=C["FG"],
+                 font=('Segoe UI', 8, 'bold')).pack(side='left', padx=(4, 16))
+        tk.Label(info_row, text="Updated:", bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 8)).pack(side='left')
+        tk.Label(info_row, textvariable=self.bridge_updated_var,
+                 bg=C["PANEL"], fg=C["FG2"],
+                 font=('Segoe UI', 8)).pack(side='left', padx=4)
 
-        bf = tk.Frame(self.root, bg=BG)
-        bf.pack(fill='x', padx=40, pady=6)
+        # ── Action buttons ──
+        btn_card = tk.Frame(left, bg=C["PANEL"], bd=0)
+        btn_card.pack(fill='x', pady=(0, 6))
+        tk.Frame(btn_card, bg=C["ACC"], height=2).pack(fill='x')
+        btn_inner = tk.Frame(btn_card, bg=C["PANEL"])
+        btn_inner.pack(fill='x', padx=14, pady=10)
+
+        # Row 1: Auto Connect / Start / Stop
+        r1 = tk.Frame(btn_inner, bg=C["PANEL"])
+        r1.pack(fill='x', pady=(0, 4))
         for i in range(3):
-            bf.columnconfigure(i, weight=1)
+            r1.columnconfigure(i, weight=1)
 
-        self.auto_btn = tk.Button(bf, text="🤖  Auto Connect",
+        # Auto Connect button styled STANDARD gray (Feature #5)
+        self.auto_btn = tk.Button(r1, text="⚡ Auto Connect",
                                   command=self.start_auto_connect,
-                                  bg="#1E3A4A", fg="#89DCEB",
-                                  font=('Segoe UI', 11, 'bold'),
+                                  bg=C["BTN2"], fg=C["FG"],
+                                  font=('Segoe UI', 10, 'bold'),
                                   relief="flat", cursor="hand2",
-                                  activebackground="#2A4F64",
-                                  activeforeground="#89DCEB")
-        self.auto_btn.grid(row=0, column=0, padx=(0, 3), sticky="ew", ipady=5)
+                                  activebackground=C["BTN"])
+        self.auto_btn.grid(row=0, column=0, padx=(0, 3), sticky="ew", ipady=7)
 
-        self.start_btn = tk.Button(bf, text="▶  Start Tor",
+        self.start_btn = tk.Button(r1, text="▶ Start",
                                    command=self.start_tor_thread,
-                                   bg=C["ACC"], fg=C["BLK"],
-                                   font=('Segoe UI', 11, 'bold'),
+                                   bg=C["BTN2"], fg=C["FG"],
+                                   font=('Segoe UI', 10, 'bold'),
                                    relief="flat", cursor="hand2",
-                                   activebackground="#B4BEFE",
-                                   activeforeground=C["BLK"])
-        self.start_btn.grid(row=0, column=1, padx=3, sticky="ew", ipady=5)
+                                   activebackground=C["BTN"])
+        self.start_btn.grid(row=0, column=1, padx=3, sticky="ew", ipady=7)
 
-        self.stop_btn = tk.Button(bf, text="■  Stop",
+        self.stop_btn = tk.Button(r1, text="■ Stop",
                                   command=self.stop_tor,
-                                  bg=BTN, fg=FG,
-                                  font=('Segoe UI', 11, 'bold'),
+                                  bg=C["BTN"], fg=C["FG2"],
+                                  font=('Segoe UI', 10, 'bold'),
                                   relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"],
-                                  activeforeground=FG)
-        self.stop_btn.grid(row=0, column=2, padx=(3, 0), sticky="ew", ipady=5)
+                                  activebackground=C["BTN2"])
+        self.stop_btn.grid(row=0, column=2, padx=(3, 0), sticky="ew", ipady=7)
 
-        pf = tk.Frame(self.root, bg=BG)
-        pf.pack(fill='x', padx=40, pady=(0, 3))
-        pf.columnconfigure(0, weight=3)
-        pf.columnconfigure(1, weight=1)
+        # Rows 2 & 3: Bridge Scanner, Multi-Connect, Test Connection, New Circuit Symmetrical Grid Layout (Feature #3)
+        r2_3 = tk.Frame(btn_inner, bg=C["PANEL"])
+        r2_3.pack(fill='x', pady=(0, 4))
+        r2_3.columnconfigure(0, weight=1)
+        r2_3.columnconfigure(1, weight=1)
 
-        self.proxy_btn = tk.Button(
-            pf,
-            text="🌐  System Proxy  ●  OFF",
-            command=self.toggle_proxy_button,
-            bg="#2A2A3E", fg="#6C7086",
-            font=('Segoe UI', 10, 'bold'),
-            relief="flat", cursor="hand2",
-            activebackground=BTN)
-        self.proxy_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3), ipady=4)
+        # Row 0 of r2_3: Bridge Scanner & Multi-Connect
+        tk.Button(r2_3, text="🔍 Bridge Scanner",
+                  command=self.show_bridge_scanner,
+                  bg=C["BTN"], fg=C["FG"],
+                  font=('Segoe UI', 9, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["BTN2"]
+                  ).grid(row=0, column=0, padx=(0, 3), pady=2, sticky="ew", ipady=6)
 
-        self.newnym_btn = tk.Button(
-            pf,
-            text="🔄  New Circuit",
-            command=self.request_new_circuit,
-            bg=BTN, fg=C["YLW"],
-            font=('Segoe UI', 10, 'bold'),
-            relief="flat", cursor="hand2",
-            activebackground=C["BTN2"])
-        self.newnym_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0), ipady=4)
+        # Multi-Connect button now uniquely highlighted with Tor purple accent (Feature #5)
+        self.multi_btn = tk.Button(r2_3, text="⚡ Multi-Connect",
+                                   command=self.show_parallel_connect,
+                                   bg=C["ACC"], fg="white",
+                                   font=('Segoe UI', 9, 'bold'),
+                                   relief="flat", cursor="hand2",
+                                   activebackground=C["ACC2"])
+        self.multi_btn.grid(row=0, column=1, padx=(3, 0), pady=2, sticky="ew", ipady=6)
 
-        cp = tk.Frame(self.root, bg=BG)
-        cp.pack(fill='x', padx=40, pady=(4, 0))
-        ttk.Label(cp, text="Connection Progress:").pack(side='left')
-        ttk.Label(cp, textvariable=self.conn_pct_var,
-                  font=('Segoe UI', 10, 'bold'),
-                  foreground=C["GRN"]).pack(side='right')
-        ttk.Progressbar(self.root, variable=self.conn_progress_var,
+        # Row 1 of r2_3: Test Connection & New Circuit
+        self.test_btn_top = tk.Button(r2_3, text="🔍 Test Connection",
+                                  command=self.start_test_connection,
+                                  bg=C["BTN"], fg=C["FG"],
+                                  font=('Segoe UI', 9, 'bold'),
+                                  relief="flat", cursor="hand2",
+                                  activebackground=C["BTN2"])
+        self.test_btn_top.grid(row=1, column=0, padx=(0, 3), pady=2, sticky="ew", ipady=6)
+
+        self.newnym_btn = tk.Button(r2_3, text="↻ New Circuit",
+                                    command=self.request_new_circuit,
+                                    bg=C["BTN"], fg=C["FG"],
+                                    font=('Segoe UI', 9, 'bold'),
+                                    relief="flat", cursor="hand2",
+                                    activebackground=C["BTN2"])
+        self.newnym_btn.grid(row=1, column=1, padx=(3, 0), pady=2, sticky="ew", ipady=6)
+
+        # Row 4: System Proxy status indicator
+        r4 = tk.Frame(btn_inner, bg=C["PANEL"])
+        r4.pack(fill='x', pady=(0, 0))
+
+        self.proxy_btn = tk.Button(r4,
+                                   text="🌐  System Proxy   ●  OFF",
+                                   command=self.toggle_proxy_button,
+                                   bg=C["BTN"], fg=C["FG2"],
+                                   font=('Segoe UI', 10, 'bold'),
+                                   relief="flat", cursor="hand2",
+                                   activebackground=C["BTN2"])
+        self.proxy_btn.pack(fill='x', ipady=7)
+
+        # ── Connection progress ──
+        prog_card = tk.Frame(left, bg=C["PANEL"])
+        prog_card.pack(fill='x', pady=(0, 6))
+        tk.Frame(prog_card, bg=C["ACC"], height=2).pack(fill='x')
+        prog_inner = tk.Frame(prog_card, bg=C["PANEL"])
+        prog_inner.pack(fill='x', padx=14, pady=8)
+        prog_hdr = tk.Frame(prog_inner, bg=C["PANEL"])
+        prog_hdr.pack(fill='x')
+        tk.Label(prog_hdr, text="Connection Progress",
+                 font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='left')
+        tk.Label(prog_hdr, textvariable=self.conn_pct_var,
+                 font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='right')
+        ttk.Progressbar(prog_inner, variable=self.conn_progress_var,
                         maximum=100, mode='determinate'
-                        ).pack(fill='x', padx=40, pady=(2, 4))
+                        ).pack(fill='x', pady=(4, 0))
 
-        stats_lf = ttk.LabelFrame(self.root, text=" Connection Stats ")
-        stats_lf.pack(pady=4, padx=40, fill='x')
+        # ── Stats card ──
+        stats_card = tk.Frame(left, bg=C["PANEL"])
+        stats_card.pack(fill='x', pady=(0, 6))
+        tk.Frame(stats_card, bg=C["ACC"], height=2).pack(fill='x')
+        stats_inner = tk.Frame(stats_card, bg=C["CARD"])
+        stats_inner.pack(fill='x', padx=0, pady=0)
 
-        sg = tk.Frame(stats_lf, bg=C["DRK"])
-        sg.pack(fill='x', padx=6, pady=(6, 4))
+        sg = tk.Frame(stats_inner, bg=C["CARD"])
+        sg.pack(fill='x', padx=10, pady=8)
         sg.columnconfigure(1, weight=1)
         sg.columnconfigure(3, weight=1)
 
         def _sl(t, r, c):
             ttk.Label(sg, text=t, style='Stat.TLabel').grid(
-                row=r, column=c, padx=(12, 3), pady=4, sticky="w")
-
+                row=r, column=c, padx=(8, 3), pady=4, sticky="w")
         def _sv(var, r, c):
             ttk.Label(sg, textvariable=var, style='StatVal.TLabel').grid(
-                row=r, column=c, padx=(0, 12), pady=4, sticky="w")
+                row=r, column=c, padx=(0, 8), pady=4, sticky="w")
 
         _sl("Exit IP:",    0, 0); _sv(self.stat_ip_var,      0, 1)
         _sl("Country:",    0, 2); _sv(self.stat_country_var,  0, 3)
         _sl("Uptime:",     1, 0); _sv(self.stat_uptime_var,   1, 1)
-        _sl("Tor Status:", 1, 2); _sv(self.stat_tor_var,      1, 3)
+        _sl("Status:",     1, 2); _sv(self.stat_tor_var,      1, 3)
 
-        btn_row = tk.Frame(stats_lf, bg=C["BG"])
-        btn_row.pack(padx=6, pady=(2, 8), fill='x')
-        btn_row.columnconfigure(0, weight=1)
-        btn_row.columnconfigure(1, weight=1)
+        stat_btns = tk.Frame(stats_card, bg=C["PANEL"])
+        stat_btns.pack(fill='x', padx=14, pady=(4, 10))
 
-        self.test_btn = tk.Button(
-            btn_row, text="🔍  Test Connection via Tor",
-            command=self.start_test_connection,
-            bg=BTN, fg=FG, font=('Segoe UI', 9, 'bold'),
-            relief="flat", cursor="hand2",
-            activebackground=C["BTN2"])
-        self.test_btn.grid(row=0, column=0, sticky="ew", padx=(0, 3))
+        self.save_log_btn = tk.Button(stat_btns, text="💾 Save Log",
+                                      command=self.save_log_to_file,
+                                      bg=C["BTN"], fg=C["FG"],
+                                      font=('Segoe UI', 9, 'bold'),
+                                      relief="flat", cursor="hand2",
+                                      activebackground=C["BTN2"])
+        self.save_log_btn.pack(fill='x', ipady=4)
+        self.test_btn = self.test_btn_top
 
-        self.save_log_btn = tk.Button(
-            btn_row, text="💾  Save Log",
-            command=self.save_log_to_file,
-            bg=BTN, fg=C["ACC"], font=('Segoe UI', 9, 'bold'),
-            relief="flat", cursor="hand2",
-            activebackground=C["BTN2"])
-        self.save_log_btn.grid(row=0, column=1, sticky="ew", padx=(3, 0))
+        # ── Log ──
+        log_card = tk.Frame(left, bg=C["PANEL"])
+        log_card.pack(fill='both', expand=True)
+        tk.Frame(log_card, bg=C["ACC"], height=2).pack(fill='x')
+        log_header = tk.Frame(log_card, bg=C["PANEL"])
+        log_header.pack(fill='x', padx=14, pady=(6, 4))
+        tk.Label(log_header, text="Tor Logs",
+                 font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='left')
+        tk.Label(log_header,
+                 text="● white=log  ● notice=connected  ● warn=warning  ● err=error",
+                 font=('Segoe UI', 7), bg=C["PANEL"], fg=C["FG2"]).pack(side='right')
 
-        tk.Label(self.root, text="Tor Logs:", bg=BG, fg=FG,
-                 font=('Segoe UI', 9)).pack(anchor='w', padx=40, pady=(4, 2))
-        log_frame = tk.Frame(self.root, bg=C["BLK"])
-        log_frame.pack(fill='both', expand=True, padx=40, pady=(0, 8))
+        log_frame = tk.Frame(log_card, bg=C["BLK"])
+        log_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
-        self.log_text = tk.Text(log_frame, font=('Consolas', 9), wrap='word',
-                                state='disabled', bg=C["BLK"], fg=C["GRN"],
+        self.log_text = tk.Text(log_frame, font=('Consolas', 8), wrap='word',
+                                state='disabled', bg=C["BLK"], fg=C["FG2"],
                                 bd=0, padx=10, pady=8)
         self.log_text.tag_configure("warn",   foreground=C["YLW"])
         self.log_text.tag_configure("err",    foreground=C["RED"])
         self.log_text.tag_configure("notice", foreground=C["GRN"])
-        self.log_text.tag_configure("info",   foreground="#A6ADC8")
-        self.log_text.tag_configure("auto",   foreground=C["ACC"])
+        self.log_text.tag_configure("info",   foreground=C["FG2"])
+        self.log_text.tag_configure("auto",   foreground=C["CYAN"])
         self.log_text.tag_configure("test",   foreground=C["ORG"])
-
         sb_log = ttk.Scrollbar(log_frame, command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=sb_log.set)
         self.log_text.pack(side='left', fill='both', expand=True)
         sb_log.pack(side='right', fill='y')
 
-    def _on_bridge_selection_change(self, event=None):
-        self.update_transports(event)
-        self._refresh_bridge_info()
+        self.update_transports()
+        self.on_source_changed()
 
-    def _refresh_bridge_info(self):
-        cat   = self.cat_var.get()
-        trans = self.trans_var.get()
-        ip    = self.ip_var.get()
-        src   = self.source_var.get()
-        count = 0
-        mtime_str = "—"
-        if src != "Default (Built-in)":
-            for c, t, v, _ in BRIDGE_DATA:
-                if c == cat and t == trans and (ip == "Both" or ip == v):
-                    fn = os.path.join(self.bridges_dir, self.get_safe_filename(c, t, v))
-                    if os.path.exists(fn):
-                        try:
-                            with open(fn, encoding="utf-8") as f:
-                                count += sum(1 for l in f if l.strip())
-                            mt = os.path.getmtime(fn)
-                            mtime_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mt))
-                        except Exception:
-                            pass
-        self.bridge_count_var.set(str(count) if count else "—")
-        self.bridge_updated_var.set(mtime_str)
+    # ── NO BRIDGE TOGGLE ─────────
+    def _on_no_bridge_toggle(self):
+        nb = self.no_bridge_var.get()
+        state = 'disabled' if nb else 'readonly'
+        self.cat_combo.configure(state=state)
+        self.trans_combo.configure(state=state)
+        self.ip_combo.configure(state=state)
+
+    # ── SHOW WINDOWS ───────────────────────────
+    def show_custom_bridge_window(self):
+        def _on_save(new_cfg):
+            self.cfg.update(new_cfg)
+            save_config(self.cfg, self.extract_dir)
+        CustomBridgeWindow(self.root, self.cfg, _on_save)
+
+    def show_bridge_scanner(self):
+        BridgeScannerWindow(self.root, self.bridges_dir, self.get_safe_filename)
+
+    def show_parallel_connect(self):
+        def _on_connected(label, socks_port, ctrl_port, http_port):
+            self.append_log(
+                f"[Parallel] Winner: {label}  SOCKS:{socks_port}  HTTP:{http_port}\n", "auto")
+        ParallelConnectWindow(
+            self.root, self.extract_dir, self.bridges_dir,
+            self.get_safe_filename, self.generate_torrc,
+            self.cfg, _on_connected)
 
     def show_settings_window(self):
         def _on_save(new_cfg):
@@ -1260,67 +2518,21 @@ class TorClientGUI:
                 self._restart_watchdog()
         SettingsWindow(self.root, self.cfg, _on_save, on_clear_data=self._clear_data_dir)
 
-    def _clear_data_dir(self):
-        if self.tor_connected:
-            messagebox.showwarning("Warning",
-                "Stop Tor first before clearing data.", parent=self.root)
-            return
-        data_dir = os.path.join(self.extract_dir, "data")
-        if os.path.isdir(data_dir):
-            try:
-                shutil.rmtree(data_dir)
-                self.append_log("[Maintenance] Data directory cleared.\n", "info")
-            except Exception as e:
-                self.append_log(f"[Maintenance] Clear failed: {e}\n", "err")
-
-    def _set_window_icon(self):
-        ico = resource_path("icon.ico")
-        if os.path.exists(ico):
-            try:
-                self.root.iconbitmap(default=ico)
-                self._ico_path = ico
-                return
-            except Exception:
-                pass
-        try:
-            xbm = ("#define i_w 16\n#define i_h 16\n"
-                   "static char i_b[] = {"
-                   "0xf0,0x0f,0xfe,0x7f,0xff,0xff,0xff,0xff,"
-                   "0xff,0xff,0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,"
-                   "0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,"
-                   "0xff,0xff,0xff,0xff,0xfe,0x7f,0xf0,0x0f};")
-            img = tk.PhotoImage(data=xbm, format="xbm")
-            self.root.iconphoto(True, img)
-            self._icon_ref = img
-        except Exception:
-            pass
-        self._ico_path = None
-
-    def _apply_icon_to(self, win):
-        if getattr(self, '_ico_path', None):
-            try:
-                win.iconbitmap(default=self._ico_path)
-                return
-            except Exception:
-                pass
-        if hasattr(self, '_icon_ref'):
-            try:
-                win.iconphoto(True, self._icon_ref)
-            except Exception:
-                pass
-
+    # ── UI HELPERS ─────────────────────────────
     def _show_dl(self, title="Downloading…"):
         self._dl_title_lbl.configure(text=title)
         self._dl_pct_lbl.configure(text="0%")
         self._dl_bar_var.set(0)
         if not self._dl_outer.winfo_ismapped():
-            self._dl_outer.pack(fill='x', before=self.update_btn)
+            self._dl_outer.pack(fill='x', after=self.root.winfo_children()[1])
 
-    def _set_dl(self, pct, title=None):
+    def _set_dl(self, pct, title=None, speed=None):
         self._dl_bar_var.set(pct)
         self._dl_pct_lbl.configure(text=f"{pct}%")
         if title:
             self._dl_title_lbl.configure(text=title)
+        if speed:
+            self._dl_speed_lbl.configure(text=speed)
 
     def _hide_dl(self, delay=900):
         self.root.after(delay, self._dl_outer.pack_forget)
@@ -1357,13 +2569,20 @@ class TorClientGUI:
             self.append_log(f"[Log] Save failed: {e}\n", "err")
 
     def update_status(self, msg):
-        self.status_var.set(f"Status: {msg}")
+        self.status_var.set(msg)
+        connected = self.tor_connected
+        dot_color = C["FG"] if connected else (C["FG2"] if "connect" in msg.lower() else C["FG2"])
+        try:
+            self._status_dot.configure(fg=dot_color)
+        except Exception:
+            pass
         self.root.update_idletasks()
 
     def update_conn_progress(self, v):
         self.conn_progress_var.set(v)
         self.conn_pct_var.set(f"{v}%")
 
+    # ── UPTIME ─────────────────────────────────
     def _tick_uptime(self):
         if self.connect_time is None:
             return
@@ -1383,6 +2602,7 @@ class TorClientGUI:
         self.connect_time = None
         self.stat_uptime_var.set("—")
 
+    # ── AUTO TEST ──────────────────────────────
     def _schedule_auto_test(self):
         if not self.tor_connected:
             return
@@ -1422,7 +2642,7 @@ class TorClientGUI:
             self.root.after(0, self.append_log, f"[Test] Failed: {e}\n")
         finally:
             self.root.after(0, self.test_btn.configure,
-                            {"text": "🔍  Test Connection via Tor", "state": "normal"})
+                            {"text": "🔍 Test Connection", "state": "normal"})
 
     def _lookup_country(self, ip: str) -> str:
         services = [
@@ -1443,6 +2663,7 @@ class TorClientGUI:
                 continue
         return "?"
 
+    # ── NEW CIRCUIT ────────────────────────────
     def request_new_circuit(self):
         if not self.tor_connected:
             self.append_log("[Circuit] Not connected.\n", "warn")
@@ -1473,6 +2694,7 @@ class TorClientGUI:
         except Exception as e:
             self.root.after(0, self.append_log, f"[Circuit] Failed: {e}\n", "err")
 
+    # ── WATCHDOG ───────────────────────────────
     def _start_watchdog(self):
         self._cancel_watchdog()
         interval = self.cfg.get("watchdog_interval", 30) * 1000
@@ -1507,6 +2729,7 @@ class TorClientGUI:
         time.sleep(2)
         self.run_tor()
 
+    # ── KEEP-ALIVE ─────────────────────────────
     def _start_keepalive(self):
         self._cancel_keepalive()
         if not self.cfg.get("keep_alive_enabled", True):
@@ -1537,6 +2760,7 @@ class TorClientGUI:
         except Exception:
             pass
 
+    # ── HTTP PROXY ─────────────────────────────
     def _start_http_proxy(self):
         if self._http_proxy_stop is not None:
             return
@@ -1549,6 +2773,7 @@ class TorClientGUI:
             self._http_proxy_stop.set()
             self._http_proxy_stop = None
 
+    # ── SYSTEM PROXY ───────────────────────────
     def toggle_proxy_button(self):
         new = not self.proxy_var.get()
         self.proxy_var.set(new)
@@ -1558,16 +2783,17 @@ class TorClientGUI:
     def _refresh_proxy_btn(self):
         if self.proxy_var.get():
             self.proxy_btn.configure(
-                text="🌐  System Proxy  ●  ON",
-                bg="#1E4620", fg=C["GRN"],
-                activebackground="#2A5C2E", activeforeground=C["GRN"])
+                text="🌐  System Proxy   ●  ON",
+                bg="#0E2A1A", fg=C["GRN"],
+                activebackground="#163A22", activeforeground=C["GRN"])
         else:
             self.proxy_btn.configure(
-                text="🌐  System Proxy  ●  OFF",
-                bg="#2A2A3E", fg="#6C7086",
-                activebackground=C["BTN"], activeforeground=C["FG"])
+                text="🌐  System Proxy   ●  OFF",
+                bg=C["BTN"], fg=C["FG2"],
+                activebackground=C["BTN2"], activeforeground=C["FG"])
 
     def set_system_proxy(self, enable):
+        """Sets main system proxy using the standardized 127.0.0.1:PORT structure."""
         try:
             key = winreg.OpenKey(
                 winreg.HKEY_CURRENT_USER,
@@ -1575,7 +2801,7 @@ class TorClientGUI:
                 0, winreg.KEY_ALL_ACCESS)
             if enable:
                 self._start_http_proxy()
-                proxy_str = f'http=127.0.0.1:{HTTP_PROXY_PORT};https=127.0.0.1:{HTTP_PROXY_PORT}'
+                proxy_str = f'127.0.0.1:{HTTP_PROXY_PORT}'
                 winreg.SetValueEx(key, 'ProxyEnable',   0, winreg.REG_DWORD, 1)
                 winreg.SetValueEx(key, 'ProxyServer',   0, winreg.REG_SZ, proxy_str)
                 winreg.SetValueEx(key, 'ProxyOverride', 0, winreg.REG_SZ,
@@ -1597,14 +2823,24 @@ class TorClientGUI:
             self._refresh_proxy_btn()
             self.append_log("[Proxy] System proxy enabled automatically.\n", "notice")
 
+    # ── BRIDGE COMBOS ──────────────────────────
     def on_source_changed(self, event=None):
-        if self.source_var.get() == "Delta-Kronecker Tor-Bridges-Collector":
-            self.cat_label.grid()
-            self.cat_combo.grid()
+        src = self.source_var.get()
+        if src == "Delta-Kronecker Tor-Bridges-Collector":
+            try: self.cat_row.pack(fill='x', pady=3)
+            except Exception: pass
             self.update_transports()
+        elif src == "Custom Bridges":
+            try: self.cat_row.pack_forget()
+            except Exception: pass
+            opts = ["obfs4", "webtunnel", "vanilla"]
+            self.trans_combo['values'] = opts
+            if self.trans_var.get() not in opts:
+                self.trans_var.set("obfs4")
+            self.show_custom_bridge_window()
         else:
-            self.cat_label.grid_remove()
-            self.cat_combo.grid_remove()
+            try: self.cat_row.pack_forget()
+            except Exception: pass
             opts = ["obfs4", "snowflake", "meek"]
             self.trans_combo['values'] = opts
             if self.trans_var.get() not in opts:
@@ -1612,12 +2848,42 @@ class TorClientGUI:
         self._refresh_bridge_info()
 
     def update_transports(self, event=None):
-        opts = (["obfs4", "snowflake", "meek"]
-                if self.source_var.get() == "Default (Built-in)"
-                else ["obfs4", "webtunnel", "vanilla"])
+        src = self.source_var.get()
+        if src == "Default (Built-in)":
+            opts = ["obfs4", "snowflake", "meek"]
+        elif src == "Custom Bridges":
+            opts = ["obfs4", "webtunnel", "vanilla"]
+        else:
+            opts = ["obfs4", "webtunnel", "vanilla"]
         self.trans_combo['values'] = opts
         if self.trans_var.get() not in opts:
             self.trans_var.set(opts[0])
+
+    def _on_bridge_selection_change(self, event=None):
+        self.update_transports(event)
+        self._refresh_bridge_info()
+
+    def _refresh_bridge_info(self):
+        cat   = self.cat_var.get()
+        trans = self.trans_var.get()
+        ip    = self.ip_var.get()
+        src   = self.source_var.get()
+        count = 0
+        mtime_str = "—"
+        if src != "Default (Built-in)":
+            for c, t, v, _ in BRIDGE_DATA:
+                if c == cat and t == trans and (ip == "Both" or ip == v):
+                    fn = os.path.join(self.bridges_dir, self.get_safe_filename(c, t, v))
+                    if os.path.exists(fn):
+                        try:
+                            with open(fn, encoding="utf-8") as f:
+                                count += sum(1 for l in f if l.strip())
+                            mt = os.path.getmtime(fn)
+                            mtime_str = time.strftime("%Y-%m-%d %H:%M", time.localtime(mt))
+                        except Exception:
+                            pass
+        self.bridge_count_var.set(str(count) if count else "—")
+        self.bridge_updated_var.set(mtime_str)
 
     def _check_port_free(self, port: int) -> bool:
         try:
@@ -1629,10 +2895,31 @@ class TorClientGUI:
         except OSError:
             return False
 
+    # ── TORRC GENERATION ───────────────────────
     def _get_bridge_lines(self, cat, trans, ip, src="Delta-Kronecker Tor-Bridges-Collector"):
+        if src == "Custom Bridges" or self.source_var.get() == "Custom Bridges":
+            raw = self.cfg.get("custom_bridges", "").strip()
+            if raw:
+                limit = self.cfg.get("bridges_in_torrc", 100)
+                do_shuffle = self.cfg.get("shuffle_bridges", True)
+                lines = [l.strip() for l in raw.splitlines() if l.strip() and not l.startswith('#')]
+                if do_shuffle:
+                    import random as _random; _random.shuffle(lines)
+                return [f"Bridge {line}\n" for line in lines[:limit]]
+            return []
         bridge_lines = []
         limit      = self.cfg.get("bridges_in_torrc", 100)
         do_shuffle = self.cfg.get("shuffle_bridges", True)
+
+        if self.cfg.get("use_custom_bridges", False):
+            raw = self.cfg.get("custom_bridges", "").strip()
+            if raw:
+                lines = [l.strip() for l in raw.splitlines() if l.strip() and not l.startswith('#')]
+                if do_shuffle:
+                    random.shuffle(lines)
+                for line in lines[:limit]:
+                    bridge_lines.append(f"Bridge {line}\n")
+                return bridge_lines
 
         if src == "Default (Built-in)":
             cfg_file = os.path.join(self.extract_dir, "tor",
@@ -1661,7 +2948,8 @@ class TorClientGUI:
                             bridge_lines.append(f"Bridge {line}\n")
         return bridge_lines
 
-    def generate_torrc(self, cat_ov=None, trans_ov=None, ip_ov=None, src_ov=None):
+    def generate_torrc(self, cat_ov=None, trans_ov=None, ip_ov=None, src_ov=None,
+                       no_bridge_ov=None):
         base     = os.path.abspath(self.extract_dir)
         data_dir = os.path.join(base, "data")
         tor_dir  = os.path.join(base, "tor")
@@ -1671,13 +2959,21 @@ class TorClientGUI:
         torrc    = os.path.join(tor_dir, "torrc")
         os.makedirs(data_dir, exist_ok=True)
 
+        no_bridge = (no_bridge_ov if no_bridge_ov is not None
+                     else self.no_bridge_var.get())
+
         src   = src_ov   or self.source_var.get()
         cat   = cat_ov   or self.cat_var.get()
         trans = trans_ov or self.trans_var.get()
         ip    = ip_ov    or self.ip_var.get()
 
-        bridge_lines = self._get_bridge_lines(cat, trans, ip, src)
-        use = "1" if bridge_lines else "0"
+        if no_bridge:
+            bridge_lines = []
+            use = "0"
+        else:
+            bridge_lines = self._get_bridge_lines(cat, trans, ip, src)
+            use = "1" if bridge_lines else "0"
+
         cfg = self.cfg
 
         socks_opts = f"127.0.0.1:{TOR_SOCKS_PORT}"
@@ -1706,7 +3002,7 @@ class TorClientGUI:
         content += "AllowNonRFC953Hostnames 1\n"
         content += "EnforceDistinctSubnets 0\n"
         content += "MaxClientCircuitsPending 64\n"
-        content += "CircuitBuildTimeout 60\n"
+        content += "CircuitBuildTimeout 30\n"  # Fixed: reduced from 60 to 30 seconds
         content += "LearnCircuitBuildTimeout 0\n"
         content += "GuardLifetime 90 days\n"
         content += "NumDirectoryGuards 6\n"
@@ -1722,19 +3018,22 @@ class TorClientGUI:
                 content += f"ExitNodes {countries}\n"
                 content += f"StrictNodes {'1' if cfg.get('strict_exit_nodes', False) else '0'}\n"
 
+        if cfg.get("sni_enabled", False):
+            sni_host = cfg.get("sni_host", "www.google.com").strip()
+            if sni_host:
+                content += f"# SNI override active: {sni_host}\n"
+                content += f"# TLSHostname={sni_host} (applied per bridge when supported)\n"
+
         if cfg.get("exp_connection_padding", False):
             content += "ConnectionPadding 1\n"
         if cfg.get("exp_reduced_connection_padding", False):
             content += "ReducedConnectionPadding 1\n"
-
         v_cst = cfg.get("exp_circuit_stream_timeout", 0)
         if v_cst > 0:
             content += f"CircuitStreamTimeout {v_cst}\n"
-
         v_st = cfg.get("exp_socks_timeout", 0)
         if v_st > 0:
             content += f"SocksTimeout {v_st}\n"
-
         if cfg.get("exp_safe_logging", False):
             content += "SafeLogging 1\n"
         if cfg.get("exp_avoid_disk_writes", False):
@@ -1743,39 +3042,31 @@ class TorClientGUI:
             content += "HardwareAccel 1\n"
         if cfg.get("exp_client_dns_reject_internal", False):
             content += "ClientDNSRejectInternalAddresses 1\n"
-
         if cfg.get("exp_fascist_firewall", False):
             content += "FascistFirewall 1\n"
             fp = cfg.get("exp_firewall_ports", "80,443").strip()
             if fp:
                 content += f"FirewallPorts {fp}\n"
-
         ra = cfg.get("exp_reachable_addresses", "").strip()
         if ra:
             content += f"ReachableAddresses {ra}\n"
-
         v_nc = cfg.get("exp_num_cpus", 0)
         if v_nc > 0:
             content += f"NumCPUs {v_nc}\n"
-
         en = cfg.get("exp_exclude_nodes", "").strip()
         if en:
             content += f"ExcludeNodes {en}\n"
-
         een = cfg.get("exp_exclude_exit_nodes", "").strip()
         if een:
             content += f"ExcludeExitNodes {een}\n"
-
         nesp = cfg.get("exp_no_exit_stream_ports", "").strip()
         if nesp:
             for port in nesp.split(","):
                 port = port.strip()
                 if port:
                     content += f"ExitPolicy reject *:{port}\n"
-
         if cfg.get("exp_use_entry_guards_as_dir_guards", False):
             content += "UseEntryGuardsAsDirGuards 1\n"
-
         v_pbct = cfg.get("exp_path_bias_circ_threshold", 0)
         if v_pbct > 0:
             content += f"PathBiasCircThreshold {v_pbct}\n"
@@ -1794,28 +3085,46 @@ class TorClientGUI:
             f.write(content)
         return torrc, os.path.join(tor_dir, "tor.exe"), use, bridge_lines
 
+    # ── LAST-SUCCESS MEMORY ────────────────────
     def _save_last_success(self, cat, trans, ip):
         self.cfg["last_success_cat"]   = cat
         self.cfg["last_success_trans"] = trans
         self.cfg["last_success_ip"]    = ip
         save_config(self.cfg, self.extract_dir)
 
+    # ── AUTO CONNECT ───────────────────────────
     def start_auto_connect(self):
         if self.tor_process is not None:
             self.update_status("Already running — stop first.")
             return
-        self.auto_btn.configure(text="⏹  Stop Auto", command=self.stop_auto_connect,
-                                bg="#4A1E1E", fg="#F38BA8")
+        self.auto_btn.configure(text="⏹ Stop Auto", command=self.stop_auto_connect,
+                                bg="#3A1010", fg=C["RED"])
         self._auto_connect_active = True
         threading.Thread(target=self._run_auto_connect, daemon=True).start()
 
     def stop_auto_connect(self):
         self._auto_connect_active = False
         self.stop_tor()
-        self.auto_btn.configure(text="🤖  Auto Connect", command=self.start_auto_connect,
-                                bg="#1E3A4A", fg="#89DCEB")
+        self.auto_btn.configure(text="⚡ Auto Connect", command=self.start_auto_connect,
+                                bg=C["BTN2"], fg=C["FG"])
 
     def _run_auto_connect(self):
+        if self.no_bridge_var.get():
+            self.root.after(0, self.append_log,
+                            "\n[Auto] No-bridge mode: connecting directly to Tor network.\n", "auto")
+            if self._try_bridge_config(None, None, None, no_bridge=True):
+                self.root.after(0, self.append_log, "[Auto] ✅ Connected (no bridge)\n", "auto")
+                self.root.after(0, self.auto_btn.configure,
+                                {"text": "⚡ Auto Connect", "command": self.start_auto_connect,
+                                 "bg": C["BTN2"], "fg": C["FG"]})
+                return
+            self.root.after(0, self.append_log, "[Auto] ❌ Direct connection failed.\n", "auto")
+            self._auto_connect_active = False
+            self.root.after(0, self.auto_btn.configure,
+                            {"text": "⚡ Auto Connect", "command": self.start_auto_connect,
+                             "bg": C["BTN2"], "fg": C["FG"]})
+            return
+
         last_cat   = self.cfg.get("last_success_cat", "")
         last_trans = self.cfg.get("last_success_trans", "")
         last_ip    = self.cfg.get("last_success_ip", "")
@@ -1835,19 +3144,20 @@ class TorClientGUI:
                 self.root.after(0, self.append_log,
                                 f"[Auto] ✅ Connected with {mem_label}\n")
                 self.root.after(0, self.auto_btn.configure,
-                                {"text": "🤖  Auto Connect",
+                                {"text": "⚡ Auto Connect",
                                  "command": self.start_auto_connect,
-                                 "bg": "#1E3A4A", "fg": "#89DCEB"})
+                                 "bg": C["BTN2"], "fg": C["FG"]})
                 return
             if not self._auto_connect_active:
                 self.root.after(0, self.auto_btn.configure,
-                                {"text": "🤖  Auto Connect",
+                                {"text": "⚡ Auto Connect",
                                  "command": self.start_auto_connect,
-                                 "bg": "#1E3A4A", "fg": "#89DCEB"})
+                                 "bg": C["BTN2"], "fg": C["FG"]})
                 return
             self.root.after(0, self.append_log,
                             "[Auto] Memory config timed out — continuing sequence.\n")
 
+        # Swap sequences to prioritize Tested & Active over Fresh (Feature #1)
         in_sequence = [(cat, trans, ip) for cat, trans, ip in AUTO_SEQUENCE
                        if not (cat == last_cat and trans == last_trans and ip == last_ip)]
 
@@ -1863,12 +3173,11 @@ class TorClientGUI:
             self.root.after(0, self.trans_var.set, trans)
             self.root.after(0, self.ip_var.set, ip)
             if self._try_bridge_config(cat, trans, ip):
-                self.root.after(0, self.append_log,
-                                f"[Auto] ✅ Connected with {label}\n")
+                self.root.after(0, self.append_log, f"[Auto] ✅ Connected with {label}\n")
                 self.root.after(0, self.auto_btn.configure,
-                                {"text": "🤖  Auto Connect",
+                                {"text": "⚡ Auto Connect",
                                  "command": self.start_auto_connect,
-                                 "bg": "#1E3A4A", "fg": "#89DCEB"})
+                                 "bg": C["BTN2"], "fg": C["FG"]})
                 return
 
         if self._auto_connect_active:
@@ -1877,24 +3186,25 @@ class TorClientGUI:
             self.root.after(0, self.append_log, "[Auto] ❌ All bridge groups exhausted.\n")
         self._auto_connect_active = False
         self.root.after(0, self.auto_btn.configure,
-                        {"text": "🤖  Auto Connect",
+                        {"text": "⚡ Auto Connect",
                          "command": self.start_auto_connect,
-                         "bg": "#1E3A4A", "fg": "#89DCEB"})
+                         "bg": C["BTN2"], "fg": C["FG"]})
 
-    def _try_bridge_config(self, cat, trans, ip, timeout_override=None) -> bool:
+    def _try_bridge_config(self, cat, trans, ip,
+                           timeout_override=None, no_bridge=False) -> bool:
         timeout_s = (timeout_override if timeout_override is not None
                      else self.cfg.get("auto_connect_timeout", 180))
 
         if not self._check_port_free(TOR_SOCKS_PORT):
             self.root.after(0, self.append_log,
-                            f"[Auto] Port {TOR_SOCKS_PORT} is already in use — "
-                            f"stop other Tor instances.\n", "err")
+                            f"[Auto] Port {TOR_SOCKS_PORT} is already in use.\n", "err")
             return False
 
         try:
             torrc, tor_exe, _, bridge_lines = self.generate_torrc(
                 cat_ov=cat, trans_ov=trans, ip_ov=ip,
-                src_ov="Delta-Kronecker Tor-Bridges-Collector")
+                src_ov="Delta-Kronecker Tor-Bridges-Collector",
+                no_bridge_ov=no_bridge)
         except Exception as e:
             self.root.after(0, self.append_log, f"[Auto] torrc error: {e}\n")
             return False
@@ -1914,8 +3224,8 @@ class TorClientGUI:
 
         self.tor_process = proc
         self.root.after(0, lambda: self.stop_btn.config(
-            bg=C["RED"], fg=C["BLK"],
-            activebackground="#E64553", activeforeground="white"))
+            bg="#3A1010", fg=C["RED"],
+            activebackground="#4A1515", activeforeground="white"))
 
         last_pct  = -1
         last_move = time.time()
@@ -1929,6 +3239,9 @@ class TorClientGUI:
                 self.root.after(0, self.update_conn_progress, 0)
                 return False
 
+            # Reset timer with EVERY log line from Tor (not just % change)
+            last_move = time.time()
+            
             self.root.after(0, self.append_log, line)
 
             if "Reading config failed" in line or "Failed to parse/validate config" in line:
@@ -1946,10 +3259,11 @@ class TorClientGUI:
                 self.root.after(0, self.update_conn_progress, pct)
                 if pct != last_pct:
                     last_pct  = pct
-                    last_move = time.time()
+                    # last_move already updated above
                 if pct == 100:
                     self.tor_connected = True
-                    self._save_last_success(cat, trans, ip)
+                    if not no_bridge and cat:
+                        self._save_last_success(cat, trans, ip)
                     self.root.after(0, self.update_status, "Tor is fully connected.")
                     self.root.after(0, self._start_uptime)
                     self.root.after(0, self.stat_tor_var.set, "✅ Connected")
@@ -1958,7 +3272,8 @@ class TorClientGUI:
                     self.root.after(0, self._start_watchdog)
                     self.root.after(0, self._start_keepalive)
                     self._notify("Tor Client", "✅ Tor is fully connected!")
-                    proc.stdout.close()
+                    # DO NOT close stdout here - Tor process is still running
+                    # proc.stdout.close()  # REMOVED: causes SIGPIPE
                     return True
 
             if last_pct >= 0 and time.time() - last_move > timeout_s:
@@ -1975,6 +3290,7 @@ class TorClientGUI:
         self.tor_process = None
         return False
 
+    # ── MANUAL START ───────────────────────────
     def start_tor_thread(self):
         if self.tor_process is not None:
             self.update_status("Already running.")
@@ -2006,7 +3322,9 @@ class TorClientGUI:
                 return
 
             torrc, tor_exe, use_bridges, _ = self.generate_torrc()
-            if self.source_var.get() != "Default (Built-in)" and use_bridges == "0":
+            if (self.source_var.get() != "Default (Built-in)"
+                    and use_bridges == "0"
+                    and not self.no_bridge_var.get()):
                 self.root.after(0, self.append_log,
                                 "Warning: No bridges found. Starting without bridges.\n", "warn")
             self.root.after(0, self.update_status, "Starting Tor…")
@@ -2016,8 +3334,8 @@ class TorClientGUI:
                 text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             self.root.after(0, self.update_status, "Tor is running.")
             self.root.after(0, lambda: self.stop_btn.config(
-                bg=C["RED"], fg=C["BLK"],
-                activebackground="#E64553", activeforeground="white"))
+                bg="#3A1010", fg=C["RED"],
+                activebackground="#4A1515", activeforeground="white"))
 
             for line in iter(self.tor_process.stdout.readline, ''):
                 self.root.after(0, self.append_log, line)
@@ -2060,7 +3378,7 @@ class TorClientGUI:
         self.proxy_var.set(False)
         self.root.after(0, self._refresh_proxy_btn)
         self.root.after(0, lambda: self.stop_btn.config(
-            bg=C["BTN"], fg=C["FG"],
+            bg=C["BTN"], fg=C["FG2"],
             activebackground=C["BTN2"], activeforeground=C["FG"]))
         self.root.after(0, self.update_status,    "Tor stopped.")
         self.root.after(0, self.update_conn_progress, 0)
@@ -2071,40 +3389,112 @@ class TorClientGUI:
         self._notify("Tor Client", "Tor has stopped.")
 
     def stop_tor(self):
-        self._auto_connect_active = False
-        if self.tor_process:
-            self.tor_process.terminate()
-            try: self.tor_process.wait(timeout=4)
-            except: self.tor_process.kill()
-            self.tor_process = None
-        self._on_tor_stopped()
+            self._auto_connect_active = False
+            if self.tor_process:
+                try:
+                    self.tor_process.terminate()
+                    try: self.tor_process.wait(timeout=3)
+                    except Exception:
+                        try: self.tor_process.kill()
+                        except Exception: pass
+                        try: self.tor_process.wait(timeout=2)
+                        except Exception: pass
+                except Exception: pass
+                finally:
+                    self.tor_process = None
+                    
+            try:
+                import subprocess as _sp
+                my_pid = os.getpid() 
+                _sp.run(
+                    ["taskkill", "/F", "/FI", f"PID ne {my_pid}", "/IM", "tor.exe"],
+                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0x08000000),
+                    capture_output=True, timeout=5)
+            except Exception: pass
+            self._on_tor_stopped()
 
+    # ── DOWNLOAD HELPERS ───────────────────────
+    def _cleanup_old_data_dirs(self, days_old=7):
+        """Remove old data_par_* directories that haven't been modified."""
+        import glob
+        try:
+            extract_dir = self.extract_dir
+            pattern = os.path.join(extract_dir, "data_par_*")
+            current_time = time.time()
+            cutoff_time = current_time - (days_old * 86400)
+            
+            for dir_path in glob.glob(pattern):
+                if os.path.isdir(dir_path):
+                    mtime = os.path.getmtime(dir_path)
+                    if mtime < cutoff_time:
+                        try:
+                            shutil.rmtree(dir_path)
+                            self.append_log(f"[Cleanup] Removed old directory: {os.path.basename(dir_path)}\n", "info")
+                        except Exception as e:
+                            self.append_log(f"[Cleanup] Failed to remove {dir_path}: {e}\n", "warn")
+        except Exception as e:
+            self.append_log(f"[Cleanup] Error during cleanup: {e}\n", "warn")
+    
     def _dl_with_progress(self, url, dest, retries=3, timeout=90):
+        """Download with accurate speed measurement and resume support."""
         for attempt in range(retries):
             try:
+                # Check if file already exists for resume
+                existing_size = 0
+                if os.path.exists(dest):
+                    existing_size = os.path.getsize(dest)
+                
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                # Add Range header for resume
+                if existing_size > 0:
+                    req.add_header('Range', f'bytes={existing_size}-')
+                
                 with urllib.request.urlopen(req, timeout=timeout) as resp:
                     total = resp.getheader('Content-Length')
                     total = int(total) if total else None
-                    done  = 0
+                    if total and existing_size > 0:
+                        total += existing_size  # Adjust total for resume
+                    done = existing_size
                     self.root.after(0, self._set_dl, 0)
-                    with open(dest, 'wb') as f:
+                    
+                    # Use 'ab' mode to append if resuming, else 'wb'
+                    mode = 'ab' if existing_size > 0 else 'wb'
+                    with open(dest, mode) as f:
+                        # ✅ FIXED: Accurate speed measurement
+                        last_update = time.time()
+                        bytes_since_update = 0
+                        
                         while True:
                             chunk = resp.read(65536)
                             if not chunk:
                                 break
                             f.write(chunk)
                             done += len(chunk)
-                            if total:
-                                self.root.after(0, self._set_dl, int(done * 100 / total))
-                self.root.after(0, self._set_dl, 100)
+                            bytes_since_update += len(chunk)
+                            
+                            # ✅ Update UI only every 0.5 seconds (not every chunk!)
+                            now = time.time()
+                            elapsed = now - last_update
+                            
+                            if elapsed >= 0.5:
+                                if total:
+                                    pct = int(done * 100 / total)
+                                    # Calculate real speed in KB/s
+                                    speed_kbps = (bytes_since_update / 1024) / elapsed if elapsed > 0 else 0
+                                    speed_text = f"{speed_kbps:.1f} KB/s"
+                                    self.root.after(0, self._set_dl, pct, None, speed_text)
+                                
+                                last_update = now
+                                bytes_since_update = 0
+                
+                self.root.after(0, self._set_dl, 100, None, "Complete")
                 return True
             except Exception:
                 if attempt == retries - 1:
                     raise
-                time.sleep(2)
+                time.sleep(min(2 ** attempt, 8))  # Exponential backoff
 
-    def _dl_simple(self, url, dest, retries=2, timeout=20):
+    def _dl_simple(self, url, dest, retries=4, timeout=45):
         for attempt in range(retries):
             try:
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -2115,8 +3505,10 @@ class TorClientGUI:
             except Exception:
                 if attempt == retries - 1:
                     raise
-                time.sleep(2)
+                delay = min(2 ** attempt, 16)  # Exponential backoff: 2s, 4s, 8s, 16s
+                time.sleep(delay)
 
+    # ── INIT ───────────────────────────────────
     def auto_initialize(self):
         self.setup_tor()
         is_first_launch = (
@@ -2154,7 +3546,12 @@ class TorClientGUI:
         self.root.after(0, self.update_status, "Extracting Tor…")
         os.makedirs(self.extract_dir, exist_ok=True)
         with tarfile.open(self.archive_name, "r:gz") as tar:
-            tar.extractall(path=self.extract_dir)
+            # Fixed: Add filter to prevent path traversal attacks
+            if hasattr(tar, 'extractall'):  # Python 3.12+ has filter parameter
+                try:
+                    tar.extractall(path=self.extract_dir, filter='data')
+                except TypeError:  # Fallback for older Python versions
+                    tar.extractall(path=self.extract_dir)
         try:
             os.remove(self.archive_name)
         except Exception:
@@ -2187,7 +3584,7 @@ class TorClientGUI:
                 self.root.after(0, self._set_dl, pct,
                                 f"Updating Fresh bridges… ({done_count[0]}/{total})")
 
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=2) as ex:  # Fixed: reduced from 4 to 2 for slow networks
             ex.map(_fetch, FRESH_DATA)
         self.root.after(0, self._hide_dl)
 
@@ -2212,7 +3609,7 @@ class TorClientGUI:
                 self.root.after(0, self._set_dl, pct,
                                 f"Downloading bridges… ({done_count[0]}/{total})")
 
-        with ThreadPoolExecutor(max_workers=4) as ex:
+        with ThreadPoolExecutor(max_workers=2) as ex:  # Fixed: reduced from 4 to 2 for slow networks
             ex.map(_fetch, BRIDGE_DATA)
         self.root.after(0, self._hide_dl)
         self.root.after(0, self.update_status, "Ready. All bridges downloaded.")
@@ -2221,131 +3618,157 @@ class TorClientGUI:
     def start_download_bridges(self):
         threading.Thread(target=self._download_all_bridges_parallel, daemon=True).start()
 
+    # ── ICON ───────────────────────────────────
+    def _set_window_icon(self):
+        ico = resource_path("icon.ico")
+        if os.path.exists(ico):
+            try:
+                self.root.iconbitmap(default=ico)
+                self._ico_path = ico
+                return
+            except Exception:
+                pass
+        try:
+            xbm = ("#define i_w 16\n#define i_h 16\n"
+                   "static char i_b[] = {"
+                   "0xf0,0x0f,0xfe,0x7f,0xff,0xff,0xff,0xff,"
+                   "0xff,0xff,0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,"
+                   "0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,0xfe,0x7f,"
+                   "0xff,0xff,0xff,0xff,0xfe,0x7f,0xf0,0x0f};")
+            img = tk.PhotoImage(data=xbm, format="xbm")
+            self.root.iconphoto(True, img)
+            self._icon_ref = img
+        except Exception:
+            pass
+        self._ico_path = None
+
+    def _apply_icon_to(self, win):
+        if getattr(self, '_ico_path', None):
+            try:
+                win.iconbitmap(default=self._ico_path)
+                return
+            except Exception:
+                pass
+        if hasattr(self, '_icon_ref'):
+            try:
+                win.iconphoto(True, self._icon_ref)
+            except Exception:
+                pass
+
+    def _clear_data_dir(self):
+        if self.tor_connected:
+            messagebox.showwarning("Warning",
+                "Stop Tor first before clearing data.", parent=self.root)
+            return
+        data_dir = os.path.join(self.extract_dir, "data")
+        if os.path.isdir(data_dir):
+            try:
+                shutil.rmtree(data_dir)
+                self.append_log("[Maintenance] Data directory cleared.\n", "info")
+            except Exception as e:
+                self.append_log(f"[Maintenance] Clear failed: {e}\n", "err")
+
+    # ── HELP ───────────────────────────────────
     def show_help_window(self):
         w = tk.Toplevel(self.root)
-        w.title("How to Use — Tor Client")
-        w.geometry("700x640")
+        w.title("Help — Tor Client")
+        w.geometry("720x660")
         w.configure(bg=C["BG"])
         w.resizable(False, False)
         w.update()
         apply_dark_titlebar(w)
+        set_window_icon(w)  # Applied icon loader
         self._apply_icon_to(w)
 
-        tk.Label(w, text="📖  How to Use — Tor Client",
-                 font=('Segoe UI', 14, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(15, 5))
+        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+        tk.Label(w, text="⬡  How to Use — Tor Client",
+                 font=('Segoe UI', 14, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(14, 4))
 
         tf = tk.Frame(w, bg=C["BLK"])
         tf.pack(fill='both', expand=True, padx=20, pady=8)
-        txt = tk.Text(tf, font=('Segoe UI', 10), wrap='word', bg=C["BLK"],
-                      fg=C["FG"], bd=0, padx=15, pady=12, spacing2=4)
+        txt = tk.Text(tf, font=('Segoe UI', 9), wrap='word', bg=C["BLK"],
+                      fg=C["FG"], bd=0, padx=16, pady=12, spacing2=4)
         sb  = ttk.Scrollbar(tf, command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
         sb.pack(side='right', fill='y')
         txt.pack(fill='both', expand=True)
 
         txt.insert('1.0', f"""\
-🔰  QUICK START
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Bridge Source  →  Delta-Kronecker Tor-Bridges-Collector
-  Category       →  Tested & Active
-  Transport      →  obfs4
-  IP Version     →  IPv4
-  Then click 🤖 Auto Connect.
+⚡  QUICK START
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  1. Category  →  Tested & Active
+  2. Transport →  obfs4
+  3. IP        →  IPv4
+  4. Click ⚡ Auto Connect
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📋  STEP-BY-STEP
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🆕  NEW FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-  Step 1  First launch: choose install folder (AppData\\Local recommended).
-          All 15 bridge files download automatically (~1-2 min).
+  ⚙ Custom Bridges  (Mahsa)
+     Enter your own bridge lines and ping each one
+     to see latency before connecting.
 
-  Step 2  Tor downloads automatically. Wait for progress bar.
+  🔐 SNI Override  (Pedram)
+     Settings → SNI Settings. Enter a hostname like
+     www.google.com to disguise TLS traffic. Helps
+     against deep packet inspection (DPI).
 
-  Step 3  On every subsequent launch, only Fresh (72h) bridges
-          update automatically. Press "Update All Bridges" to
-          manually refresh everything.
+  🔍 Bridge Scanner  (PRINCO)
+     Scan any bridge file — TCP-pings every entry,
+     shows reachability and latency. Export working
+     bridges to a file.
 
-  Step 4  Configure bridges as shown in Quick Start above.
+  🚫 No Bridge Mode
+     Check "Connect without bridge" to connect
+     directly to the Tor network (no obfs4/tunnel).
+     Use only if Tor is NOT blocked in your country.
 
-  Step 5  Click 🤖 Auto Connect:
-          • First tries last successful config ({self.cfg.get("auto_connect_timeout", 180)}s timeout)
-          • Tries 9 configs automatically if needed
-          System proxy is enabled automatically on success.
+  ⚡ Multi-Connect
+     Launches all connection types simultaneously
+     on separate ports. The fastest one wins.
+     Ports: SOCKS 9060-9072  HTTP 19062-19074.
 
-  Step 6  Wait for 100%. Status: "Tor is fully connected."
-          A Windows notification confirms the connection.
-
-  Step 7  Click 🔄 New Circuit anytime to get a new exit IP
-          without restarting Tor.
-
-  Step 8  Closing the window minimizes to the system tray.
-          Right-click tray icon → Show Window or Quit.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🌐  SYSTEM PROXY
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   HTTP proxy: 127.0.0.1:{HTTP_PROXY_PORT}
   SOCKS5:     127.0.0.1:{TOR_SOCKS_PORT}
-  DNS is resolved by Tor remotely — no DNS leaks.
-  Instagram, YouTube work correctly through this proxy.
+  DNS resolved by Tor — no DNS leaks.
 
-  ✅ Chrome, Edge, Telegram, most Windows apps — automatic.
-  ❌ Firefox: Settings → Network → SOCKS5: 127.0.0.1:{TOR_SOCKS_PORT}
-              Enable "Proxy DNS over SOCKS5".
+  ✅ Chrome, Edge, Telegram — automatic.
+  ❌ Firefox: Settings → Network → SOCKS5 manually.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🌍  EXIT NODES (YouTube / Instagram)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  In Settings → Exit Nodes → Enable filter.
-  Choose countries less blocked by Google/Meta:
-  {{nl}} {{de}} {{fr}} {{ch}} {{at}} {{se}} {{no}} {{fi}} {{is}}
-  Or click 🔄 New Circuit to try a different exit IP.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔎  BRIDGE TYPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  obfs4      → Best for Iran/China — random data
+  webtunnel  → Looks like HTTPS traffic
+  vanilla    → Plain Tor — only if not blocked
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔎  BRIDGE CATEGORIES
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Tested & Active   Verified working bridges  ⭐ Best
-  Fresh (72h)       Collected in last 72h
-  Full Archive      Complete historical list
-  Default           Bundled inside Tor itself
-
-  Transports:
-  obfs4      → Best for Iran/China/Russia — looks like random data
-  webtunnel  → Disguised as HTTPS website traffic
-  vanilla    → Plain Tor — only if Tor is not blocked
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🧪  EXPERIMENTAL SETTINGS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  All experimental options are OFF by default.
-  They map directly to torrc directives.
-  Wrong values can break connectivity.
-  Restart Tor after changing any experimental setting.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  TROUBLESHOOTING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Stuck below 100%? → Update All Bridges, try Auto Connect.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Stuck below 100%?  → Update bridges, try Auto.
   YouTube/Instagram? → Enable Exit Nodes in Settings.
-  Port {TOR_SOCKS_PORT} busy?  → Another Tor instance is running.
-  Firefox?          → Configure SOCKS5 manually in Firefox.
-  No bridges found? → Update All Bridges and wait.
-
-  Log colors: Green=notices  Yellow=warnings
-              Red=errors     Blue=auto-connect  Orange=tests
+  Port {TOR_SOCKS_PORT} busy?   → Another Tor is running.
+  No bridges?        → Click ↺ Update Bridges.
 """)
-
         txt.configure(state='disabled')
         tk.Button(w, text="Close", command=w.destroy,
-                  bg=C["ACC"], fg=C["BLK"], font=('Segoe UI', 10, 'bold'),
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 10, 'bold'),
                   relief="flat", cursor="hand2",
-                  activebackground="#B4BEFE"
-                  ).pack(pady=(0, 12), padx=120, fill='x')
+                  activebackground=C["ACC2"]
+                  ).pack(pady=(0, 14), padx=120, fill='x', ipady=5)
 
 
+# ─────────────────────────────────────────────
+#  ENTRY POINT
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
     root = tk.Tk()
-    root.withdraw()
+    root.withdraw() 
+    root.configure(bg="#1A1D24")
     app = TorClientGUI(root)
-    root.deiconify()
+    root.after(1000, root.deiconify)
     root.mainloop()
