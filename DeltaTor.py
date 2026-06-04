@@ -2391,114 +2391,144 @@ class DeltaTorGUI:
             self._tray_running = True
             threading.Thread(target=self._tray_icon_loop, daemon=True).start()
 
+    def _show_from_tray(self):
+        """Show main window and allow tray to be re-created next time."""
+        self._tray_running = False
+        # Remove tray icon immediately so it doesn't linger or duplicate
+        nid = getattr(self, '_tray_nid', None)
+        if nid is not None:
+            try:
+                ctypes.windll.shell32.Shell_NotifyIconW(0x00000002, ctypes.byref(nid))
+            except Exception:
+                pass
+            self._tray_nid = None
+        hwnd = getattr(self, '_tray_hwnd', 0)
+        self._tray_hwnd = 0
+        if hwnd:
+            try:
+                ctypes.windll.user32.DestroyWindow(hwnd)
+            except Exception:
+                pass
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
     def _tray_icon_loop(self):
-        try:
-            NIM_ADD     = 0x00000000
-            NIM_DELETE  = 0x00000002
-            NIF_ICON    = 0x00000002
-            NIF_TIP     = 0x00000004
-            NIF_MESSAGE = 0x00000001
-            TRAY_MSG    = 0x0400 + 20
-            ID_SHOW     = 1001
-            ID_QUIT     = 1002
+        NIM_ADD     = 0x00000000
+        NIM_DELETE  = 0x00000002
+        NIF_ICON    = 0x00000002
+        NIF_TIP     = 0x00000004
+        NIF_MESSAGE = 0x00000001
+        TRAY_MSG    = 0x0400 + 20
+        ID_SHOW     = 1001
+        ID_QUIT     = 1002
 
-            class NOTIFYICONDATA(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize",           ctypes.wintypes.DWORD),
-                    ("hWnd",             ctypes.wintypes.HWND),
-                    ("uID",              ctypes.wintypes.UINT),
-                    ("uFlags",           ctypes.wintypes.UINT),
-                    ("uCallbackMessage", ctypes.wintypes.UINT),
-                    ("hIcon",            ctypes.wintypes.HICON),
-                    ("szTip",            ctypes.c_wchar * 128),
-                ]
+        user32  = ctypes.windll.user32
+        shell32 = ctypes.windll.shell32
 
-            user32  = ctypes.windll.user32
-            shell32 = ctypes.windll.shell32
+        WNDPROCTYPE = ctypes.WINFUNCTYPE(
+            ctypes.c_long, ctypes.wintypes.HWND,
+            ctypes.wintypes.UINT, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
 
-            WNDPROCTYPE = ctypes.WINFUNCTYPE(
-                ctypes.c_long, ctypes.wintypes.HWND,
-                ctypes.wintypes.UINT, ctypes.wintypes.WPARAM, ctypes.wintypes.LPARAM)
+        def wnd_proc(hwnd, msg, wparam, lparam):
+            if msg == TRAY_MSG:
+                if lparam in (0x0202, 0x0203):
+                    self.root.after(0, self._show_from_tray)
+                elif lparam == 0x0205:
+                    hmenu = user32.CreatePopupMenu()
+                    user32.AppendMenuW(hmenu, 0, ID_SHOW, "Show Window")
+                    user32.AppendMenuW(hmenu, 0, ID_QUIT, "Quit")
+                    pt = ctypes.wintypes.POINT()
+                    user32.GetCursorPos(ctypes.byref(pt))
+                    user32.SetForegroundWindow(hwnd)
+                    cmd = user32.TrackPopupMenu(
+                        hmenu, 0x0100, pt.x, pt.y, 0, hwnd, None)
+                    user32.DestroyMenu(hmenu)
+                    if cmd == ID_SHOW:
+                        self.root.after(0, self._show_from_tray)
+                    elif cmd == ID_QUIT:
+                        self.root.after(0, lambda: (self.stop_tor(), self.root.destroy()))
+            elif msg == 0x0002:  # WM_DESTROY
+                user32.PostQuitMessage(0)
+                return 0
+            return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
 
-            def wnd_proc(hwnd, msg, wparam, lparam):
-                if msg == TRAY_MSG:
-                    if lparam == 0x0203:
-                        self.root.after(0, self.root.deiconify)
-                    elif lparam == 0x0205:
-                        hmenu = user32.CreatePopupMenu()
-                        user32.AppendMenuW(hmenu, 0, ID_SHOW, "Show Window")
-                        user32.AppendMenuW(hmenu, 0, ID_QUIT, "Quit")
-                        pt = ctypes.wintypes.POINT()
-                        user32.GetCursorPos(ctypes.byref(pt))
-                        user32.SetForegroundWindow(hwnd)
-                        cmd = user32.TrackPopupMenu(
-                            hmenu, 0x0100, pt.x, pt.y, 0, hwnd, None)
-                        user32.DestroyMenu(hmenu)
-                        if cmd == ID_SHOW:
-                            self.root.after(0, self.root.deiconify)
-                        elif cmd == ID_QUIT:
-                            self.root.after(0, lambda: (self.stop_tor(), self.root.destroy()))
-                elif msg == 0x0002:
-                    user32.PostQuitMessage(0)
-                return user32.DefWindowProcW(hwnd, msg, wparam, lparam)
+        # Store as instance vars to prevent GC
+        self._wnd_proc_ptr = WNDPROCTYPE(wnd_proc)
 
-            wnd_proc_ptr = WNDPROCTYPE(wnd_proc)
+        class WNDCLASS(ctypes.Structure):
+            _fields_ = [
+                ("style",         ctypes.wintypes.UINT),
+                ("lpfnWndProc",   WNDPROCTYPE),
+                ("cbClsExtra",    ctypes.c_int),
+                ("cbWndExtra",    ctypes.c_int),
+                ("hInstance",     ctypes.wintypes.HANDLE),
+                ("hIcon",         ctypes.wintypes.HANDLE),
+                ("hCursor",       ctypes.wintypes.HANDLE),
+                ("hbrBackground", ctypes.wintypes.HANDLE),
+                ("lpszMenuName",  ctypes.c_wchar_p),
+                ("lpszClassName", ctypes.c_wchar_p),
+            ]
 
-            class WNDCLASSEX(ctypes.Structure):
-                _fields_ = [
-                    ("cbSize",        ctypes.wintypes.UINT),
-                    ("style",         ctypes.wintypes.UINT),
-                    ("lpfnWndProc",   WNDPROCTYPE),
-                    ("cbClsExtra",    ctypes.c_int),
-                    ("cbWndExtra",    ctypes.c_int),
-                    ("hInstance",     ctypes.wintypes.HANDLE),
-                    ("hIcon",         ctypes.wintypes.HANDLE),
-                    ("hCursor",       ctypes.wintypes.HANDLE),
-                    ("hbrBackground", ctypes.wintypes.HANDLE),
-                    ("lpszMenuName",  ctypes.c_wchar_p),
-                    ("lpszClassName", ctypes.c_wchar_p),
-                    ("hIconSm",       ctypes.wintypes.HANDLE),
-                ]
+        # class name kept alive via self._tray_class_name
+        import uuid as _uuid2
+        class_name = f"DeltaTorTray_{_uuid2.uuid4().hex[:8]}"
 
-            import uuid as _uuid
-            class_name = f"DeltaTorTray_{_uuid.uuid4().hex[:8]}"
+        hInstance = ctypes.windll.kernel32.GetModuleHandleW(None)
+        wc = WNDCLASS()
+        wc.lpfnWndProc   = self._wnd_proc_ptr
+        wc.hInstance     = hInstance
+        wc.lpszClassName = class_name
+        self._wnd_class  = wc
 
-            wc = WNDCLASSEX()
-            wc.cbSize        = ctypes.sizeof(WNDCLASSEX)
-            wc.lpfnWndProc   = wnd_proc_ptr
-            wc.lpszClassName = class_name
-            wc.hInstance     = ctypes.windll.kernel32.GetModuleHandleW(None)
-            if not user32.RegisterClassExW(ctypes.byref(wc)):
-                raise RuntimeError("RegisterClassExW failed")
-
-            hwnd = user32.CreateWindowExW(
-                0, class_name, class_name,
-                0, 0, 0, 0, 0, None, None, wc.hInstance, None)
-            if not hwnd:
-                raise RuntimeError("CreateWindowExW failed")
-            self._tray_hwnd = hwnd
-
-            hIcon = _load_tray_icon()
-            nid = NOTIFYICONDATA()
-            nid.cbSize           = ctypes.sizeof(NOTIFYICONDATA)
-            nid.hWnd             = hwnd
-            nid.uID              = 1
-            nid.uFlags           = NIF_ICON | NIF_TIP | NIF_MESSAGE
-            nid.uCallbackMessage = TRAY_MSG
-            nid.hIcon            = hIcon
-            nid.szTip            = "Delta Tor"
-            shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
-
-            msg = ctypes.wintypes.MSG()
-            while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
-                user32.TranslateMessage(ctypes.byref(msg))
-                user32.DispatchMessageW(ctypes.byref(msg))
-
-            shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
-        except Exception:
-            self.root.after(0, self.root.deiconify)
-        finally:
+        if not user32.RegisterClassW(ctypes.byref(wc)):
             self._tray_running = False
+            self.root.after(0, self.root.deiconify)
+            return
+
+        hwnd = user32.CreateWindowExW(
+            0, class_name, class_name,
+            0, 0, 0, 0, 0, None, None, hInstance, None)
+        if not hwnd:
+            user32.UnregisterClassW(class_name, hInstance)
+            self._tray_running = False
+            self.root.after(0, self.root.deiconify)
+            return
+        self._tray_class_name = class_name  # keep reference
+
+        self._tray_hwnd = hwnd
+
+        class NOTIFYICONDATA(ctypes.Structure):
+            _fields_ = [
+                ("cbSize",           ctypes.wintypes.DWORD),
+                ("hWnd",             ctypes.wintypes.HWND),
+                ("uID",              ctypes.wintypes.UINT),
+                ("uFlags",           ctypes.wintypes.UINT),
+                ("uCallbackMessage", ctypes.wintypes.UINT),
+                ("hIcon",            ctypes.wintypes.HICON),
+                ("szTip",            ctypes.c_wchar * 128),
+            ]
+
+        nid = NOTIFYICONDATA()
+        nid.cbSize           = ctypes.sizeof(NOTIFYICONDATA)
+        nid.hWnd             = hwnd
+        nid.uID              = 1
+        nid.uFlags           = NIF_ICON | NIF_TIP | NIF_MESSAGE
+        nid.uCallbackMessage = TRAY_MSG
+        nid.hIcon            = _load_tray_icon()
+        nid.szTip            = "Delta Tor"
+        shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
+        self._tray_nid       = nid   # keep ref for early delete
+
+        msg_buf = ctypes.wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg_buf), None, 0, 0) != 0:
+            user32.TranslateMessage(ctypes.byref(msg_buf))
+            user32.DispatchMessageW(ctypes.byref(msg_buf))
+
+        shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(nid))
+        self._tray_nid = None
+        user32.UnregisterClassW(self._tray_class_name, hInstance)
+        self._tray_running = False
 
     def _notify(self, title: str, msg: str):
         threading.Thread(
@@ -3942,7 +3972,7 @@ class DeltaTorGUI:
 
     def auto_initialize(self):
         self.setup_tor()
-        self._update_fresh_bridges_parallel()
+        self._download_all_bridges_parallel()
         self.root.after(0, self.update_status, "Ready.")
         self.root.after(0, self._refresh_bridge_info)
 
