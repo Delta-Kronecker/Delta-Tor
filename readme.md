@@ -12,7 +12,7 @@ Download the latest release archive directly:
 
 **[⬇️ DeltaTor-1.2.2.rar](https://github.com/Delta-Kronecker/Delta-Tor/releases/download/1.2.2/DeltaTor-1.2.2.rar)**
 
-The archive contains `DeltaTor.exe`, the Tor core binaries, and everything else needed. Extract and run — no installation required.
+The archive contains `DeltaTor_Setup.exe`, the Tor core binaries, and everything else needed. Extract and run `DeltaTor_Setup.exe`.
 
 ### Running from Source
 
@@ -28,13 +28,6 @@ No third-party packages — Python 3.8+ and standard library only.
 
 ---
 
-## 🔥 Requirements
-
-- Windows 10 / 11 (x86_64)
-- **Release archive:** nothing — extract and run
-- **Source:** Python 3.8+, no third-party packages
-
----
 
 ## ⚡ Multi-Connect — The Core Feature
 
@@ -193,6 +186,14 @@ Clicking **↺ Update Bridges** downloads all 15 files in parallel in the backgr
 ### Stall-based timeout
 
 The timer resets every time bootstrap percentage moves. A config is abandoned only if bootstrap stays completely frozen for the full timeout (default: 180s). Slow but progressing connections are never cut off.
+
+---
+
+## 🔥 Requirements
+
+- Windows 10 / 11 (x86_64)
+- **Release archive:** nothing — extract and run
+- **Source:** Python 3.8+, no third-party packages
 
 ---
 
