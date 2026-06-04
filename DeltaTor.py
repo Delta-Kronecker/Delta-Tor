@@ -78,35 +78,30 @@ DEFAULT_CFG = {
 }
 
 C = {
-    "BG":    "#1A1D24",
-    "PANEL": "#22262F",
-    "CARD":  "#272B35",
-    "BORDER":"#333848",
-    "FG":    "#E8ECF4",
-    "FG2":   "#8A93A8",
-    "ACC":   "#7D4CDB",
-    "ACC2":  "#9B6EF5",
-    "GRN":   "#3FCF8E",
-    "RED":   "#F04E4E",
-    "YLW":   "#F0B429",
-    "ORG":   "#F07540",
-    "CYAN":  "#4EC9F0",
-    "BTN":   "#2B3040",
-    "BTN2":  "#363D58",
-    "SEL":   "#2D1F5E",
-    "BLK":   "#1A1D24",
-    "PRP":   "#B99EFF",
+    "BG":    "#13171F",
+    "PANEL": "#1A1F2B",
+    "CARD":  "#1F2535",
+    "BORDER":"#2C3347",
+    "FG":    "#C8D0DC",
+    "FG2":   "#6B7A94",
+    "ACC":   "#3A72B0",
+    "ACC2":  "#4D88C8",
+    "GRN":   "#2EB87A",
+    "RED":   "#D95555",
+    "YLW":   "#C9A020",
+    "ORG":   "#C06830",
+    "CYAN":  "#3AA8C0",
+    "BTN":   "#1E2535",
+    "BTN2":  "#273048",
+    "SEL":   "#1A2E50",
+    "BLK":   "#13171F",
+    "PRP":   "#7080BB",
 }
 
 if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    _EXE_DIR = os.path.dirname(os.path.abspath(sys.executable))
 else:
-    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-def resource_path(filename):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, filename)
-    return os.path.join(BASE_DIR, filename)
+    _EXE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def verify_file_sha256(filepath, expected_hash=None):
     import hashlib
@@ -164,12 +159,184 @@ def apply_dark_titlebar(widget):
         dwm = ctypes.windll.dwmapi
         one = ctypes.c_int(1)
         dwm.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(one), ctypes.sizeof(one))
-        cap = ctypes.c_int(0x100C0A)
+        cap = ctypes.c_int(0x1F1713)
         dwm.DwmSetWindowAttribute(hwnd, 35, ctypes.byref(cap), ctypes.sizeof(cap))
-        txt = ctypes.c_int(0xF4ECE8)
+        txt = ctypes.c_int(0xDCD0C8)
         dwm.DwmSetWindowAttribute(hwnd, 36, ctypes.byref(txt), ctypes.sizeof(txt))
+        brd = ctypes.c_int(0x47332C)
+        dwm.DwmSetWindowAttribute(hwnd, 34, ctypes.byref(brd), ctypes.sizeof(brd))
     except Exception:
         pass
+
+_APPDATA_DELTATOR = os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+    "DeltaTor"
+)
+os.makedirs(_APPDATA_DELTATOR, exist_ok=True)
+
+_PTR_FILE = os.path.join(_APPDATA_DELTATOR, "datadir.txt")
+
+_DEFAULT_DATA_DIR = _APPDATA_DELTATOR
+
+def _read_data_dir():
+    if os.path.exists(_PTR_FILE):
+        try:
+            path = open(_PTR_FILE, encoding="utf-8").read().strip()
+            if path:
+                return path
+        except Exception:
+            pass
+    return None
+
+def _save_data_dir(path):
+    try:
+        os.makedirs(_APPDATA_DELTATOR, exist_ok=True)
+        with open(_PTR_FILE, "w", encoding="utf-8") as f:
+            f.write(path)
+    except Exception:
+        pass
+
+def _ask_data_dir():
+    import tkinter as tk
+    from tkinter import filedialog
+
+    dlg_root = tk.Tk()
+    dlg_root.withdraw()
+    dlg_root.configure(bg=C["BG"])
+
+    dlg = tk.Toplevel(dlg_root)
+    dlg.title("Choose Data Directory")
+    dlg.geometry("520x280")
+    dlg.configure(bg=C["BG"])
+    dlg.resizable(False, False)
+    dlg.update()
+    apply_dark_titlebar(dlg)
+    dlg.protocol("WM_DELETE_WINDOW", lambda: None)
+
+    chosen = tk.StringVar(value=_DEFAULT_DATA_DIR)
+    confirmed = [False]
+
+    tk.Frame(dlg, bg=C["ACC"], height=4).pack(fill='x')
+
+    tk.Label(dlg,
+             text="📁  Choose Data Directory",
+             font=('Segoe UI', 13, 'bold'),
+             bg=C["BG"], fg=C["ACC"]).pack(pady=(18, 4))
+
+    tk.Label(dlg,
+             text="All bridges, logs, Tor binaries and config files\nwill be stored in this folder.",
+             font=('Segoe UI', 10), bg=C["BG"], fg=C["FG2"],
+             justify='center').pack(pady=(0, 14))
+
+    path_row = tk.Frame(dlg, bg=C["BG"])
+    path_row.pack(fill='x', padx=24)
+
+    path_entry = tk.Entry(path_row, textvariable=chosen,
+                          bg=C["BTN"], fg=C["FG"],
+                          insertbackground=C["FG"],
+                          relief="flat", bd=6,
+                          font=('Segoe UI', 10))
+    path_entry.pack(side='left', fill='x', expand=True, ipady=5)
+
+    def _browse():
+        d = filedialog.askdirectory(
+            title="Select Data Directory",
+            initialdir=chosen.get() if os.path.exists(chosen.get()) else os.path.expanduser("~"))
+        if d:
+            chosen.set(os.path.normpath(d))
+
+    tk.Button(path_row, text="Browse…",
+              command=_browse,
+              bg=C["BTN2"], fg=C["FG"],
+              font=('Segoe UI', 9), relief="flat", cursor="hand2",
+              activebackground=C["ACC"]).pack(side='left', padx=(6, 0), ipady=5, ipadx=6)
+
+    tk.Label(dlg,
+             text=f"Default:  {_DEFAULT_DATA_DIR}",
+             font=('Segoe UI', 8), bg=C["BG"], fg=C["FG2"]).pack(pady=(6, 0))
+
+    def _confirm():
+        p = chosen.get().strip()
+        if not p:
+            p = _DEFAULT_DATA_DIR
+        chosen.set(p)
+        confirmed[0] = True
+        dlg.destroy()
+
+    def _use_default():
+        chosen.set(_DEFAULT_DATA_DIR)
+        confirmed[0] = True
+        dlg.destroy()
+
+    btn_row = tk.Frame(dlg, bg=C["BG"])
+    btn_row.pack(fill='x', padx=24, pady=(16, 0))
+
+    tk.Button(btn_row, text="✔  Use This Folder",
+              command=_confirm,
+              bg=C["ACC"], fg=C["FG"],
+              font=('Segoe UI', 10, 'bold'), relief="flat", cursor="hand2",
+              activebackground=C["ACC2"]).pack(side='left', fill='x', expand=True,
+                                               ipady=6, padx=(0, 6))
+
+    tk.Button(btn_row, text="Use Default",
+              command=_use_default,
+              bg=C["BTN"], fg=C["FG2"],
+              font=('Segoe UI', 10), relief="flat", cursor="hand2",
+              activebackground=C["BTN2"]).pack(side='left', ipady=6, ipadx=10)
+
+    dlg.update_idletasks()
+    sw = dlg.winfo_screenwidth()
+    sh = dlg.winfo_screenheight()
+    x  = (sw - 520) // 2
+    y  = (sh - 280) // 2
+    dlg.geometry(f"520x280+{x}+{y}")
+    dlg.lift()
+    dlg.focus_force()
+    dlg_root.wait_window(dlg)
+    dlg_root.destroy()
+
+    result = chosen.get().strip() or _DEFAULT_DATA_DIR
+    return os.path.normpath(result)
+
+_saved = _read_data_dir()
+if _saved:
+    BASE_DIR = _saved
+else:
+    BASE_DIR = _ask_data_dir()
+    _save_data_dir(BASE_DIR)
+
+def _migrate_existing_files(src_dir, dst_dir):
+    if os.path.normpath(src_dir) == os.path.normpath(dst_dir):
+        return
+    items_to_move = [
+        "bridges", "logs", "tor", "data",
+        "tor-expert-bundle.tar.gz",
+        "config.json", "tor_client_config.json",
+        "geoip", "geoip6",
+    ]
+    os.makedirs(dst_dir, exist_ok=True)
+    for item in items_to_move:
+        src = os.path.join(src_dir, item)
+        dst = os.path.join(dst_dir, item)
+        if os.path.exists(src) and not os.path.exists(dst):
+            try:
+                shutil.move(src, dst)
+            except Exception:
+                pass
+    old_ptr = os.path.join(src_dir, "datadir.txt")
+    if os.path.exists(old_ptr):
+        try:
+            os.remove(old_ptr)
+        except Exception:
+            pass
+
+if os.path.normpath(BASE_DIR) != os.path.normpath(_EXE_DIR):
+    _migrate_existing_files(_EXE_DIR, BASE_DIR)
+
+def resource_path(filename):
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, filename)
+    return os.path.join(BASE_DIR, filename)
 
 def _load_tray_icon():
     try:
@@ -376,7 +543,7 @@ def _win_notify(title: str, msg: str, hwnd: int = 0):
         nid.uID         = 1
         nid.uFlags      = NIF_ICON | NIF_TIP | NIF_INFO
         nid.hIcon       = _load_tray_icon()
-        nid.szTip       = "Tor Client"
+        nid.szTip       = "Delta Tor"
         nid.szInfo      = msg[:255]
         nid.szInfoTitle = title[:63]
         nid.dwInfoFlags = NIIF_INFO
@@ -1053,388 +1220,721 @@ class SettingsWindow:
                   relief="flat", cursor="hand2").pack(side='left', ipady=4, padx=40)
 
 class ParallelConnectWindow:
-    SLOT_DEFS = [
-        ("No Bridge",          9061,   9062,   19061,  True,  None,             None,         None),
-        ("Tested obfs4 v4",    9063,   9064,   19063,  False, "Tested & Active","obfs4",      "IPv4"),
-        ("Tested webtunnel v4",9065,   9066,   19065,  False, "Tested & Active","webtunnel",  "IPv4"),
-        ("Tested webtunnel v6",9067,   9068,   19067,  False, "Tested & Active","webtunnel",  "IPv6"),
-        ("Tested vanilla v4",  9069,   9070,   19069,  False, "Tested & Active","vanilla",    "IPv4"),
-        ("Tested vanilla v6",  9071,   9072,   19071,  False, "Tested & Active","vanilla",    "IPv6"),
+
+    SRC_BUILTIN = "Default (Built-in)"
+    SRC_DK      = "Delta-Kronecker"
+    SRC_DIRECT  = "Direct (No Bridge)"
+
+    BUILTIN_TRANSPORTS = ["snowflake", "meek"]
+    DK_CATEGORIES  = ["Tested & Active", "Fresh (72h)", "Full Archive"]
+    DK_TRANSPORTS  = ["obfs4", "webtunnel", "vanilla"]
+
+    DEFAULT_SLOTS = [
+        ("Snowflake",            SRC_BUILTIN, None,             "snowflake", None,   False),
+        ("obfs4 · Tested IPv4",  SRC_DK,      "Tested & Active","obfs4",    "IPv4", False),
+        ("Vanilla · Tested IPv4",SRC_DK,      "Tested & Active","vanilla",  "IPv4", False),
+        ("WebTunnel · Tested",   SRC_DK,      "Tested & Active","webtunnel","IPv4", False),
     ]
 
-    CHECK_URL_HOST = "www.gstatic.com"
-    CHECK_URL_PATH = "/generate_204"
-    SPEED_HOST     = "cachefly.cachefly.net"
-    SPEED_PATH     = "/0.5b.test"
+    CHECK_HOST = "www.gstatic.com"
+    CHECK_PATH = "/generate_204"
 
-    def __init__(self, parent, extract_dir, bridges_dir,
-                 get_safe_filename, generate_torrc_fn, cfg, on_connected):
+    def __init__(self, parent_frame, extract_dir, bridges_dir,
+                 get_safe_filename, generate_torrc_fn, cfg, on_connected,
+                 append_log_fn=None, on_status_change=None):
         self.extract_dir       = extract_dir
         self.bridges_dir       = bridges_dir
         self.get_safe_filename = get_safe_filename
         self.cfg               = cfg
         self.on_connected      = on_connected
+        self._append_log       = append_log_fn
+        self._on_status_change = on_status_change
 
-        self._procs   = {}
-        self._running = False
-        self._lock    = threading.Lock()
-        self._stop_events = {}
+        self._procs            = {}
+        self._slot_logs        = {}
+        self._running          = False
+        self._lock             = threading.Lock()
+        self._stop_events      = {}
         self._active_proxy_label = None
-        self._proxy_stop_ev = None
-        self._slot_health = {}
+        self._proxy_stop_ev    = None
+        self._slot_health      = {}
+        self._slot_ping_history = {}
+        self._slot_enabled     = {}
+        self._slot_widgets     = {}
+        self._slot_state       = {}
 
-        w = tk.Toplevel(parent)
-        w.title("Multi-Connect")
-        w.geometry("910x600")
-        w.configure(bg=C["BG"])
-        w.resizable(True, True)
-        w.update()
-        apply_dark_titlebar(w)
-        set_window_icon(w)
-        self._win = w
-        w.protocol("WM_DELETE_WINDOW", self._on_close)
+        saved = cfg.get("multi_slots", [])
+        self._slot_defs = [list(s) for s in saved] if saved else [list(s) for s in self.DEFAULT_SLOTS]
 
-        tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
+        self._frame = parent_frame
+        self._build_ui()
 
-        hdr = tk.Frame(w, bg=C["BG"])
-        hdr.pack(fill='x', padx=16, pady=(10, 4))
-        tk.Label(hdr, text="⬡  Parallel Multi-Connect (Tested Only)",
-                 font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(side='left')
+    def _build_ui(self):
+        f = self._frame
+        for w in f.winfo_children():
+            w.destroy()
+        self._slot_widgets.clear()
 
-        ctrl_f = tk.Frame(w, bg=C["BG"])
-        ctrl_f.pack(fill='x', padx=16, pady=(0, 6))
-        self._start_btn = tk.Button(ctrl_f, text="▶  Launch All",
-                                    command=self._start_all,
-                                    bg=C["ACC"], fg="white",
-                                    font=('Segoe UI', 10, 'bold'),
-                                    relief="flat", cursor="hand2",
-                                    activebackground=C["ACC2"])
-        self._start_btn.pack(side='left', ipady=6, padx=(0, 6))
-        tk.Button(ctrl_f, text="⏹  Stop All",
-                  command=self._stop_all,
-                  bg=C["BTN2"], fg=C["FG"],
-                  font=('Segoe UI', 10, 'bold'),
-                  relief="flat", cursor="hand2").pack(side='left', ipady=6)
+        self._info_lbl      = tk.Label(f, bg=C["BG"], fg=C["FG2"])
+        self._port_info_lbl = tk.Label(f, bg=C["BG"], fg=C["CYAN"])
+
+        toolbar = tk.Frame(f, bg=C["CARD"], bd=0)
+        toolbar.pack(fill='x')
+        tk.Frame(toolbar, bg=C["ACC"], height=2).pack(fill='x')
+
+        inner = tk.Frame(toolbar, bg=C["CARD"])
+        inner.pack(fill='x', padx=8, pady=6)
+
+        _b = dict(font=('Segoe UI', 10, 'bold'), relief="flat", cursor="hand2", bd=0)
+
+        left = tk.Frame(inner, bg=C["CARD"])
+        left.pack(side='left')
+
+        tk.Button(left, text="◀ Normal", command=self._go_back,
+                  bg=C["BTN"], fg=C["FG2"],
+                  activebackground=C["BTN2"], activeforeground=C["FG"],
+                  **_b).pack(side='left', ipady=5, ipadx=10, padx=(0, 2))
+
+        self._start_btn = tk.Button(
+            left, text="▶ Start", command=self._start_all,
+            bg=C["GRN"], fg="#0D1A13",
+            disabledforeground="#0D1A13",
+            activebackground="#24A066",
+            **_b)
+        self._start_btn.pack(side='left', ipady=5, ipadx=12, padx=(0, 2))
+
+        tk.Button(left, text="⏹ Stop", command=self._stop_all,
+                  bg=C["BTN"], fg=C["RED"],
+                  activebackground=C["BTN2"], activeforeground=C["RED"],
+                  **_b).pack(side='left', ipady=5, ipadx=12)
 
         self._auto_proxy_var = tk.BooleanVar(value=False)
-        self._auto_proxy_chk = tk.Checkbutton(ctrl_f, text="🔄 Auto System Proxy (Best Ping)",
-                                              variable=self._auto_proxy_var,
-                                              bg=C["BG"], fg=C["FG"], selectcolor=C["PANEL"],
-                                              activebackground=C["BG"], activeforeground=C["FG"],
-                                              font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2")
-        self._auto_proxy_chk.pack(side='right', padx=12)
+        self._proxy_toggle_btn = tk.Button(
+            inner, text="Auto Proxy :  OFF",
+            command=self._toggle_auto_proxy,
+            bg=C["BTN2"], fg=C["FG"],
+            activebackground=C["ACC2"], activeforeground=C["FG"],
+            **_b)
+        self._proxy_toggle_btn.pack(side='right', ipady=5, ipadx=14)
 
-        self._info_lbl = tk.Label(ctrl_f, text="",
-                                  font=('Segoe UI', 9), bg=C["BG"], fg=C["FG2"])
-        self._info_lbl.pack(side='left', padx=12)
+        tk.Frame(f, bg=C["BTN2"], height=1).pack(fill='x')
 
-        tk.Label(w,
-                 text="All connections stay alive. Auto System Proxy will automatically assign system proxy to the lowest-latency active slot.",
-                 font=('Segoe UI', 8), bg=C["BG"], fg=C["FG2"]).pack(padx=16, anchor='w')
-
-        canvas_frame = tk.Frame(w, bg=C["BG"])
-        canvas_frame.pack(fill='both', expand=True, padx=16, pady=6)
-        slots_canvas = tk.Canvas(canvas_frame, bg=C["BG"], highlightthickness=0)
-        vsb = ttk.Scrollbar(canvas_frame, orient='vertical', command=slots_canvas.yview)
-
-        slots_canvas.configure(yscrollcommand=vsb.set)
+        canvas_frame = tk.Frame(f, bg=C["BG"])
+        canvas_frame.pack(fill='both', expand=True)
+        self._canvas = tk.Canvas(canvas_frame, bg=C["BG"], highlightthickness=0)
+        vsb = ttk.Scrollbar(canvas_frame, orient='vertical', command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=vsb.set)
         vsb.pack(side='right', fill='y')
-        slots_canvas.pack(fill='both', expand=True)
-        slots_inner = tk.Frame(slots_canvas, bg=C["BG"])
-        slots_canvas.create_window((0, 0), window=slots_inner, anchor='nw')
-        slots_inner.bind("<Configure>", lambda e: slots_canvas.configure(
-            scrollregion=slots_canvas.bbox("all")))
-        slots_canvas.bind("<MouseWheel>",
-                          lambda e: slots_canvas.yview_scroll(-1*(e.delta//120), "units"))
+        self._canvas.pack(fill='both', expand=True)
+        self._slots_inner = tk.Frame(self._canvas, bg=C["BG"])
+        self._slots_win = self._canvas.create_window((0, 0), window=self._slots_inner, anchor='nw')
+        self._slots_inner.bind("<Configure>", lambda e: self._canvas.configure(
+            scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+            lambda e: self._canvas.itemconfig(self._slots_win, width=e.width))
+        self._canvas.bind("<MouseWheel>",
+            lambda e: self._canvas.yview_scroll(-1*(e.delta//120), "units"))
 
-        slots_inner.columnconfigure(0, weight=1)
-        slots_inner.columnconfigure(1, weight=1)
+        bottom_bar = tk.Frame(f, bg=C["BG"])
+        bottom_bar.pack(fill='x', pady=(6, 2))
+        tk.Button(bottom_bar, text="➕  Add Connection Mode",
+                  command=self._open_add_slot_dialog,
+                  bg=C["BTN"], fg=C["CYAN"],
+                  font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["BTN2"]
+                  ).pack(ipady=7, ipadx=20)
 
-        self._slot_widgets = {}
+        self._rebuild_cards()
 
-        for i, (label, socks, ctrl, http, no_bridge, cat, trans, ip) in enumerate(self.SLOT_DEFS):
-            sf = tk.Frame(slots_inner, bg=C["PANEL"], bd=0)
-            sf.grid(row=i // 2, column=i % 2, padx=6, pady=6, sticky="nsew")
-
-            tk.Frame(sf, bg=C["ACC"], width=4).pack(side='left', fill='y')
-            inner = tk.Frame(sf, bg=C["PANEL"])
-            inner.pack(fill='x', expand=True, padx=8, pady=6)
-
-            top_r = tk.Frame(inner, bg=C["PANEL"])
-            top_r.pack(fill='x')
-            tk.Label(top_r, text=label,
-                     font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"],
-                     width=18, anchor='w').pack(side='left')
-            
-            tk.Label(top_r, text=f"SOCKS:{socks}  HTTP:{http}",
-                     font=('Consolas', 10, 'bold'), bg=C["PANEL"], fg=C["CYAN"]).pack(side='left', padx=6)
-            
-            status_lbl = tk.Label(top_r, text="Idle",
-                                  font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
-            status_lbl.pack(side='right')
-
-            prog_row = tk.Frame(inner, bg=C["PANEL"])
-            prog_row.pack(fill='x', pady=(3, 0))
-            prog_var = tk.IntVar(value=0)
-            bar = ttk.Progressbar(prog_row, variable=prog_var,
-                                  maximum=100, mode='determinate')
-            bar.pack(side='left', fill='x', expand=True)
-            pct_lbl = tk.Label(prog_row, text="0%",
-                               font=('Segoe UI', 8, 'bold'), bg=C["PANEL"], fg=C["FG2"],
-                               width=5)
-            pct_lbl.pack(side='right')
-
-            info_row = tk.Frame(inner, bg=C["PANEL"])
-            info_row.pack(fill='x', pady=(2, 0))
-            health_lbl = tk.Label(info_row, text="⬤ —",
-                                  font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
-            health_lbl.pack(side='left')
-            speed_lbl = tk.Label(info_row, text="",
-                                 font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"])
-            speed_lbl.pack(side='left', padx=(10, 0))
-            
-            log_lbl = tk.Label(inner, text="",
-                               font=('Consolas', 7), bg=C["PANEL"], fg=C["FG2"],
-                               anchor='w', wraplength=380)
-            log_lbl.pack(fill='x')
-
-            btn_row = tk.Frame(inner, bg=C["PANEL"])
-            btn_row.pack(fill='x', pady=(4, 0))
-
-            proxy_btn = tk.Button(btn_row, text="🌐 Set Proxy",
-                                  bg=C["BTN"], fg=C["FG"],
-                                  font=('Segoe UI', 8, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"])
-            proxy_btn.pack(side='left', ipady=3, padx=(0, 4))
-            proxy_btn.configure(
-                command=lambda lbl=label, hp=http, sp=socks: self._set_proxy_to_slot(lbl, sp, hp))
-
-            retry_btn = tk.Button(btn_row, text="↺ Retry",
-                                  bg=C["BTN"], fg=C["FG"],
-                                  font=('Segoe UI', 8, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"])
-            retry_btn.pack(side='left', ipady=3, padx=(0, 4))
-            retry_btn.configure(
-                command=lambda lbl=label, s=socks, c=ctrl, hp=http, nb=no_bridge,
-                                   ca=cat, tr=trans, iip=ip: self._retry_slot(lbl, s, c, hp, nb, ca, tr, iip))
-
-            speed_btn = tk.Button(btn_row, text="⚡ Speed Test",
-                                  bg=C["BTN"], fg=C["FG"],
-                                  font=('Segoe UI', 8, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"])
-            speed_btn.pack(side='left', ipady=3)
-            speed_btn.configure(
-                command=lambda lbl=label, s=socks: self._manual_speed_test(lbl, s))
-
-            health_btn = tk.Button(btn_row, text="🔍 Health",
-                                   bg=C["BTN"], fg=C["FG"],
-                                   font=('Segoe UI', 8, 'bold'),
-                                   relief="flat", cursor="hand2",
-                                   activebackground=C["BTN2"])
-            health_btn.pack(side='left', ipady=3, padx=(4, 0))
-            health_btn.configure(
-                command=lambda lbl=label, s=socks: self._manual_health_check(lbl, s))
-
-            self._slot_widgets[label] = {
-                "frame":      sf,
-                "prog_var":   prog_var,
-                "pct_lbl":    pct_lbl,
-                "status_lbl": status_lbl,
-                "log_lbl":    log_lbl,
-                "bar":        bar,
-                "health_lbl": health_lbl,
-                "speed_lbl":  speed_lbl,
-                "proxy_btn":  proxy_btn,
-                "socks_port": socks,
-                "http_port":  http,
-            }
-
-    def _on_close(self):
-        self._stop_all()
-        self._win.destroy()
-
-    def _update_slot(self, label, pct=None, status=None, log=None,
-                     connected=False, failed=False):
-        w = self._slot_widgets.get(label)
-        if not w:
-            return
-        if pct is not None:
-            w["prog_var"].set(pct)
-            w["pct_lbl"].configure(text=f"{pct}%",
-                                   fg=C["FG"] if pct < 100 else C["FG"])
-        if status is not None:
-            color = C["FG"] if connected else (C["FG2"] if not failed else C["FG2"])
-            w["status_lbl"].configure(text=status, fg=color)
-        if log is not None:
-            w["log_lbl"].configure(text=log[:120])
-        if connected:
-            w["frame"].configure(bg=C["PANEL"])
-            w["bar"].configure(style='Won.Horizontal.TProgressbar')
-        if failed:
-            w["bar"].configure(style='Horizontal.TProgressbar')
-
-    def _check_health_once(self, socks_port, timeout=8) -> tuple:
-        t0 = time.time()
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-            s.connect(("127.0.0.1", socks_port))
-            host_b = self.CHECK_URL_HOST.encode()
-            s.sendall(b'\x05\x01\x00')
-            if s.recv(2)[1] != 0x00:
-                s.close(); return False, 999999.0
-            s.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) + host_b + (443).to_bytes(2, 'big'))
-            r = s.recv(10)
-            if r[1] != 0x00:
-                s.close(); return False, 999999.0
-            ctx = ssl.create_default_context()
-            s = ctx.wrap_socket(s, server_hostname=self.CHECK_URL_HOST)
-            s.sendall((f"GET {self.CHECK_URL_PATH} HTTP/1.1\r\nHost: {self.CHECK_URL_HOST}\r\n"
-                       f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode())
-            resp = s.recv(512).decode(errors="replace")
-            s.close()
-            latency = (time.time() - t0) * 1000.0
-            if "204" in resp or "HTTP/1." in resp:
-                return True, latency
-            return False, 999999.0
-        except Exception:
-            return False, 999999.0
-
-    def _run_health_loop(self, label, socks_port, stop_ev, auto_speed_done):
-        first_success = False
-        while not stop_ev.wait(10):
-            ok, latency = self._check_health_once(socks_port)
-            with self._lock:
-                self._slot_health[label] = (ok, latency)
-
-            if ok:
-                health_txt = f"⬤ Online ({int(latency)} ms)"
-                health_fg  = C["GRN"]
-                if not first_success:
-                    first_success = True
-                    auto_speed_done.append(True)
-                    threading.Thread(
-                        target=self._run_speed_test,
-                        args=(label, socks_port, True), daemon=True).start()
-            else:
-                health_txt = "⬤ Offline"
-                health_fg  = C["FG2"]
-
-            w = self._slot_widgets.get(label)
-            if w:
-                self._win.after(0, w["health_lbl"].configure,
-                                {"text": health_txt, "fg": health_fg})
-
-            if self._auto_proxy_var.get():
-                self._evaluate_best_proxy()
-
-    def _evaluate_best_proxy(self):
-        with self._lock:
-            best_label = None
-            best_latency = 999999.0
-            for label, (ok, latency) in self._slot_health.items():
-                if ok and latency < best_latency:
-                    best_latency = latency
-                    best_label = label
-
-            if best_label and best_label != self._active_proxy_label:
-                for label_def, socks, ctrl, http, *rest in self.SLOT_DEFS:
-                    if label_def == best_label:
-                        self._win.after(0, self._set_proxy_to_slot, best_label, socks, http)
-                        break
-
-    def _run_speed_test(self, label, socks_port, auto=False):
-        w = self._slot_widgets.get(label)
-        if not w:
-            return
-        self._win.after(0, w["speed_lbl"].configure, {"text": "⏳ Testing…"})
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(30)
-            s.connect(("127.0.0.1", socks_port))
-            host_b = self.SPEED_HOST.encode()
-            s.sendall(b'\x05\x01\x00')
-            if s.recv(2)[1] != 0x00:
-                raise ConnectionError("SOCKS5 auth failed")
-            s.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) + host_b + (80).to_bytes(2, 'big'))
-            r = s.recv(10)
-            if r[1] != 0x00:
-                raise ConnectionError("SOCKS5 connect failed")
-            request = (f"GET {self.SPEED_PATH} HTTP/1.1\r\nHost: {self.SPEED_HOST}\r\n"
-                       f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode()
-            s.sendall(request)
-            buf = b""
-            while b"\r\n\r\n" not in buf:
-                chunk = s.recv(4096)
-                if not chunk:
-                    break
-                buf += chunk
-            t0 = time.time()
-            received = 0
-            while True:
-                chunk = s.recv(65536)
-                if not chunk:
-                    break
-                received += len(chunk)
-                if received >= 1024 * 1024:
-                    break
-            elapsed = time.time() - t0
-            s.close()
-            if elapsed > 0 and received > 0:
-                kbps = received / elapsed / 1024
-                if kbps >= 1024:
-                    speed_str = f"⚡ {kbps/1024:.1f} MB/s"
-                else:
-                    speed_str = f"⚡ {kbps:.0f} KB/s"
-            else:
-                speed_str = "⚡ —"
-        except Exception as e:
-            speed_str = f"✗ Speed: {str(e)[:20]}"
-        self._win.after(0, w["speed_lbl"].configure, {"text": speed_str})
-
-    def _manual_speed_test(self, label, socks_port):
-        w = self._slot_widgets.get(label)
-        if not w:
-            return
-        status = w["status_lbl"].cget("text")
-        if "Connected" not in status and "Bootstrapped 100" not in status:
-            self._win.after(0, w["speed_lbl"].configure,
-                            {"text": "⚠ Not connected"})
-            return
-        threading.Thread(
-            target=self._run_speed_test, args=(label, socks_port, False),
-            daemon=True).start()
-
-    def _manual_health_check(self, label, socks_port):
-        def _run():
-            ok, latency = self._check_health_once(socks_port)
-            w = self._slot_widgets.get(label)
-            if w:
-                health_txt = f"⬤ Online ({int(latency)} ms)" if ok else "⬤ Offline"
-                self._win.after(0, w["health_lbl"].configure, {
-                    "text": health_txt,
-                    "fg": C["GRN"] if ok else C["FG2"]})
-        threading.Thread(target=_run, daemon=True).start()
-
-    def _set_proxy_to_slot(self, label, socks_port, http_port):
-        if self._proxy_stop_ev is not None:
+    def _go_back(self):
+        if self._proxy_stop_ev:
             self._proxy_stop_ev.set()
             self._proxy_stop_ev = None
+        if self._active_proxy_label:
+            self._disable_system_proxy()
+            prev = self._active_proxy_label
+            self._active_proxy_label = None
+            w = self._slot_widgets.get(prev)
+            if w:
+                try:
+                    w["proxy_btn"].configure(text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
+                except Exception:
+                    pass
+        self._update_proxy_status_bar(None, None, None)
+        try:
+            w = self._frame.winfo_toplevel()
+            app = getattr(w, '_app', None)
+            if app and hasattr(app, '_switch_to_mode'):
+                app._switch_to_mode("normal")
+        except Exception:
+            pass
 
+    def _toggle_auto_proxy(self):
+        new_val = not self._auto_proxy_var.get()
+        self._auto_proxy_var.set(new_val)
+        if new_val:
+            self._proxy_toggle_btn.configure(
+                bg=C["ACC"], fg=C["FG"],
+                text="Auto Proxy :  ON")
+        else:
+            self._proxy_toggle_btn.configure(
+                bg=C["BTN2"], fg=C["FG"],
+                text="Auto Proxy :  OFF")
+            if self._proxy_stop_ev:
+                self._proxy_stop_ev.set()
+                self._proxy_stop_ev = None
+            if self._active_proxy_label:
+                self._disable_system_proxy()
+                prev = self._active_proxy_label
+                self._active_proxy_label = None
+                w = self._slot_widgets.get(prev)
+                if w:
+                    w["proxy_btn"].configure(text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
+            self._update_proxy_status_bar(None, None, None)
+
+    def _rebuild_cards(self):
+        for w in self._slots_inner.winfo_children():
+            w.destroy()
+        self._slot_widgets.clear()
+        self._slots_inner.columnconfigure(0, weight=1)
+        self._slots_inner.columnconfigure(1, weight=1)
+        for i, sdef in enumerate(self._slot_defs):
+            label, source, cat, trans, ip, no_bridge = sdef
+            socks, ctrl, http = self._slot_ports(i)
+            if label not in self._slot_enabled:
+                self._slot_enabled[label] = tk.BooleanVar(value=True)
+            self._build_card(i, label, source, cat, trans, ip, no_bridge, socks, ctrl, http)
+
+        for label, st in self._slot_state.items():
+            w = self._slot_widgets.get(label)
+            if not w:
+                continue
+            pct = st.get("pct")
+            if pct is not None:
+                w["prog_var"].set(pct)
+                w["pct_lbl"].configure(text=f"{pct}%")
+            bar_style = st.get("bar_style")
+            if bar_style:
+                w["bar"].configure(style=bar_style)
+            status = st.get("status")
+            if status is not None:
+                w["status_lbl"].configure(
+                    text=status,
+                    fg=st.get("status_fg", C["FG2"]))
+            health = st.get("health")
+            if health is not None:
+                w["health_lbl"].configure(
+                    text=health,
+                    fg=st.get("health_fg", C["FG2"]))
+
+    def _slot_ports(self, index):
+        return (9061 + index, 9071 + index, 19061 + index)
+
+    def _build_card(self, idx, label, source, cat, trans, ip, no_bridge, socks, ctrl, http):
+        si = self._slots_inner
+        sf = tk.Frame(si, bg=C["PANEL"], bd=0)
+        sf.grid(row=idx // 2, column=idx % 2, padx=6, pady=6, sticky="nsew")
+
+        strip_color = C["ACC"]
+        tk.Frame(sf, bg=strip_color, width=4).pack(side='left', fill='y')
+
+        inner = tk.Frame(sf, bg=C["PANEL"])
+        inner.pack(fill='both', expand=True, padx=10, pady=8)
+
+        top_r = tk.Frame(inner, bg=C["PANEL"])
+        top_r.pack(fill='x')
+
+        ev = self._slot_enabled.get(label, tk.BooleanVar(value=True))
+        self._slot_enabled[label] = ev
+        _cv = tk.Canvas(top_r, width=22, height=22, bg=C["PANEL"],
+                        highlightthickness=0, cursor="hand2")
+        _cv.pack(side='left', padx=(0, 4))
+        def _draw_toggle(canvas, var):
+            canvas.delete("all")
+            canvas.create_rectangle(1, 1, 21, 21, outline=C["BORDER"], fill=C["BTN"], width=1)
+            if var.get():
+                canvas.create_rectangle(4, 4, 18, 18, fill=C["GRN"], outline="")
+        def _click_toggle(event, lbl=label, canvas=_cv, var=ev):
+            var.set(not var.get())
+            _draw_toggle(canvas, var)
+            self._on_toggle_slot(lbl)
+        _cv.bind("<Button-1>", _click_toggle)
+        _draw_toggle(_cv, ev)
+        self._slot_enabled[label + "__cv"] = (_cv, ev)
+
+        tk.Label(top_r, text=label,
+                 font=('Segoe UI', 11, 'bold'), bg=C["PANEL"], fg=C["FG"]
+                 ).pack(side='left', padx=(2, 8))
+
+        status_lbl = tk.Label(top_r, text="Idle",
+                              font=('Segoe UI', 9), bg=C["PANEL"], fg=C["FG2"])
+        status_lbl.pack(side='right')
+
+        src_text = f"{source}  ·  {cat or '—'}  ·  {trans}  ·  {ip or 'auto'}"
+        tk.Label(inner, text=src_text,
+                 font=('Segoe UI', 8), bg=C["PANEL"], fg=C["FG2"]).pack(anchor='w')
+
+        tk.Label(inner, text=f"SOCKS {socks}  ·  HTTP {http}",
+                 font=('Consolas', 9, 'bold'), bg=C["PANEL"], fg=C["CYAN"]).pack(anchor='w')
+
+        prog_row = tk.Frame(inner, bg=C["PANEL"])
+        prog_row.pack(fill='x', pady=(4, 0))
+        prog_var = tk.IntVar(value=0)
+        bar = ttk.Progressbar(prog_row, variable=prog_var, maximum=100, mode='determinate')
+        bar.pack(side='left', fill='x', expand=True)
+        pct_lbl = tk.Label(prog_row, text="0%",
+                           font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG2"], width=5)
+        pct_lbl.pack(side='right')
+
+        health_row = tk.Frame(inner, bg=C["PANEL"])
+        health_row.pack(fill='x', pady=(2, 0))
+        health_lbl = tk.Label(health_row, text="⬤ —",
+                              font=('Segoe UI', 9), bg=C["PANEL"], fg=C["FG2"])
+        health_lbl.pack(side='left')
+
+        btn_row = tk.Frame(inner, bg=C["PANEL"])
+        btn_row.pack(fill='x', pady=(6, 0))
+
+        proxy_btn = tk.Button(btn_row, text="🌐 Set Proxy",
+                              bg=C["BTN"], fg=C["FG"],
+                              font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                              activebackground=C["BTN2"])
+        proxy_btn.pack(side='left', ipady=4, padx=(0, 4))
+        proxy_btn.configure(command=lambda lbl=label, sp=socks, hp=http:
+                            self._set_proxy_to_slot(lbl, sp, hp))
+
+        retry_btn = tk.Button(btn_row, text="↺ Retry",
+                              bg=C["BTN"], fg=C["FG"],
+                              font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                              activebackground=C["BTN2"])
+        retry_btn.pack(side='left', ipady=4, padx=(0, 4))
+        retry_btn.configure(command=lambda lbl=label, s=socks, c=ctrl, hp=http,
+                                       nb=no_bridge, src=source, ca=cat,
+                                       tr=trans, iip=ip:
+                            self._retry_slot(lbl, s, c, hp, nb, src, ca, tr, iip))
+
+        health_btn = tk.Button(btn_row, text="🔍 Health",
+                               bg=C["BTN"], fg=C["FG"],
+                               font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                               activebackground=C["BTN2"])
+        health_btn.pack(side='left', ipady=4, padx=(0, 4))
+        health_btn.configure(command=lambda lbl=label, s=socks: self._manual_health(lbl, s))
+
+        log_btn = tk.Button(btn_row, text="📋 Log",
+                            bg=C["BTN"], fg=C["FG"],
+                            font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                            activebackground=C["BTN2"])
+        log_btn.pack(side='left', ipady=4, padx=(0, 4))
+        log_btn.configure(command=lambda lbl=label: self._show_slot_log(lbl))
+
+        del_btn = tk.Button(btn_row, text="🗑",
+                            bg=C["BTN"], fg=C["RED"],
+                            font=('Segoe UI', 9), relief="flat", cursor="hand2",
+                            activebackground=C["BTN2"])
+        del_btn.pack(side='right', ipady=4)
+        del_btn.configure(command=lambda lbl=label: self._delete_slot(lbl))
+
+        self._slot_widgets[label] = {
+            "frame":      sf,
+            "prog_var":   prog_var,
+            "pct_lbl":    pct_lbl,
+            "status_lbl": status_lbl,
+            "bar":        bar,
+            "health_lbl": health_lbl,
+            "proxy_btn":  proxy_btn,
+            "socks_port": socks,
+            "http_port":  http,
+        }
+
+    def _open_add_slot_dialog(self):
+        dlg = tk.Toplevel(self._frame.winfo_toplevel())
+        dlg.title("Add Connection Mode")
+        dlg.geometry("440x360")
+        dlg.configure(bg=C["BG"])
+        dlg.resizable(False, False)
+        dlg.update()
+        apply_dark_titlebar(dlg)
+
+        tk.Frame(dlg, bg=C["ACC"], height=3).pack(fill='x')
+        tk.Label(dlg, text="➕  Add New Mode",
+                 font=('Segoe UI', 12, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(12, 8))
+
+        frm = tk.Frame(dlg, bg=C["BG"])
+        frm.pack(fill='x', padx=24)
+
+        OM_CFG = dict(bg=C["BTN"], fg=C["FG"], activebackground=C["BTN2"],
+                      activeforeground=C["FG"], highlightthickness=0,
+                      relief="flat", font=('Segoe UI', 10))
+        MENU_CFG = dict(bg=C["BTN"], fg=C["FG"], activebackground=C["ACC"],
+                        activeforeground=C["FG"], borderwidth=0,
+                        font=('Segoe UI', 10))
+
+        def om_row(txt, var, options):
+            r = tk.Frame(frm, bg=C["BG"])
+            r.pack(fill='x', pady=5)
+            tk.Label(r, text=txt, width=14, anchor='w',
+                     bg=C["BG"], fg=C["FG"], font=('Segoe UI', 10)).pack(side='left')
+            om = tk.OptionMenu(r, var, *options)
+            om.configure(**OM_CFG)
+            om["menu"].configure(**MENU_CFG)
+            om.pack(side='left', fill='x', expand=True, ipady=3)
+            return om
+
+        v_name   = tk.StringVar(value="New Mode")
+        v_source = tk.StringVar(value=self.SRC_DK)
+        v_cat    = tk.StringVar(value="Tested & Active")
+        v_trans  = tk.StringVar(value="obfs4")
+        v_ip     = tk.StringVar(value="IPv4")
+
+        nr = tk.Frame(frm, bg=C["BG"])
+        nr.pack(fill='x', pady=5)
+        tk.Label(nr, text="Name:", width=14, anchor='w',
+                 bg=C["BG"], fg=C["FG"], font=('Segoe UI', 10)).pack(side='left')
+        tk.Entry(nr, textvariable=v_name,
+                 bg=C["BTN"], fg=C["FG"], insertbackground=C["FG"],
+                 relief="flat", bd=6, font=('Segoe UI', 10)).pack(side='left', fill='x', expand=True)
+
+        src_om  = om_row("Source:",    v_source, [self.SRC_BUILTIN, self.SRC_DK, self.SRC_DIRECT])
+
+        cat_frame = tk.Frame(frm, bg=C["BG"])
+        cat_frame.pack(fill='x', pady=5)
+        tk.Label(cat_frame, text="Category:", width=14, anchor='w',
+                 bg=C["BG"], fg=C["FG"], font=('Segoe UI', 10)).pack(side='left')
+        cat_om = tk.OptionMenu(cat_frame, v_cat, *self.DK_CATEGORIES)
+        cat_om.configure(**OM_CFG)
+        cat_om["menu"].configure(**MENU_CFG)
+        cat_om.pack(side='left', fill='x', expand=True, ipady=3)
+
+        trans_om = om_row("Transport:", v_trans, self.DK_TRANSPORTS)
+        ip_om    = om_row("IP Version:", v_ip,   ["IPv4", "IPv6", "Both"])
+
+        def _on_source_change(*_):
+            src = v_source.get()
+            if src == self.SRC_BUILTIN:
+                trans_om["menu"].delete(0, "end")
+                for opt in self.BUILTIN_TRANSPORTS:
+                    trans_om["menu"].add_command(label=opt,
+                                                  command=lambda o=opt: v_trans.set(o))
+                v_trans.set("snowflake")
+                cat_om.configure(state='disabled')
+                ip_om.configure(state='disabled')
+                trans_om.configure(state='normal')
+            elif src == self.SRC_DIRECT:
+                cat_om.configure(state='disabled')
+                trans_om.configure(state='disabled')
+                ip_om.configure(state='disabled')
+            else:
+                trans_om["menu"].delete(0, "end")
+                for opt in self.DK_TRANSPORTS:
+                    trans_om["menu"].add_command(label=opt,
+                                                  command=lambda o=opt: v_trans.set(o))
+                v_trans.set("obfs4")
+                cat_om.configure(state='normal')
+                ip_om.configure(state='normal')
+                trans_om.configure(state='normal')
+
+        v_source.trace_add("write", _on_source_change)
+        _on_source_change()
+
+        def _add():
+            name = v_name.get().strip() or "Mode"
+            existing = [s[0] for s in self._slot_defs]
+            if name in existing:
+                name = f"{name} ({len(existing)+1})"
+            src = v_source.get()
+            if src == self.SRC_BUILTIN:
+                new_slot = [name, src, None, v_trans.get(), None, False]
+            elif src == self.SRC_DIRECT:
+                new_slot = [name, src, None, None, None, True]
+            else:
+                new_slot = [name, src, v_cat.get(), v_trans.get(), v_ip.get(), False]
+            self._slot_defs.append(new_slot)
+            self._save_slots()
+            dlg.destroy()
+            self._rebuild_cards()
+
+        bf = tk.Frame(dlg, bg=C["BG"])
+        bf.pack(fill='x', padx=24, pady=14)
+        tk.Button(bf, text="✔  Add", command=_add,
+                  bg=C["ACC"], fg=C["FG"],
+                  font=('Segoe UI', 10, 'bold'), relief="flat", cursor="hand2",
+                  activebackground=C["ACC2"]).pack(side='left', ipady=5, padx=(0, 8))
+        tk.Button(bf, text="Cancel", command=dlg.destroy,
+                  bg=C["BTN"], fg=C["FG2"],
+                  font=('Segoe UI', 10), relief="flat", cursor="hand2").pack(side='left', ipady=5)
+
+    def _delete_slot(self, label):
+        slot_idx = next((i for i, s in enumerate(self._slot_defs) if s[0] == label), None)
+        socks_port = self._slot_ports(slot_idx)[0] if slot_idx is not None else None
+
+        if self._running:
+            ev = self._stop_events.pop(label, None)
+            if ev: ev.set()
+            with self._lock:
+                p = self._procs.pop(label, None)
+                if p:
+                    try:
+                        p.terminate()
+                        p.wait(timeout=3)
+                    except: pass
+        self._slot_defs = [s for s in self._slot_defs if s[0] != label]
+        self._slot_widgets.pop(label, None)
+        self._slot_enabled.pop(label, None)
+        self._slot_health.pop(label, None)
+        self._slot_ping_history.pop(label, None)
+        self._slot_state.pop(label, None)
+
+        if socks_port is not None:
+            data_dir = os.path.join(self.extract_dir, f"data_par_{socks_port}")
+            if os.path.isdir(data_dir):
+                try:
+                    shutil.rmtree(data_dir)
+                except Exception:
+                    pass
+
+        self._save_slots()
+        self._rebuild_cards()
+
+    def _save_slots(self):
+        self.cfg["multi_slots"] = [list(s) for s in self._slot_defs]
+        save_config(self.cfg)
+
+    def _on_toggle_slot(self, label):
+        enabled = self._slot_enabled[label].get()
+        if self._running:
+            if enabled:
+                idx = next((i for i, s in enumerate(self._slot_defs) if s[0] == label), 0)
+                sdef = self._slot_defs[idx]
+                _, src, cat, trans, ip, nb = sdef
+                socks, ctrl, http = self._slot_ports(idx)
+                threading.Thread(target=self._run_slot,
+                                 args=(label, socks, ctrl, http, nb, src, cat, trans, ip),
+                                 daemon=True).start()
+            else:
+                ev = self._stop_events.pop(label, None)
+                if ev: ev.set()
+                with self._lock:
+                    p = self._procs.get(label)
+                    if p:
+                        try: p.terminate()
+                        except: pass
+                w = self._slot_widgets.get(label)
+                if w:
+                    self._frame.after(0, w["status_lbl"].configure,
+                                      {"text": "Disabled", "fg": C["FG2"]})
+                    self._frame.after(0, w["prog_var"].set, 0)
+
+    def _update_slot(self, label, pct=None, status=None,
+                     connected=False, failed=False):
+        w = self._slot_widgets.get(label)
+        st = self._slot_state.setdefault(label, {})
+        if pct is not None:
+            st["pct"] = pct
+            if w:
+                w["prog_var"].set(pct)
+                w["pct_lbl"].configure(text=f"{pct}%")
+        if status is not None:
+            color = C["GRN"] if connected else (C["RED"] if failed else C["FG2"])
+            st["status"] = status
+            st["status_fg"] = color
+            if w:
+                w["status_lbl"].configure(text=status, fg=color)
+        if connected:
+            st["bar_style"] = 'Won.Horizontal.TProgressbar'
+            if w:
+                w["bar"].configure(style='Won.Horizontal.TProgressbar')
+        elif failed:
+            st["bar_style"] = 'Horizontal.TProgressbar'
+            if w:
+                w["bar"].configure(style='Horizontal.TProgressbar')
+
+    def _check_health(self, socks_port, timeout=15):
+        result = [False, float(timeout * 1000)]
+
+        def _do():
+            t0 = time.time()
+            s = None
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(timeout)
+                s.connect(("127.0.0.1", socks_port))
+                host_b = self.CHECK_HOST.encode()
+                s.sendall(b'\x05\x01\x00')
+                if s.recv(2)[1] != 0x00:
+                    return
+                s.sendall(b'\x05\x01\x00\x03' + bytes([len(host_b)]) +
+                          host_b + (443).to_bytes(2, 'big'))
+                if s.recv(10)[1] != 0x00:
+                    return
+                ctx = ssl.create_default_context()
+                s = ctx.wrap_socket(s, server_hostname=self.CHECK_HOST)
+                s.sendall((f"GET {self.CHECK_PATH} HTTP/1.1\r\nHost: {self.CHECK_HOST}\r\n"
+                           f"Connection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n").encode())
+                resp = s.recv(512).decode(errors="replace")
+                latency = (time.time() - t0) * 1000.0
+                if "204" in resp or "HTTP/1." in resp:
+                    result[0] = True
+                    result[1] = latency
+            except Exception:
+                pass
+            finally:
+                try:
+                    if s:
+                        s.close()
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_do, daemon=True)
+        t.start()
+        t.join(timeout)
+        return result[0], result[1]
+
+    def _health_loop(self, label, socks_port, stop_ev):
+        while not stop_ev.wait(15):
+            ok, lat = self._check_health(socks_port, timeout=15)
+            if not ok:
+                lat = 15000.0
+
+            with self._lock:
+                history = self._slot_ping_history.setdefault(label, [])
+                history.append(lat)
+                if len(history) > 20:
+                    history[:] = history[-20:]
+                avg_lat = sum(history) / len(history)
+                self._slot_health[label] = (ok, avg_lat)
+
+            w = self._slot_widgets.get(label)
+            if ok:
+                txt = f"⬤ Online  {int(lat)} ms  (avg {int(avg_lat)} ms)"
+            else:
+                txt = f"⬤ Offline  (avg {int(avg_lat)} ms)"
+            fg = C["GRN"] if ok else C["RED"]
+            st = self._slot_state.setdefault(label, {})
+            st["health"] = txt
+            st["health_fg"] = fg
+            if w:
+                self._frame.after(0, w["health_lbl"].configure, {"text": txt, "fg": fg})
+            if self._auto_proxy_var.get():
+                self._best_proxy()
+
+    def _best_proxy(self):
+        with self._lock:
+            best, best_avg = None, float('inf')
+            for lbl, (ok, avg_lat) in self._slot_health.items():
+                if avg_lat < best_avg:
+                    best_avg, best = avg_lat, lbl
+        if best and best != self._active_proxy_label:
+            for i, sdef in enumerate(self._slot_defs):
+                if sdef[0] == best:
+                    socks, _, http = self._slot_ports(i)
+                    self._frame.after(0, self._set_proxy_to_slot, best, socks, http)
+                    break
+
+    def _manual_health(self, label, socks_port):
+        def _run():
+            ok, lat = self._check_health(socks_port)
+            w = self._slot_widgets.get(label)
+            if w:
+                txt = f"⬤ Online  {int(lat)} ms" if ok else "⬤ Offline"
+                self._frame.after(0, w["health_lbl"].configure,
+                                  {"text": txt, "fg": C["GRN"] if ok else C["RED"]})
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _show_slot_log(self, label):
+        self._canvas.pack_forget()
+        if hasattr(self, '_log_view_frame') and self._log_view_frame.winfo_exists():
+            self._log_view_frame.destroy()
+
+        lf = tk.Frame(self._frame, bg=C["BG"])
+        lf = tk.Frame(self._frame, bg=C["BG"])
+        lf = tk.Frame(self._frame, bg=C["BG"])
+        lf.place(x=0, y=0, relwidth=1, height=1200)  # ارتفاع دقیق 800 پیکسل
+        lf.pack_propagate(False)
+
+        self._log_view_frame = lf
+
+        hdr = tk.Frame(lf, bg=C["CARD"])
+        hdr.pack(fill='x')
+        tk.Frame(hdr, bg=C["ACC"], height=2).pack(fill='x', side='top')
+        _h = tk.Frame(hdr, bg=C["CARD"])
+        _h.pack(fill='x', padx=10, pady=6)
+        tk.Label(_h, text=f"📋  Log — {label}",
+                 font=('Segoe UI', 11, 'bold'), bg=C["CARD"], fg=C["ACC"]).pack(side='left')
+        tk.Button(_h, text="◀  Back to Slots",
+                  command=self._hide_slot_log,
+                  bg=C["BTN"], fg=C["FG"],
+                  font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
+                  activebackground=C["BTN2"]).pack(side='right', ipady=4, ipadx=8)
+
+        txt_f = tk.Frame(lf, bg=C["PANEL"])
+        txt_f.pack(fill='both', expand=True)
+        txt = tk.Text(txt_f, font=('Consolas', 9), wrap='word',
+                      state='disabled', bg=C["PANEL"], fg=C["FG2"],
+                      bd=0, padx=10, pady=8)
+        txt.tag_configure("warn",   foreground=C["YLW"])
+        txt.tag_configure("err",    foreground=C["RED"])
+        txt.tag_configure("notice", foreground=C["GRN"])
+        sb = ttk.Scrollbar(txt_f, command=txt.yview)
+        txt.configure(yscrollcommand=sb.set)
+        sb.pack(side='right', fill='y')
+        txt.pack(side='left', fill='both', expand=True)
+
+        logs = self._slot_logs.get(label, [])
+        txt.configure(state='normal')
+        if logs:
+            for line in logs:
+                tag = "err" if " [err]" in line or "Error" in line else                       "warn" if " [warn]" in line or "Warn" in line else                       "notice" if "Bootstrapped" in line or "Done" in line else ""
+                txt.insert('end', line + "\n", tag)
+        else:
+            txt.insert('end', "No log yet. Start the connection first.\n", "")
+        txt.configure(state='disabled')
+        txt.see('end')
+        self._log_view_label = label
+        self._log_view_txt   = txt
+
+        self._log_view_active = True
+        self._frame.after(1000, self._refresh_slot_log)
+
+    def _refresh_slot_log(self):
+        if not getattr(self, '_log_view_active', False):
+            return
+        if not hasattr(self, '_log_view_txt') or not self._log_view_txt.winfo_exists():
+            return
+        label = self._log_view_label
+        logs  = self._slot_logs.get(label, [])
+        txt   = self._log_view_txt
+        current = int(txt.index('end-1c').split('.')[0]) - 1
+        new_lines = logs[current:]
+        if new_lines:
+            txt.configure(state='normal')
+            for line in new_lines:
+                tag = "err"    if " [err]"  in line or "Error" in line else                       "warn"   if " [warn]" in line or "Warn"  in line else                       "notice" if "Bootstrapped" in line or "Done" in line else ""
+                txt.insert('end', line + "\n", tag)
+            txt.configure(state='disabled')
+            txt.see('end')
+        self._frame.after(1000, self._refresh_slot_log)
+
+    def _hide_slot_log(self):
+        self._log_view_active = False
+        if hasattr(self, '_log_view_frame') and self._log_view_frame.winfo_exists():
+            self._log_view_frame.destroy()
+        self._canvas.pack(fill='both', expand=True)
+
+    def _set_proxy_to_slot(self, label, socks_port, http_port):
+        if self._proxy_stop_ev:
+            self._proxy_stop_ev.set()
+            self._proxy_stop_ev = None
         for lbl, wgt in self._slot_widgets.items():
-            wgt["proxy_btn"].configure(
-                text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
-
+            wgt["proxy_btn"].configure(text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
         if self._active_proxy_label == label and not self._auto_proxy_var.get():
             self._active_proxy_label = None
             self._disable_system_proxy()
-            self._win.after(0, self._info_lbl.configure,
-                            {"text": "Proxy disabled."})
+            self._frame.after(0, self._info_lbl.configure,
+                              {"text": "Proxy disabled.", "fg": C["FG2"]})
+            self._frame.after(0, self._port_info_lbl.configure, {"text": ""})
+            self._update_proxy_status_bar(None, None, None, None)
             return
-
         ev = threading.Event()
         self._proxy_stop_ev = ev
         threading.Thread(target=run_http_proxy_server,
@@ -1442,26 +1942,29 @@ class ParallelConnectWindow:
                          daemon=True).start()
         self._enable_system_proxy(http_port)
         self._active_proxy_label = label
-
         w = self._slot_widgets.get(label)
         if w:
-            w["proxy_btn"].configure(
-                text="🌐 Proxy ON", bg="#0E2A1A", fg=C["FG"])
-        self._win.after(0, self._info_lbl.configure,
-                        {"text": f"Proxy → {label}  HTTP:{http_port}  SOCKS:{socks_port}"})
+            w["proxy_btn"].configure(text="🌐 Proxy ON", bg=C["SEL"], fg=C["GRN"])
+        self._frame.after(0, self._info_lbl.configure,
+                          {"text": f"✔ Proxy → {label}", "fg": C["GRN"]})
+        self._frame.after(0, self._port_info_lbl.configure,
+                          {"text": f"SOCKS {socks_port}  ·  HTTP {http_port}"})
+        sdef = next((s for s in self._slot_defs if s[0] == label), None)
+        if sdef:
+            _, src, cat, trans, ip, _ = sdef
+            self._update_proxy_status_bar(label, trans, ip, socks_port, http_port, cat)
+        else:
+            self._update_proxy_status_bar(label, None, None, socks_port, http_port)
 
     def _enable_system_proxy(self, http_port):
         try:
-            import winreg as _wr
-            key = _wr.OpenKey(
-                _wr.HKEY_CURRENT_USER,
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                 r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
-                0, _wr.KEY_ALL_ACCESS)
-            proxy_str = f'127.0.0.1:{http_port}'
-            _wr.SetValueEx(key, 'ProxyEnable',   0, _wr.REG_DWORD, 1)
-            _wr.SetValueEx(key, 'ProxyServer',   0, _wr.REG_SZ, proxy_str)
-            _wr.SetValueEx(key, 'ProxyOverride', 0, _wr.REG_SZ, '127.0.0.1;localhost;<local>')
-            _wr.CloseKey(key)
+                0, winreg.KEY_ALL_ACCESS)
+            winreg.SetValueEx(key, 'ProxyEnable',   0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, 'ProxyServer',   0, winreg.REG_SZ, f'127.0.0.1:{http_port}')
+            winreg.SetValueEx(key, 'ProxyOverride', 0, winreg.REG_SZ, '127.0.0.1;localhost;<local>')
+            winreg.CloseKey(key)
             ctypes.windll.wininet.InternetSetOptionW(0, 39, 0, 0)
             ctypes.windll.wininet.InternetSetOptionW(0, 37, 0, 0)
         except Exception:
@@ -1469,26 +1972,77 @@ class ParallelConnectWindow:
 
     def _disable_system_proxy(self):
         try:
-            import winreg as _wr
-            key = _wr.OpenKey(
-                _wr.HKEY_CURRENT_USER,
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                 r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
-                0, _wr.KEY_ALL_ACCESS)
-            _wr.SetValueEx(key, 'ProxyEnable', 0, _wr.REG_DWORD, 0)
-            _wr.SetValueEx(key, 'ProxyServer',  0, _wr.REG_SZ, '')
-            _wr.CloseKey(key)
+                0, winreg.KEY_ALL_ACCESS)
+            winreg.SetValueEx(key, 'ProxyEnable',   0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(key, 'ProxyServer',   0, winreg.REG_SZ, '')
+            winreg.SetValueEx(key, 'ProxyOverride', 0, winreg.REG_SZ, '')
+            winreg.CloseKey(key)
             ctypes.windll.wininet.InternetSetOptionW(0, 39, 0, 0)
             ctypes.windll.wininet.InternetSetOptionW(0, 37, 0, 0)
         except Exception:
             pass
 
+    def _update_proxy_status_bar(self, label, trans, ip, socks_port=None, http_port=None, cat=None):
+        try:
+            app = self._frame.winfo_toplevel()._app
+            lbl = getattr(app, '_proxy_status_lbl', None)
+            if lbl is None:
+                return
+            if label is None:
+                lbl.configure(text="", fg=C["FG2"])
+                return
+            parts = []
+            parts.append("proxy: active")
+            desc = ""
+            if trans:
+                desc += trans
+            if cat:
+                desc += f" {cat}"
+            if ip:
+                desc += f" {ip}"
+            if desc:
+                parts.append(desc.strip())
+            if http_port:
+                parts.append(f"HTTP: {http_port}")
+            if socks_port:
+                parts.append(f"SOCKS: {socks_port}")
+            lbl.configure(text="  |  ".join(parts), fg=C["GRN"])
+        except Exception:
+            pass
+
     def _run_slot(self, label, socks_port, ctrl_port, http_port,
-                  no_bridge, cat, trans, ip, retry_count=0, max_retries=5):
+                  no_bridge, source, cat, trans, ip,
+                  retry_count=0, max_retries=5):
+        ev = self._slot_enabled.get(label)
+        if ev and not ev.get():
+            return
+
         tor_exe = os.path.join(self.extract_dir, "tor", "tor.exe")
         if not os.path.exists(tor_exe):
-            self._win.after(0, self._update_slot, label,
-                            None, "tor.exe not found", None, False, True)
+            self._frame.after(0, self._update_slot, label, None, "tor.exe not found", False, True)
             return
+
+        def _port_in_use(port):
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(0.3)
+                result = s.connect_ex(("127.0.0.1", port))
+                s.close()
+                return result == 0
+            except OSError:
+                return False
+
+        if _port_in_use(socks_port):
+            self._frame.after(0, self._update_slot, label, None,
+                              f"Port {socks_port} busy — waiting…")
+            for _ in range(15):
+                if not self._running:
+                    return
+                time.sleep(2)
+                if not _port_in_use(socks_port):
+                    break
 
         with self._lock:
             old = self._procs.get(label)
@@ -1496,32 +2050,48 @@ class ParallelConnectWindow:
                 try: old.terminate()
                 except: pass
 
-        data_dir   = os.path.join(self.extract_dir, f"data_par_{socks_port}")
+        data_dir     = os.path.join(self.extract_dir, f"data_par_{socks_port}")
+        pt_state_dir = os.path.join(data_dir, "pt_state")
         os.makedirs(data_dir, exist_ok=True)
+        os.makedirs(pt_state_dir, exist_ok=True)
         torrc_path = os.path.join(data_dir, "torrc")
-
-        pt_dir   = os.path.join(self.extract_dir, "tor", "pluggable_transports")
-        lyrebird = os.path.join(pt_dir, "lyrebird.exe")
-        conjure  = os.path.join(pt_dir, "conjure-client.exe")
+        pt_dir     = os.path.join(self.extract_dir, "tor", "pluggable_transports")
+        lyrebird   = os.path.join(pt_dir, "lyrebird.exe")
+        conjure    = os.path.join(pt_dir, "conjure-client.exe")
 
         if no_bridge:
-            bridge_lines = []
-            use = "0"
+            bridge_lines, use = [], "0"
         else:
             bridge_lines = []
-            limit = self.cfg.get("bridges_in_torrc", 100)
+            limit      = self.cfg.get("bridges_in_torrc", 100)
             do_shuffle = self.cfg.get("shuffle_bridges", True)
-            for c, t, v, _ in BRIDGE_DATA:
-                if c == cat and t == trans and (ip == "Both" or ip == v):
-                    fn = os.path.join(self.bridges_dir,
-                                      self.get_safe_filename(c, t, v))
-                    if os.path.exists(fn):
-                        with open(fn, encoding="utf-8") as f:
-                            lines = [l.strip() for l in f if l.strip()]
+
+            if source == self.SRC_BUILTIN:
+                cfg_file = os.path.join(pt_dir, "pt_config.json")
+                if os.path.exists(cfg_file):
+                    try:
+                        with open(cfg_file, encoding="utf-8") as f:
+                            entries = json.load(f).get("bridges", {}).get(trans or "snowflake", [])
                         if do_shuffle:
-                            random.shuffle(lines)
-                        for line in lines[:limit]:
-                            bridge_lines.append(f"Bridge {line}\n")
+                            entries = list(entries); random.shuffle(entries)
+                        for b in entries[:limit]:
+                            bridge_lines.append(f"Bridge {b}\n")
+                    except Exception:
+                        pass
+            else:
+                for c, t, v, _ in BRIDGE_DATA:
+                    match_cat   = (cat is None) or (c == cat)
+                    match_trans = (t == trans)
+                    match_ip    = (ip is None) or (ip == "Both") or (ip == v)
+                    if match_cat and match_trans and match_ip:
+                        fn = os.path.join(self.bridges_dir, self.get_safe_filename(c, t, v))
+                        if os.path.exists(fn):
+                            with open(fn, encoding="utf-8") as f:
+                                lines = [l.strip() for l in f if l.strip()]
+                            if do_shuffle:
+                                random.shuffle(lines)
+                            for line in lines[:limit]:
+                                bridge_lines.append(f"Bridge {line}\n")
             use = "1" if bridge_lines else "0"
 
         content  = "Log notice stdout\n"
@@ -1541,149 +2111,166 @@ class ParallelConnectWindow:
         content += "AllowNonRFC953Hostnames 1\n"
         content += "EnforceDistinctSubnets 0\n"
         content += "MaxClientCircuitsPending 64\n"
-        content += "CircuitBuildTimeout 30\n"
+        content += "CircuitBuildTimeout 60\n"
         content += "LearnCircuitBuildTimeout 0\n"
         content += "GuardLifetime 90 days\n"
         content += "NumDirectoryGuards 6\n"
         content += "TokenBucketRefillInterval 10 msec\n"
-        content += (f"ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,"
-                    f"scramblesuit,webtunnel exec {lyrebird}\n")
-        content += f"ClientTransportPlugin snowflake exec {lyrebird}\n"
-        content += (f"ClientTransportPlugin conjure exec {conjure}"
-                    f" -registerURL \"https://registration.refraction.network/api\"\n\n")
+        if use == "1":
+            content += (f"ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,"
+                        f"scramblesuit,webtunnel exec {lyrebird}\n")
+            content += f"ClientTransportPlugin snowflake exec {lyrebird}\n"
+            content += (f"ClientTransportPlugin conjure exec {conjure}"
+                        f" -registerURL \"https://registration.refraction.network/api\"\n")
+        content += "\n"
         if use == "1":
             content += "".join(bridge_lines)
 
         with open(torrc_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+        slot_env = os.environ.copy()
+        slot_env["TOR_PT_STATE_LOCATION"] = pt_state_dir
+
         try:
             proc = subprocess.Popen(
                 [tor_exe, "-f", torrc_path],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                text=True, creationflags=subprocess.CREATE_NO_WINDOW,
+                env=slot_env)
         except Exception as e:
-            self._win.after(0, self._update_slot, label,
-                            None, f"Launch error: {e}", None, False, True)
+            self._frame.after(0, self._update_slot, label, None, f"Launch error: {e}", False, True)
             return
 
         with self._lock:
             self._procs[label] = proc
 
-        self._win.after(0, self._update_slot, label, 0, "Connecting…")
+        self._frame.after(0, self._update_slot, label, 0, "Connecting…")
 
         last_pct  = -1
         last_move = time.time()
         timeout_s = self.cfg.get("auto_connect_timeout", 180)
         connected = False
+        started   = False
 
         for line in iter(proc.stdout.readline, ''):
             if not self._running:
                 break
-            self._win.after(0, self._update_slot, label, None, None, line.strip()[:80])
+            ev = self._slot_enabled.get(label)
+            if ev and not ev.get():
+                break
+            if label not in self._slot_logs:
+                self._slot_logs[label] = []
+            self._slot_logs[label].append(line.rstrip())
+            if len(self._slot_logs[label]) > 500:
+                self._slot_logs[label] = self._slot_logs[label][-500:]
+
             m = re.search(r'Bootstrapped (\d+)%', line)
             if m:
                 pct = int(m.group(1))
-                self._win.after(0, self._update_slot, label, pct, f"Bootstrapped {pct}%")
+                started = True
+                self._frame.after(0, self._update_slot, label, pct, f"Bootstrapped {pct}%")
                 if pct != last_pct:
-                    last_pct  = pct
+                    last_pct = pct
                     last_move = time.time()
                 if pct == 100 and not connected:
                     connected = True
-                    self._win.after(0, self._update_slot, label,
-                                    100, "✔ Connected!", None, True, False)
+                    self._frame.after(0, self._update_slot, label, 100, "✔ Connected!", True, False)
                     stop_ev = threading.Event()
                     self._stop_events[label] = stop_ev
-                    auto_done = []
-                    threading.Thread(
-                        target=self._run_health_loop,
-                        args=(label, socks_port, stop_ev, auto_done),
-                        daemon=True).start()
-                    self._win.after(0, self._info_lbl.configure,
-                                    {"text": f"✔ {label} connected on SOCKS:{socks_port}"})
+                    threading.Thread(target=self._health_loop,
+                                     args=(label, socks_port, stop_ev),
+                                     daemon=True).start()
+                    self._frame.after(0, self._info_lbl.configure,
+                                      {"text": f"✔ {label} connected", "fg": C["GRN"]})
+                    self._frame.after(0, self._port_info_lbl.configure,
+                                      {"text": f"SOCKS {socks_port}  ·  HTTP {http_port}"})
                     if self.on_connected:
-                        self._win.after(0, self.on_connected,
-                                        label, socks_port, ctrl_port, http_port)
-
-            if last_pct >= 0 and not connected and time.time() - last_move > timeout_s:
-                self._win.after(0, self._update_slot, label,
-                                None, f"⚠ Timed out at {last_pct}%", None, False, True)
+                        self._frame.after(0, self.on_connected,
+                                          label, socks_port, ctrl_port, http_port)
+            if started and last_pct >= 0 and not connected and time.time() - last_move > timeout_s:
+                self._frame.after(0, self._update_slot, label,
+                                  None, f"⚠ Timeout at {last_pct}%", False, True)
                 break
 
-        try:
-            proc.stdout.close()
-        except Exception:
-            pass
+        try: proc.stdout.close()
+        except: pass
 
         if not connected:
-            if retry_count >= max_retries:
-                self._win.after(0, self._update_slot, label,
-                                None, f"❌ Failed after {max_retries} retries", None, False, True)
+            if not self._running:
                 return
-            
-            delay = min(3 * (retry_count + 1), 15)
-            self._win.after(0, self._update_slot, label,
-                            None, f"↺ Retrying in {delay}s…", None, False, False)
-            time.sleep(delay)
+            if retry_count >= max_retries:
+                self._frame.after(0, self._update_slot, label,
+                                  None, f"❌ Failed after {max_retries} retries", False, True)
+                return
+            delay = min(90 + retry_count * 30, 180)
+            self._frame.after(0, self._update_slot, label,
+                              None, f"↺ Retry {retry_count+1}/{max_retries} in {delay}s…")
+            for remaining in range(delay, 0, -10):
+                if not self._running:
+                    return
+                time.sleep(min(10, remaining))
+                if not self._running:
+                    return
             if self._running:
-                self._win.after(0, self._update_slot, label, 0, "Retrying…")
                 self._run_slot(label, socks_port, ctrl_port, http_port,
-                               no_bridge, cat, trans, ip, retry_count + 1, max_retries)
+                               no_bridge, source, cat, trans, ip,
+                               retry_count + 1, max_retries)
         else:
-            try:
-                proc.wait()
-            except Exception:
-                pass
+            try: proc.wait()
+            except: pass
             if self._running:
                 w = self._slot_widgets.get(label)
                 if w:
-                    self._win.after(0, w["health_lbl"].configure,
-                                    {"text": "⬤ Offline", "fg": C["FG2"]})
-                self._win.after(0, self._update_slot, label,
-                                0, "Died — retrying…", None, False, True)
-                delay = min(3 * (retry_count + 1), 15)
-                time.sleep(delay)
+                    self._frame.after(0, w["health_lbl"].configure,
+                                      {"text": "⬤ Offline", "fg": C["RED"]})
+                self._frame.after(0, self._update_slot, label, 0, "Died — restarting in 120s…", False, True)
+                for remaining in range(120, 0, -10):
+                    if not self._running:
+                        return
+                    time.sleep(min(10, remaining))
                 if self._running:
                     self._run_slot(label, socks_port, ctrl_port, http_port,
-                                   no_bridge, cat, trans, ip, retry_count + 1, max_retries)
+                                   no_bridge, source, cat, trans, ip, 0, max_retries)
 
     def _retry_slot(self, label, socks_port, ctrl_port, http_port,
-                    no_bridge, cat, trans, ip):
-        ev = self._stop_events.get(label)
-        if ev:
-            ev.set()
+                    no_bridge, source, cat, trans, ip):
+        ev = self._stop_events.pop(label, None)
+        if ev: ev.set()
         with self._lock:
             old = self._procs.get(label)
             if old:
                 try: old.terminate()
                 except: pass
-        self._win.after(0, self._update_slot, label, 0, "Retrying…")
-        threading.Thread(
-            target=self._run_slot,
-            args=(label, socks_port, ctrl_port, http_port,
-                  no_bridge, cat, trans, ip),
-            daemon=True).start()
+        self._frame.after(0, self._update_slot, label, 0, "Retrying…")
+        threading.Thread(target=self._run_slot,
+                         args=(label, socks_port, ctrl_port, http_port,
+                               no_bridge, source, cat, trans, ip),
+                         daemon=True).start()
 
     def _start_all(self):
         if self._running:
             return
         self._running = True
         self._start_btn.configure(state='disabled')
-
+        if self._on_status_change:
+            try: self._on_status_change(True)
+            except: pass
         for label, wgt in self._slot_widgets.items():
             wgt["prog_var"].set(0)
             wgt["pct_lbl"].configure(text="0%")
             wgt["status_lbl"].configure(text="Waiting…", fg=C["FG2"])
-            wgt["log_lbl"].configure(text="")
             wgt["health_lbl"].configure(text="⬤ —", fg=C["FG2"])
-            wgt["speed_lbl"].configure(text="")
             wgt["bar"].configure(style='Horizontal.TProgressbar')
-
-        for label, socks, ctrl, http, no_bridge, cat, trans, ip in self.SLOT_DEFS:
-            threading.Thread(
-                target=self._run_slot,
-                args=(label, socks, ctrl, http, no_bridge, cat, trans, ip),
-                daemon=True).start()
+        for i, sdef in enumerate(self._slot_defs):
+            label, source, cat, trans, ip, no_bridge = sdef
+            socks, ctrl, http = self._slot_ports(i)
+            ev = self._slot_enabled.get(label, tk.BooleanVar(value=True))
+            if ev.get():
+                threading.Thread(target=self._run_slot,
+                                 args=(label, socks, ctrl, http,
+                                       no_bridge, source, cat, trans, ip),
+                                 daemon=True).start()
 
     def _stop_all(self):
         self._running = False
@@ -1693,34 +2280,60 @@ class ParallelConnectWindow:
         self._stop_events.clear()
         with self._lock:
             for lbl, p in self._procs.items():
-                try: p.terminate()
+                try:
+                    p.terminate()
+                    p.wait(timeout=3)
                 except: pass
         self._procs.clear()
         self._slot_health.clear()
+        self._slot_ping_history.clear()
+        self._slot_state.clear()
         if self._proxy_stop_ev:
             self._proxy_stop_ev.set()
             self._proxy_stop_ev = None
         if self._active_proxy_label:
             self._disable_system_proxy()
             self._active_proxy_label = None
+        else:
+            self._disable_system_proxy()
+        self._cleanup_data_dirs()
         self._start_btn.configure(state='normal')
         for label, wgt in self._slot_widgets.items():
             wgt["status_lbl"].configure(text="Stopped", fg=C["FG2"])
             wgt["health_lbl"].configure(text="⬤ —", fg=C["FG2"])
+            wgt["prog_var"].set(0)
+            wgt["pct_lbl"].configure(text="0%")
+            wgt["proxy_btn"].configure(text="🌐 Set Proxy", bg=C["BTN"], fg=C["FG"])
+        self._update_proxy_status_bar(None, None, None)
+        if self._on_status_change:
+            try: self._on_status_change(False)
+            except: pass
 
-class TorClientGUI:
+    def _cleanup_data_dirs(self):
+        try:
+            for entry in os.listdir(self.extract_dir):
+                if entry.startswith("data_par_"):
+                    full = os.path.join(self.extract_dir, entry)
+                    if os.path.isdir(full):
+                        try:
+                            shutil.rmtree(full)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+class DeltaTorGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Tor Client")
-        
+        self.root.title("Delta Tor 1.2.2")
+
         try:
             self.root.attributes("-alpha", 0.0)
         except Exception:
             pass
 
-        self.root.configure(bg=C["BG"])
+        self.root.configure(bg=C["BG"], bd=0, relief='flat')
         self.root.geometry("800x980")
-        apply_dark_titlebar(self.root)
         set_window_icon(self.root)
 
         self.setup_theme()
@@ -1732,7 +2345,7 @@ class TorClientGUI:
         self.logs_dir      = os.path.join(BASE_DIR, "logs")
 
         os.makedirs(self.bridges_dir, exist_ok=True)
-        os.makedirs(self.logs_dir, exist_ok=True)
+        os.makedirs(self.logs_dir,    exist_ok=True)
 
         self.tor_process           = None
         self.tor_connected         = False
@@ -1766,55 +2379,17 @@ class TorClientGUI:
 
         self.root.update_idletasks()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_btn)
+        self.root._app = self
 
         self.root.after(1000, lambda: self.root.attributes("-alpha", 1.0))
 
         threading.Thread(target=self.auto_initialize, daemon=True).start()
 
     def _on_close_btn(self):
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Close")
-        dlg.geometry("320x130")
-        dlg.configure(bg=C["BG"])
-        dlg.resizable(False, False)
-        dlg.grab_set()
-        dlg.transient(self.root)
-        dlg.update()
-        apply_dark_titlebar(dlg)
-        set_window_icon(dlg)
-        tk.Label(dlg, text="What would you like to do?",
-                 font=('Segoe UI', 10), bg=C["BG"], fg=C["FG"]).pack(pady=(18, 10))
-        bf = tk.Frame(dlg, bg=C["BG"])
-        bf.pack(padx=20, fill='x')
-
-        def _tray():
-            dlg.destroy()
-            self.root.withdraw()
-            if not getattr(self, '_tray_running', False):
-                self._tray_running = True
-                threading.Thread(target=self._tray_icon_loop, daemon=True).start()
-
-        def _quit():
-            dlg.destroy()
-            self.stop_tor()
-            try:
-                import subprocess as _sp
-                my_pid = os.getpid()
-                _sp.run(
-                    ["taskkill", "/F", "/FI", f"PID ne {my_pid}", "/IM", "tor.exe"],
-                    creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0x08000000),
-                    capture_output=True, timeout=5)
-            except Exception: pass
-            self.root.destroy()
-
-        tk.Button(bf, text="🗕  Minimize to Tray", command=_tray,
-                  bg=C["BTN2"], fg=C["FG"], font=('Segoe UI', 9, 'bold'),
-                  relief="flat", cursor="hand2"
-                  ).pack(side='left', fill='x', expand=True, padx=(0, 4), ipady=4)
-        tk.Button(bf, text="✕  Quit", command=_quit,
-                  bg="#3A1010", fg=C["RED"], font=('Segoe UI', 9, 'bold'),
-                  relief="flat", cursor="hand2"
-                  ).pack(side='left', fill='x', expand=True, padx=(4, 0), ipady=4)
+        self.root.withdraw()
+        if not getattr(self, '_tray_running', False):
+            self._tray_running = True
+            threading.Thread(target=self._tray_icon_loop, daemon=True).start()
 
     def _tray_icon_loop(self):
         try:
@@ -1885,16 +2460,22 @@ class TorClientGUI:
                     ("hIconSm",       ctypes.wintypes.HANDLE),
                 ]
 
+            import uuid as _uuid
+            class_name = f"DeltaTorTray_{_uuid.uuid4().hex[:8]}"
+
             wc = WNDCLASSEX()
             wc.cbSize        = ctypes.sizeof(WNDCLASSEX)
             wc.lpfnWndProc   = wnd_proc_ptr
-            wc.lpszClassName = "TorClientTray"
+            wc.lpszClassName = class_name
             wc.hInstance     = ctypes.windll.kernel32.GetModuleHandleW(None)
-            user32.RegisterClassExW(ctypes.byref(wc))
+            if not user32.RegisterClassExW(ctypes.byref(wc)):
+                raise RuntimeError("RegisterClassExW failed")
 
             hwnd = user32.CreateWindowExW(
-                0, "TorClientTray", "TorClientTray",
+                0, class_name, class_name,
                 0, 0, 0, 0, 0, None, None, wc.hInstance, None)
+            if not hwnd:
+                raise RuntimeError("CreateWindowExW failed")
             self._tray_hwnd = hwnd
 
             hIcon = _load_tray_icon()
@@ -1905,7 +2486,7 @@ class TorClientGUI:
             nid.uFlags           = NIF_ICON | NIF_TIP | NIF_MESSAGE
             nid.uCallbackMessage = TRAY_MSG
             nid.hIcon            = hIcon
-            nid.szTip            = "Tor Client"
+            nid.szTip            = "Delta Tor"
             shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid))
 
             msg = ctypes.wintypes.MSG()
@@ -1923,54 +2504,140 @@ class TorClientGUI:
         threading.Thread(
             target=_win_notify, args=(title, msg, self._tray_hwnd),
             daemon=True).start()
-    
+
     def open_github_project(self):
         webbrowser.open("https://github.com/Delta-Kronecker/Tor-Windows")
+
+    def _show_donate_window(self):
+        WALLET = "0x2a434FF74737be5B94634040D010a458507b0741"
+        w = tk.Toplevel(self.root)
+        w.title("Donate — Delta Tor")
+        w.geometry("460x240")
+        w.configure(bg=C["BG"])
+        w.resizable(False, False)
+        w.update()
+        apply_dark_titlebar(w)
+        set_window_icon(w)
+        self._apply_icon_to(w)
+
+        tk.Frame(w, bg=C["YLW"], height=3).pack(fill='x')
+        tk.Label(w, text="💎  Support the Project",
+                 font=('Segoe UI', 13, 'bold'), bg=C["BG"], fg=C["YLW"]).pack(pady=(14, 4))
+        tk.Label(w, text="USDT BEP20 (BNB Smart Chain):",
+                 font=('Segoe UI', 10), bg=C["BG"], fg=C["FG2"]).pack(pady=(0, 4))
+
+        addr_frame = tk.Frame(w, bg=C["BTN"], bd=0)
+        addr_frame.pack(fill='x', padx=30, pady=(0, 6))
+        addr_lbl = tk.Label(addr_frame, text=WALLET,
+                            font=('Consolas', 10), bg=C["BTN"], fg=C["CYAN"],
+                            padx=10, pady=8, wraplength=380, justify='center')
+        addr_lbl.pack(fill='x')
+
+        copied_var = tk.StringVar(value="📋  Copy Address")
+
+        def _copy():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(WALLET)
+            copied_var.set("✔  Copied!")
+            w.after(2000, lambda: copied_var.set("📋  Copy Address"))
+
+        tk.Button(w, textvariable=copied_var, command=_copy,
+                  bg=C["ACC"], fg="white", font=('Segoe UI', 10, 'bold'),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["ACC2"]
+                  ).pack(pady=(0, 6), padx=80, fill='x', ipady=5)
+        tk.Label(w, text="⚠  BEP20 network only — send only USDT on BNB Smart Chain",
+                 font=('Segoe UI', 9), bg=C["BG"], fg=C["YLW"]).pack(pady=(0, 4))
+        tk.Button(w, text="Close", command=w.destroy,
+                  bg=C["BTN"], fg=C["FG2"], font=('Segoe UI', 9),
+                  relief="flat", cursor="hand2",
+                  activebackground=C["BTN2"]
+                  ).pack(pady=(0, 12), padx=140, fill='x', ipady=4)
 
     def setup_theme(self):
         s = ttk.Style()
         s.theme_use('clam')
         s.configure('.', background=C["BG"], foreground=C["FG"], font=('Segoe UI', 10))
-        s.configure('TLabel',      background=C["BG"], foreground=C["FG"])
+        s.configure('TLabel',      background=C["BG"], foreground=C["FG"], font=('Segoe UI', 10))
         s.configure('TLabelframe', background=C["BG"], foreground=C["ACC"],
                     bordercolor=C["BORDER"])
         s.configure('TLabelframe.Label', background=C["BG"], foreground=C["ACC"],
-                    font=('Segoe UI', 10, 'bold'))
-        s.configure('TCombobox', fieldbackground=C["BTN"], background=C["BTN"],
-                    foreground=C["FG"], borderwidth=0, arrowcolor=C["ACC"],
-                    selectbackground=C["BTN"], selectforeground=C["FG"])
+                    font=('Segoe UI', 11, 'bold'))
+        s.configure('TCombobox',
+                    fieldbackground=C["BTN"],
+                    background=C["BTN"],
+                    foreground=C["FG"],
+                    borderwidth=1,
+                    relief='flat',
+                    arrowcolor=C["FG2"],
+                    selectbackground=C["BTN"],
+                    selectforeground=C["FG"],
+                    insertcolor=C["FG"],
+                    padding=(4, 4))
         s.map('TCombobox',
-              fieldbackground=[('readonly', C["BTN"])],
-              foreground=[('readonly', C["FG"])],
-              background=[('readonly', C["BTN"])])
-        s.configure('TCheckbutton', background=C["BG"], foreground=C["FG"],
-                    font=('Segoe UI', 10))
-        s.map('TCheckbutton', background=[('active', C["BG"])])
+              fieldbackground=[('readonly', C["BTN"]), ('disabled', C["PANEL"])],
+              foreground=[('readonly', C["FG"]), ('disabled', C["FG2"])],
+              background=[('readonly', C["BTN"])],
+              selectbackground=[('readonly', C["BTN"])],
+              arrowcolor=[('readonly', C["FG2"]), ('disabled', C["FG2"])])
+        s.configure('TScrollbar',
+                    background=C["BTN2"],
+                    troughcolor=C["PANEL"],
+                    bordercolor=C["PANEL"],
+                    arrowcolor=C["FG2"],
+                    relief='flat')
+        s.map('TScrollbar',
+              background=[('active', C["ACC"]), ('pressed', C["ACC2"])])
+        s.configure('TCheckbutton',
+                    background=C["PANEL"],
+                    foreground=C["FG"],
+                    font=('Segoe UI', 10),
+                    indicatorcolor=C["BTN2"],
+                    indicatorrelief='flat')
+        s.map('TCheckbutton',
+              background=[('active', C["PANEL"])],
+              indicatorcolor=[('selected', C["ACC"]), ('!selected', C["BTN2"])])
         s.configure('Horizontal.TProgressbar',
-                    background=C["ACC"], troughcolor=C["BORDER"],
-                    bordercolor=C["BG"], lightcolor=C["ACC2"], darkcolor=C["ACC"])
+                    background=C["ACC"],
+                    troughcolor=C["BTN"],
+                    bordercolor=C["PANEL"],
+                    lightcolor=C["ACC2"],
+                    darkcolor=C["ACC"])
         s.configure('Won.Horizontal.TProgressbar',
-                    background=C["GRN"], troughcolor=C["BORDER"])
+                    background=C["GRN"],
+                    troughcolor=C["BTN"])
         s.configure('Stat.TLabel',    background=C["CARD"], foreground=C["FG2"],
-                    font=('Segoe UI', 9))
+                    font=('Segoe UI', 10))
         s.configure('StatVal.TLabel', background=C["CARD"], foreground=C["GRN"],
-                    font=('Segoe UI', 9, 'bold'))
-        self.root.option_add('*TCombobox*Listbox.background', C["BTN"])
-        self.root.option_add('*TCombobox*Listbox.foreground', C["FG"])
+                    font=('Segoe UI', 10, 'bold'))
+        self.root.option_add('*Listbox.background',       C["BTN"])
+        self.root.option_add('*Listbox.foreground',       C["FG"])
+        self.root.option_add('*Listbox.selectBackground', C["ACC"])
+        self.root.option_add('*Listbox.selectForeground', C["FG"])
+        self.root.option_add('*Listbox.borderWidth',      '0')
+        self.root.option_add('*Listbox.relief',           'flat')
+        self.root.option_add('*TCombobox*Listbox.background',       C["BTN"])
+        self.root.option_add('*TCombobox*Listbox.foreground',       C["FG"])
         self.root.option_add('*TCombobox*Listbox.selectBackground', C["ACC"])
-        self.root.option_add('*TCombobox*Listbox.selectForeground', "white")
-
-        s.configure('Treeview', background=C["BLK"], foreground=C["FG"], fieldbackground=C["BLK"])
-        s.configure('Treeview.Heading', background=C["BTN"], foreground=C["FG"], fieldbackground=C["BTN"])
-
-        s.configure('Treeview', 
-                    background=C["BLK"], 
-                    foreground=C["FG"], 
-                    fieldbackground=C["BLK"])
-        
-        s.configure('Treeview.Heading', 
-                    background=C["BTN"], 
-                    foreground=C["FG"])
+        self.root.option_add('*TCombobox*Listbox.selectForeground', C["FG"])
+        self.root.option_add('*TCombobox*Listbox.borderWidth',      '0')
+        self.root.option_add('*TCombobox*Listbox.relief',           'flat')
+        self.root.option_add('*Toplevel.background',  C["PANEL"])
+        self.root.option_add('*Frame.background',     C["BG"])
+        s.configure('Treeview',
+                    background=C["PANEL"],
+                    foreground=C["FG"],
+                    fieldbackground=C["PANEL"],
+                    rowheight=26,
+                    font=('Segoe UI', 10))
+        s.configure('Treeview.Heading',
+                    background=C["BTN"],
+                    foreground=C["FG"],
+                    font=('Segoe UI', 10, 'bold'),
+                    relief='flat')
+        s.map('Treeview',
+              background=[('selected', C["ACC"])],
+              foreground=[('selected', C["FG"])])
 
     def setup_ui(self):
         BG = C["BG"]
@@ -1981,29 +2648,43 @@ class TorClientGUI:
         nav.pack(fill='x')
         nav.pack_propagate(False)
 
-        tk.Label(nav, text="𝜹 Tor Client 1.1.0 Beta",
-                 font=('Segoe UI', 11, 'bold'), bg=C["PANEL"], fg=C["ACC"]).pack(
+        tk.Label(nav, text="Delta Tor",
+                 font=('Segoe UI', 16, 'bold'), bg=C["PANEL"], fg=C["ACC"]).pack(
                  side='left', padx=18)
 
         for txt, cmd in [
-            ("📖 Help",     self.show_help_window),
-            ("⚙ Settings", self.show_settings_window),
+            ("Help",     self.show_help_window),
+            ("Settings", self.show_settings_window),
+            ("Data Folder", self._change_data_folder),
         ]:
             tk.Button(nav, text=txt, command=cmd,
                       bg=C["PANEL"], fg=C["FG2"],
-                      font=('Segoe UI', 9), relief="flat", cursor="hand2",
+                      font=('Segoe UI', 10), relief="flat", cursor="hand2",
                       activebackground=C["BTN"],
                       activeforeground=C["FG"],
                       bd=0, padx=12
                       ).pack(side='right', fill='y')
-            
-        tk.Button(nav, text="Visit GitHub Page", 
-                command=self.open_github_project,
-                bg="#251A4D", fg=C["CYAN"], 
-                font=('Segoe UI', 9, 'bold'), relief="flat", cursor="hand2",
-                activebackground="#34246B", activeforeground="white",
-                bd=0, padx=16
-                ).pack(side='right', fill='y')
+
+        for txt9, cmd9 in [
+            ("GitHub",   self.open_github_project),
+            ("Telegram", lambda: webbrowser.open("https://t.me/DeltaKroneckerGithub")),
+        ]:
+            tk.Button(nav, text=txt9, command=cmd9,
+                      bg=C["PANEL"], fg=C["FG2"],
+                      font=('Segoe UI', 10), relief="flat", cursor="hand2",
+                      activebackground=C["BTN"],
+                      activeforeground=C["FG"],
+                      bd=0, padx=10
+                      ).pack(side='right', fill='y')
+
+        tk.Button(nav, text="💎Support the Project  ",
+                  command=self._show_donate_window,
+                  bg=C["PANEL"], fg=C["YLW"],
+                  font=('Segoe UI', 10, 'bold'), relief="flat", cursor="hand2",
+                  activebackground=C["BTN"],
+                  activeforeground=C["YLW"],
+                  bd=0, padx=10
+                  ).pack(side='right', fill='y')
 
         status_bar = tk.Frame(self.root, bg=C["CARD"], height=32)
         status_bar.pack(fill='x')
@@ -2013,30 +2694,23 @@ class TorClientGUI:
         self._status_dot.pack(side='left', padx=(16, 4))
         tk.Label(status_bar, textvariable=self.status_var,
                  font=('Segoe UI', 9), bg=C["CARD"], fg=C["FG2"]).pack(side='left')
+        self._proxy_status_lbl = tk.Label(status_bar, text="",
+                 font=('Consolas', 9), bg=C["CARD"], fg=C["GRN"])
+        self._proxy_status_lbl.pack(side='right', padx=(0, 16))
 
         self._dl_outer = tk.Frame(self.root, bg=C["BG"])
-        dl_hdr = tk.Frame(self._dl_outer, bg=C["BG"])
-        dl_hdr.pack(fill='x', padx=20)
-        self._dl_title_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["FG2"], font=('Segoe UI', 8))
-        self._dl_title_lbl.pack(side='left')
-        self._dl_pct_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["GRN"],
-                                    font=('Segoe UI', 8, 'bold'))
-        self._dl_pct_lbl.pack(side='right')
-        self._dl_speed_lbl = tk.Label(dl_hdr, text="", bg=C["BG"], fg=C["CYAN"],
-                                      font=('Segoe UI', 8))
-        self._dl_speed_lbl.pack(side='right', padx=(10, 0))
-        ttk.Progressbar(self._dl_outer, variable=self._dl_bar_var,
-                        maximum=100, mode='determinate'
-                        ).pack(fill='x', padx=20, pady=(2, 3))
 
         main = tk.Frame(self.root, bg=BG)
-        main.pack(fill='both', expand=True, padx=20, pady=8)
+        main.pack(fill='both', expand=True, padx=0, pady=0)
 
-        left = tk.Frame(main, bg=BG)
-        left.pack(side='left', fill='both', expand=True)
+        self._normal_frame = tk.Frame(main, bg=BG)
+        self._normal_frame.pack(fill='both', expand=True, padx=0)
+        self._multi_frame  = tk.Frame(main, bg=BG)
+
+        left = self._normal_frame
 
         cfg_card = tk.Frame(left, bg=C["PANEL"], bd=0)
-        cfg_card.pack(fill='x', pady=(0, 6))
+        cfg_card.pack(fill='x', padx=0, pady=(0, 6))
         tk.Frame(cfg_card, bg=C["ACC"], height=2).pack(fill='x')
 
         cfg_inner = tk.Frame(cfg_card, bg=C["PANEL"])
@@ -2049,49 +2723,58 @@ class TorClientGUI:
         self.update_btn = tk.Button(ttl_row, text="↺ Update Bridges",
                                     command=self.start_download_bridges,
                                     bg=C["BTN"], fg=C["CYAN"],
-                                    font=('Segoe UI', 8), relief="flat", cursor="hand2",
+                                    font=('Segoe UI', 10), relief="flat", cursor="hand2",
                                     activebackground=C["BTN2"])
         self.update_btn.pack(side='right')
 
-        def _lbl_combo(parent, text, var, values, width=22, command=None):
+        OM_CFG   = dict(bg=C["BTN"], fg=C["FG"], activebackground=C["BTN2"],
+                        activeforeground=C["FG"], highlightthickness=0,
+                        relief="flat", font=('Segoe UI', 10), anchor='w')
+        MENU_CFG = dict(bg=C["BTN"], fg=C["FG"], activebackground=C["ACC"],
+                        activeforeground=C["FG"], borderwidth=0, font=('Segoe UI', 10))
+
+        def _opt_row(parent, text, var, options, command=None):
             row = tk.Frame(parent, bg=C["PANEL"])
             row.pack(fill='x', pady=3)
             tk.Label(row, text=text, width=13, anchor='w',
                      bg=C["PANEL"], fg=C["FG2"],
-                     font=('Segoe UI', 9)).pack(side='left')
-            cb = ttk.Combobox(row, textvariable=var, values=values,
-                              state="readonly", width=width)
-            cb.pack(side='left', fill='x', expand=True)
+                     font=('Segoe UI', 10)).pack(side='left')
+            om = tk.OptionMenu(row, var, *options)
+            om.configure(**OM_CFG)
+            om["menu"].configure(**MENU_CFG)
+            om.pack(side='left', fill='x', expand=True, ipady=3)
             if command:
-                cb.bind("<<ComboboxSelected>>", command)
-            return cb
+                var.trace_add("write", lambda *_: command())
+            return om
 
-        _lbl_combo(cfg_inner, "Source:", self.source_var,
-                   ["Default (Built-in)", "Delta-Kronecker Tor-Bridges-Collector", "Custom Bridges"],
-                   command=self.on_source_changed)
+        _opt_row(cfg_inner, "Source:", self.source_var,
+                 ["Default (Built-in)", "Delta-Kronecker Tor-Bridges-Collector", "Custom Bridges"],
+                 command=self.on_source_changed)
 
         self.cat_row = tk.Frame(cfg_inner, bg=C["PANEL"])
         self.cat_row.pack(fill='x', pady=3)
         tk.Label(self.cat_row, text="Category:", width=13, anchor='w',
                  bg=C["PANEL"], fg=C["FG2"],
-                 font=('Segoe UI', 9)).pack(side='left')
-        self.cat_combo = ttk.Combobox(self.cat_row, textvariable=self.cat_var,
-                                      values=["Tested & Active", "Fresh (72h)", "Full Archive"],
-                                      state="readonly", width=22)
-        self.cat_combo.pack(side='left', fill='x', expand=True)
-        self.cat_combo.bind("<<ComboboxSelected>>", self._on_bridge_selection_change)
+                 font=('Segoe UI', 10)).pack(side='left')
+        self.cat_combo = tk.OptionMenu(self.cat_row, self.cat_var,
+                                       "Tested & Active", "Fresh (72h)", "Full Archive")
+        self.cat_combo.configure(**OM_CFG)
+        self.cat_combo["menu"].configure(**MENU_CFG)
+        self.cat_combo.pack(side='left', fill='x', expand=True, ipady=3)
+        self.cat_var.trace_add("write", lambda *_: self._on_bridge_selection_change())
 
-        self.trans_combo = _lbl_combo(cfg_inner, "Transport:", self.trans_var,
-                                      [], command=self._on_bridge_selection_change)
+        self.trans_combo = _opt_row(cfg_inner, "Transport:", self.trans_var,
+                                    ["obfs4"],
+                                    command=self._on_bridge_selection_change)
 
-        self.ip_combo = _lbl_combo(cfg_inner, "IP Version:", self.ip_var,
-                                   ["Both", "IPv4", "IPv6"],
-                                   command=self._on_bridge_selection_change)
+        self.ip_combo = _opt_row(cfg_inner, "IP Version:", self.ip_var,
+                                 ["Both", "IPv4", "IPv6"],
+                                 command=self._on_bridge_selection_change)
 
         nb_row = tk.Frame(cfg_inner, bg=C["PANEL"])
         nb_row.pack(fill='x', pady=3)
         ttk.Checkbutton(nb_row, text="Connect without bridge  (direct Tor)",
-                        variable=self.no_bridge_var,
+                        variable=self.no_bridge_var, style='TCheckbutton',
                         command=self._on_no_bridge_toggle).pack(side='left')
 
         info_row = tk.Frame(cfg_inner, bg=C["PANEL"])
@@ -2108,106 +2791,106 @@ class TorClientGUI:
                  font=('Segoe UI', 8)).pack(side='left', padx=4)
 
         btn_card = tk.Frame(left, bg=C["PANEL"], bd=0)
-        btn_card.pack(fill='x', pady=(0, 6))
+        btn_card.pack(fill='x', padx=0, pady=(0, 6))
         tk.Frame(btn_card, bg=C["ACC"], height=2).pack(fill='x')
         btn_inner = tk.Frame(btn_card, bg=C["PANEL"])
         btn_inner.pack(fill='x', padx=14, pady=10)
 
-        r1 = tk.Frame(btn_inner, bg=C["PANEL"])
-        r1.pack(fill='x', pady=(0, 4))
-        for i in range(3):
-            r1.columnconfigure(i, weight=1)
+        _BTN_BG  = "#1E2535"
+        _BTN_HOV = "#273048"
 
-        self.auto_btn = tk.Button(r1, text="⚡ Auto Connect",
+        r0 = tk.Frame(btn_inner, bg=C["PANEL"])
+        r0.pack(fill='x', pady=(0, 6))
+
+        self.multi_btn = tk.Button(
+            r0,
+            text="🔗  Multi-Connect  —  Recommended",
+            command=lambda: self._switch_to_mode("multi"),
+            bg="#1A3A5C", fg="#7DC8F7",
+            activebackground="#1F4878", activeforeground="#A8DCFF",
+            font=('Segoe UI', 11, 'bold'),
+            relief="flat", cursor="hand2", bd=0,
+        )
+        self.multi_btn.pack(fill='x', ipady=10)
+        def _multi_enter(e):
+            if not getattr(self, '_multi_active', False):
+                self.multi_btn.configure(bg="#1F4878", fg="#A8DCFF")
+        def _multi_leave(e):
+            if not getattr(self, '_multi_active', False):
+                self.multi_btn.configure(bg="#1A3A5C", fg="#7DC8F7")
+        self.multi_btn.bind("<Enter>", _multi_enter)
+        self.multi_btn.bind("<Leave>", _multi_leave)
+
+        grid6 = tk.Frame(btn_inner, bg=C["PANEL"])
+        grid6.pack(fill='x', pady=(0, 6))
+        grid6.columnconfigure(0, weight=1, uniform="btn6")
+        grid6.columnconfigure(1, weight=1, uniform="btn6")
+        grid6.columnconfigure(2, weight=1, uniform="btn6")
+
+        _b = dict(font=('Segoe UI', 10, 'bold'), relief="flat",
+                  cursor="hand2", bd=0,
+                  bg=_BTN_BG, fg=C["FG"],
+                  activebackground=_BTN_HOV, activeforeground=C["FG"])
+
+        self.auto_btn = tk.Button(grid6, text=" Auto",
                                   command=self.start_auto_connect,
-                                  bg=C["BTN2"], fg=C["FG"],
-                                  font=('Segoe UI', 10, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN"])
-        self.auto_btn.grid(row=0, column=0, padx=(0, 3), sticky="ew", ipady=7)
+                                  bg=_BTN_BG, fg=C["FG"],
+                                  activebackground=_BTN_HOV, activeforeground=C["FG"],
+                                  font=('Segoe UI', 10, 'bold'), relief="flat",
+                                  cursor="hand2", bd=0)
+        self.auto_btn.grid(row=0, column=0, padx=(0, 2), pady=(0, 4), sticky="ew", ipady=7)
 
-        self.start_btn = tk.Button(r1, text="▶ Start",
-                                   command=self.start_tor_thread,
-                                   bg=C["BTN2"], fg=C["FG"],
-                                   font=('Segoe UI', 10, 'bold'),
-                                   relief="flat", cursor="hand2",
-                                   activebackground=C["BTN"])
-        self.start_btn.grid(row=0, column=1, padx=3, sticky="ew", ipady=7)
+        self.start_btn = tk.Button(grid6, text=" Start",
+                                   command=self.start_tor_thread, **_b)
+        self.start_btn.grid(row=0, column=1, padx=2, pady=(0, 4), sticky="ew", ipady=7)
 
-        self.stop_btn = tk.Button(r1, text="■ Stop",
+        self.stop_btn = tk.Button(grid6, text=" Stop",
                                   command=self.stop_tor,
-                                  bg=C["BTN"], fg=C["FG2"],
-                                  font=('Segoe UI', 10, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"])
-        self.stop_btn.grid(row=0, column=2, padx=(3, 0), sticky="ew", ipady=7)
+                                  bg=_BTN_BG, fg=C["FG"],
+                                  activebackground=_BTN_HOV, activeforeground=C["FG"],
+                                  font=('Segoe UI', 10, 'bold'), relief="flat",
+                                  cursor="hand2", bd=0)
+        self.stop_btn.grid(row=0, column=2, padx=(2, 0), pady=(0, 4), sticky="ew", ipady=7)
 
-        r2_3 = tk.Frame(btn_inner, bg=C["PANEL"])
-        r2_3.pack(fill='x', pady=(0, 4))
-        r2_3.columnconfigure(0, weight=1)
-        r2_3.columnconfigure(1, weight=1)
+        tk.Button(grid6, text=" Bridge Scanner",
+                  command=self.show_bridge_scanner, **_b
+                  ).grid(row=1, column=0, padx=(0, 2), sticky="ew", ipady=7)
 
-        tk.Button(r2_3, text="🔍 Bridge Scanner",
-                  command=self.show_bridge_scanner,
-                  bg=C["BTN"], fg=C["FG"],
-                  font=('Segoe UI', 9, 'bold'),
-                  relief="flat", cursor="hand2",
-                  activebackground=C["BTN2"]
-                  ).grid(row=0, column=0, padx=(0, 3), pady=2, sticky="ew", ipady=6)
+        self.test_btn_top = tk.Button(grid6, text=" Test Connection",
+                                      command=self.start_test_connection, **_b)
+        self.test_btn_top.grid(row=1, column=1, padx=2, sticky="ew", ipady=7)
 
-        self.multi_btn = tk.Button(r2_3, text="⚡ Multi-Connect",
-                                   command=self.show_parallel_connect,
-                                   bg=C["ACC"], fg="white",
-                                   font=('Segoe UI', 9, 'bold'),
-                                   relief="flat", cursor="hand2",
-                                   activebackground=C["ACC2"])
-        self.multi_btn.grid(row=0, column=1, padx=(3, 0), pady=2, sticky="ew", ipady=6)
-
-        self.test_btn_top = tk.Button(r2_3, text="🔍 Test Connection",
-                                  command=self.start_test_connection,
-                                  bg=C["BTN"], fg=C["FG"],
-                                  font=('Segoe UI', 9, 'bold'),
-                                  relief="flat", cursor="hand2",
-                                  activebackground=C["BTN2"])
-        self.test_btn_top.grid(row=1, column=0, padx=(0, 3), pady=2, sticky="ew", ipady=6)
-
-        self.newnym_btn = tk.Button(r2_3, text="↻ New Circuit",
-                                    command=self.request_new_circuit,
-                                    bg=C["BTN"], fg=C["FG"],
-                                    font=('Segoe UI', 9, 'bold'),
-                                    relief="flat", cursor="hand2",
-                                    activebackground=C["BTN2"])
-        self.newnym_btn.grid(row=1, column=1, padx=(3, 0), pady=2, sticky="ew", ipady=6)
+        self.newnym_btn = tk.Button(grid6, text=" New Circuit",
+                                    command=self.request_new_circuit, **_b)
+        self.newnym_btn.grid(row=1, column=2, padx=(2, 0), sticky="ew", ipady=7)
 
         r4 = tk.Frame(btn_inner, bg=C["PANEL"])
-        r4.pack(fill='x', pady=(0, 0))
+        r4.pack(fill='x', pady=(6, 0))
 
         self.proxy_btn = tk.Button(r4,
-                                   text="🌐  System Proxy   ●  OFF",
+                                   text="  System Proxy :  OFF",
                                    command=self.toggle_proxy_button,
-                                   bg=C["BTN"], fg=C["FG2"],
+                                   bg=_BTN_BG, fg=C["FG2"],
                                    font=('Segoe UI', 10, 'bold'),
                                    relief="flat", cursor="hand2",
-                                   activebackground=C["BTN2"])
+                                   activebackground=_BTN_HOV)
         self.proxy_btn.pack(fill='x', ipady=7)
 
-        prog_card = tk.Frame(left, bg=C["PANEL"])
-        prog_card.pack(fill='x', pady=(0, 6))
-        tk.Frame(prog_card, bg=C["ACC"], height=2).pack(fill='x')
-        prog_inner = tk.Frame(prog_card, bg=C["PANEL"])
-        prog_inner.pack(fill='x', padx=14, pady=8)
-        prog_hdr = tk.Frame(prog_inner, bg=C["PANEL"])
-        prog_hdr.pack(fill='x')
-        tk.Label(prog_hdr, text="Connection Progress",
-                 font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='left')
-        tk.Label(prog_hdr, textvariable=self.conn_pct_var,
-                 font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='right')
-        ttk.Progressbar(prog_inner, variable=self.conn_progress_var,
+        status_inline = tk.Frame(left, bg=C["CARD"])
+        status_inline.pack(fill='x', padx=0, pady=(0, 6))
+        tk.Frame(status_inline, bg=C["ACC"], height=2).pack(fill='x')
+        _si = tk.Frame(status_inline, bg=C["CARD"])
+        _si.pack(fill='x', padx=14, pady=6)
+        tk.Label(_si, text="Progress:",
+                 font=('Segoe UI', 9), bg=C["CARD"], fg=C["FG2"]).pack(side='left')
+        tk.Label(_si, textvariable=self.conn_pct_var,
+                 font=('Segoe UI', 9, 'bold'), bg=C["CARD"], fg=C["FG"]).pack(side='left', padx=(4,0))
+        ttk.Progressbar(_si, variable=self.conn_progress_var,
                         maximum=100, mode='determinate'
-                        ).pack(fill='x', pady=(4, 0))
+                        ).pack(side='left', fill='x', expand=True, padx=(10, 0))
 
         stats_card = tk.Frame(left, bg=C["PANEL"])
-        stats_card.pack(fill='x', pady=(0, 6))
+        stats_card.pack(fill='x', padx=0, pady=(0, 6))
         tk.Frame(stats_card, bg=C["ACC"], height=2).pack(fill='x')
         stats_inner = tk.Frame(stats_card, bg=C["CARD"])
         stats_inner.pack(fill='x', padx=0, pady=0)
@@ -2242,21 +2925,18 @@ class TorClientGUI:
         self.test_btn = self.test_btn_top
 
         log_card = tk.Frame(left, bg=C["PANEL"])
-        log_card.pack(fill='both', expand=True)
+        log_card.pack(fill='both', expand=True, padx=0, pady=(0, 6))
         tk.Frame(log_card, bg=C["ACC"], height=2).pack(fill='x')
         log_header = tk.Frame(log_card, bg=C["PANEL"])
         log_header.pack(fill='x', padx=14, pady=(6, 4))
         tk.Label(log_header, text="Tor Logs",
                  font=('Segoe UI', 9, 'bold'), bg=C["PANEL"], fg=C["FG"]).pack(side='left')
-        tk.Label(log_header,
-                 text="● white=log  ● notice=connected  ● warn=warning  ● err=error",
-                 font=('Segoe UI', 7), bg=C["PANEL"], fg=C["FG2"]).pack(side='right')
 
-        log_frame = tk.Frame(log_card, bg=C["BLK"])
+        log_frame = tk.Frame(log_card, bg=C["PANEL"])
         log_frame.pack(fill='both', expand=True, padx=0, pady=0)
 
-        self.log_text = tk.Text(log_frame, font=('Consolas', 8), wrap='word',
-                                state='disabled', bg=C["BLK"], fg=C["FG2"],
+        self.log_text = tk.Text(log_frame, font=('Consolas', 9), wrap='word',
+                                state='disabled', bg=C["PANEL"], fg=C["FG2"],
                                 bd=0, padx=10, pady=8)
         self.log_text.tag_configure("warn",   foreground=C["YLW"])
         self.log_text.tag_configure("err",    foreground=C["RED"])
@@ -2275,7 +2955,10 @@ class TorClientGUI:
     def _on_no_bridge_toggle(self):
         nb = self.no_bridge_var.get()
         state = 'disabled' if nb else 'readonly'
-        self.cat_combo.configure(state=state)
+        try:
+            self.cat_combo.configure(state=state)
+        except Exception:
+            pass
         self.trans_combo.configure(state=state)
         self.ip_combo.configure(state=state)
 
@@ -2288,14 +2971,65 @@ class TorClientGUI:
     def show_bridge_scanner(self):
         BridgeScannerWindow(self.root, self.bridges_dir, self.get_safe_filename)
 
+    def _change_data_folder(self):
+        from tkinter import filedialog, messagebox
+        new_dir = filedialog.askdirectory(
+            title="Choose New Data Directory",
+            initialdir=BASE_DIR,
+            parent=self.root)
+        if not new_dir:
+            return
+        new_dir = os.path.normpath(new_dir)
+        if os.path.normpath(new_dir) == os.path.normpath(BASE_DIR):
+            return
+        ans = messagebox.askyesno(
+            "Move Data?",
+            f"Move all data to:\n{new_dir}\n\nThe app will restart to apply the change.",
+            parent=self.root)
+        if not ans:
+            return
+        self.stop_tor()
+        _migrate_existing_files(BASE_DIR, new_dir)
+        _save_data_dir(new_dir)
+        try:
+            subprocess.Popen([sys.executable] + sys.argv)
+        except Exception:
+            pass
+        self.root.destroy()
+
+    def _set_multi_active(self, active: bool):
+        self._multi_active = active
+        if active:
+            self.multi_btn.configure(
+                bg="#1A5C2E", fg="#7DF7A8",
+                activebackground="#1F7838", activeforeground="#A8FFD0")
+        else:
+            self.multi_btn.configure(
+                bg="#1A3A5C", fg="#7DC8F7",
+                activebackground="#1F4878", activeforeground="#A8DCFF")
+
     def show_parallel_connect(self):
-        def _on_connected(label, socks_port, ctrl_port, http_port):
-            self.append_log(
-                f"[Parallel] Winner: {label}  SOCKS:{socks_port}  HTTP:{http_port}\n", "auto")
-        ParallelConnectWindow(
-            self.root, self.extract_dir, self.bridges_dir,
-            self.get_safe_filename, self.generate_torrc,
-            self.cfg, _on_connected)
+        self._switch_to_mode("multi")
+
+    def _switch_to_mode(self, mode):
+        if mode == "multi":
+            self._normal_frame.pack_forget()
+            self._multi_frame.pack(fill='both', expand=True, padx=0)
+            if not hasattr(self, '_parallel_win') or self._parallel_win is None:
+                def _on_connected(label, socks_port, ctrl_port, http_port):
+                    self.append_log(
+                        f"[Multi] Connected: {label}  SOCKS:{socks_port}  HTTP:{http_port}\n",
+                        "auto")
+                self._parallel_win = ParallelConnectWindow(
+                    self._multi_frame,
+                    self.extract_dir, self.bridges_dir,
+                    self.get_safe_filename, self.generate_torrc,
+                    self.cfg, _on_connected,
+                    append_log_fn=self.append_log,
+                    on_status_change=self._set_multi_active)
+        else:
+            self._multi_frame.pack_forget()
+            self._normal_frame.pack(fill='both', expand=True, padx=0)
 
     def show_settings_window(self):
         def _on_save(new_cfg):
@@ -2306,22 +3040,15 @@ class TorClientGUI:
         SettingsWindow(self.root, self.cfg, _on_save, on_clear_data=self._clear_data_dir)
 
     def _show_dl(self, title="Downloading…"):
-        self._dl_title_lbl.configure(text=title)
-        self._dl_pct_lbl.configure(text="0%")
-        self._dl_bar_var.set(0)
-        if not self._dl_outer.winfo_ismapped():
-            self._dl_outer.pack(fill='x', after=self.root.winfo_children()[1])
+        self.root.after(0, self.append_log, f"[Bridges] {title}\n", "auto")
 
     def _set_dl(self, pct, title=None, speed=None):
-        self._dl_bar_var.set(pct)
-        self._dl_pct_lbl.configure(text=f"{pct}%")
-        if title:
-            self._dl_title_lbl.configure(text=title)
-        if speed:
-            self._dl_speed_lbl.configure(text=speed)
+        msg = title or f"Progress: {pct}%"
+        if pct == 0 or pct == 100 or pct % 25 == 0:
+            self.root.after(0, self.append_log, f"[Bridges] {msg} ({pct}%)\n", "auto")
 
     def _hide_dl(self, delay=900):
-        self.root.after(delay, self._dl_outer.pack_forget)
+        pass
 
     def append_log(self, msg, tag=None):
         if tag is None:
@@ -2470,7 +3197,7 @@ class TorClientGUI:
                 self.root.after(0, self.append_log,
                                 "[Circuit] New circuit requested ✅\n", "notice")
                 self.root.after(0, self.update_status, "New circuit obtained.")
-                self._notify("Tor Client", "New circuit obtained.")
+                self._notify("Delta Tor", "New circuit obtained.")
             else:
                 self.root.after(0, self.append_log,
                                 f"[Circuit] Response: {resp.strip()}\n", "warn")
@@ -2499,7 +3226,7 @@ class TorClientGUI:
             self.root.after(0, self.append_log,
                             "[Watchdog] Tor process died — restarting…\n", "warn")
             self.root.after(0, self.update_status, "Watchdog: restarting Tor…")
-            self._notify("Tor Client", "Tor process died — restarting…")
+            self._notify("Delta Tor", "Tor process died — restarting…")
             self.tor_process   = None
             self.tor_connected = False
             threading.Thread(target=self._watchdog_restart, daemon=True).start()
@@ -2562,12 +3289,12 @@ class TorClientGUI:
     def _refresh_proxy_btn(self):
         if self.proxy_var.get():
             self.proxy_btn.configure(
-                text="🌐  System Proxy   ●  ON",
+                text="  System Proxy :  ON",
                 bg="#0E2A1A", fg=C["GRN"],
                 activebackground="#163A22", activeforeground=C["GRN"])
         else:
             self.proxy_btn.configure(
-                text="🌐  System Proxy   ●  OFF",
+                text="  System Proxy :  OFF",
                 bg=C["BTN"], fg=C["FG2"],
                 activebackground=C["BTN2"], activeforeground=C["FG"])
 
@@ -2611,18 +3338,22 @@ class TorClientGUI:
             try: self.cat_row.pack_forget()
             except Exception: pass
             opts = ["obfs4", "webtunnel", "vanilla"]
-            self.trans_combo['values'] = opts
-            if self.trans_var.get() not in opts:
-                self.trans_var.set("obfs4")
+            self._set_om_options(self.trans_combo, self.trans_var, opts)
             self.show_custom_bridge_window()
         else:
             try: self.cat_row.pack_forget()
             except Exception: pass
             opts = ["obfs4", "snowflake", "meek"]
-            self.trans_combo['values'] = opts
-            if self.trans_var.get() not in opts:
-                self.trans_var.set("obfs4")
+            self._set_om_options(self.trans_combo, self.trans_var, opts)
         self._refresh_bridge_info()
+
+    def _set_om_options(self, om, var, opts):
+        menu = om["menu"]
+        menu.delete(0, "end")
+        for opt in opts:
+            menu.add_command(label=opt, command=lambda v=opt: var.set(v))
+        if var.get() not in opts:
+            var.set(opts[0] if opts else "")
 
     def update_transports(self, event=None):
         src = self.source_var.get()
@@ -2632,9 +3363,7 @@ class TorClientGUI:
             opts = ["obfs4", "webtunnel", "vanilla"]
         else:
             opts = ["obfs4", "webtunnel", "vanilla"]
-        self.trans_combo['values'] = opts
-        if self.trans_var.get() not in opts:
-            self.trans_var.set(opts[0])
+        self._set_om_options(self.trans_combo, self.trans_var, opts)
 
     def _on_bridge_selection_change(self, event=None):
         self.update_transports(event)
@@ -2871,16 +3600,17 @@ class TorClientGUI:
         if self.tor_process is not None:
             self.update_status("Already running — stop first.")
             return
-        self.auto_btn.configure(text="⏹ Stop Auto", command=self.stop_auto_connect,
-                                bg="#3A1010", fg=C["RED"])
+        self.auto_btn.configure(text="⚡ Auto (active)",
+                                bg="#1E2535", fg=C["RED"],
+                                activebackground="#273048", activeforeground=C["RED"])
+        self.stop_btn.configure(fg=C["RED"], activeforeground=C["RED"])
         self._auto_connect_active = True
         threading.Thread(target=self._run_auto_connect, daemon=True).start()
 
-    def stop_auto_connect(self):
-        self._auto_connect_active = False
-        self.stop_tor()
-        self.auto_btn.configure(text="⚡ Auto Connect", command=self.start_auto_connect,
-                                bg=C["BTN2"], fg=C["FG"])
+    def _reset_auto_btn(self):
+        self.auto_btn.configure(text="⚡ Auto", command=self.start_auto_connect,
+                                bg="#1E2535", fg=C["FG"],
+                                activebackground="#273048", activeforeground=C["FG"])
 
     def _run_auto_connect(self):
         if self.no_bridge_var.get():
@@ -2888,15 +3618,11 @@ class TorClientGUI:
                             "\n[Auto] No-bridge mode: connecting directly to Tor network.\n", "auto")
             if self._try_bridge_config(None, None, None, no_bridge=True):
                 self.root.after(0, self.append_log, "[Auto] ✅ Connected (no bridge)\n", "auto")
-                self.root.after(0, self.auto_btn.configure,
-                                {"text": "⚡ Auto Connect", "command": self.start_auto_connect,
-                                 "bg": C["BTN2"], "fg": C["FG"]})
+                self.root.after(0, self._reset_auto_btn)
                 return
             self.root.after(0, self.append_log, "[Auto] ❌ Direct connection failed.\n", "auto")
             self._auto_connect_active = False
-            self.root.after(0, self.auto_btn.configure,
-                            {"text": "⚡ Auto Connect", "command": self.start_auto_connect,
-                             "bg": C["BTN2"], "fg": C["FG"]})
+            self.root.after(0, self._reset_auto_btn)
             return
 
         last_cat   = self.cfg.get("last_success_cat", "")
@@ -2917,16 +3643,10 @@ class TorClientGUI:
                                        timeout_override=timeout_s):
                 self.root.after(0, self.append_log,
                                 f"[Auto] ✅ Connected with {mem_label}\n")
-                self.root.after(0, self.auto_btn.configure,
-                                {"text": "⚡ Auto Connect",
-                                 "command": self.start_auto_connect,
-                                 "bg": C["BTN2"], "fg": C["FG"]})
+                self.root.after(0, self._reset_auto_btn)
                 return
             if not self._auto_connect_active:
-                self.root.after(0, self.auto_btn.configure,
-                                {"text": "⚡ Auto Connect",
-                                 "command": self.start_auto_connect,
-                                 "bg": C["BTN2"], "fg": C["FG"]})
+                self.root.after(0, self._reset_auto_btn)
                 return
             self.root.after(0, self.append_log,
                             "[Auto] Memory config timed out — continuing sequence.\n")
@@ -2947,10 +3667,7 @@ class TorClientGUI:
             self.root.after(0, self.ip_var.set, ip)
             if self._try_bridge_config(cat, trans, ip):
                 self.root.after(0, self.append_log, f"[Auto] ✅ Connected with {label}\n")
-                self.root.after(0, self.auto_btn.configure,
-                                {"text": "⚡ Auto Connect",
-                                 "command": self.start_auto_connect,
-                                 "bg": C["BTN2"], "fg": C["FG"]})
+                self.root.after(0, self._reset_auto_btn)
                 return
 
         if self._auto_connect_active:
@@ -2958,10 +3675,7 @@ class TorClientGUI:
                             "Auto-connect failed. Try updating bridges or manual settings.")
             self.root.after(0, self.append_log, "[Auto] ❌ All bridge groups exhausted.\n")
         self._auto_connect_active = False
-        self.root.after(0, self.auto_btn.configure,
-                        {"text": "⚡ Auto Connect",
-                         "command": self.start_auto_connect,
-                         "bg": C["BTN2"], "fg": C["FG"]})
+        self.root.after(0, self._reset_auto_btn)
 
     def _try_bridge_config(self, cat, trans, ip,
                            timeout_override=None, no_bridge=False) -> bool:
@@ -2997,8 +3711,8 @@ class TorClientGUI:
 
         self.tor_process = proc
         self.root.after(0, lambda: self.stop_btn.config(
-            bg="#3A1010", fg=C["RED"],
-            activebackground="#4A1515", activeforeground="white"))
+            bg="#1E2535", fg=C["RED"],
+            activebackground="#273048", activeforeground=C["RED"]))
 
         last_pct  = -1
         last_move = time.time()
@@ -3041,7 +3755,7 @@ class TorClientGUI:
                     self.root.after(500, self._schedule_auto_test)
                     self.root.after(0, self._start_watchdog)
                     self.root.after(0, self._start_keepalive)
-                    self._notify("Tor Client", "✅ Tor is fully connected!")
+                    self._notify("Delta Tor", "✅ Tor is fully connected!")
                     return True
 
             if last_pct >= 0 and time.time() - last_move > timeout_s:
@@ -3101,8 +3815,8 @@ class TorClientGUI:
                 text=True, creationflags=subprocess.CREATE_NO_WINDOW)
             self.root.after(0, self.update_status, "Tor is running.")
             self.root.after(0, lambda: self.stop_btn.config(
-                bg="#3A1010", fg=C["RED"],
-                activebackground="#4A1515", activeforeground="white"))
+                bg="#1E2535", fg=C["RED"],
+                activebackground="#273048", activeforeground=C["RED"]))
 
             for line in iter(self.tor_process.stdout.readline, ''):
                 self.root.after(0, self.append_log, line)
@@ -3123,7 +3837,7 @@ class TorClientGUI:
                         self.root.after(500, self._schedule_auto_test)
                         self.root.after(0, self._start_watchdog)
                         self.root.after(0, self._start_keepalive)
-                        self._notify("Tor Client", "✅ Tor is fully connected!")
+                        self._notify("Delta Tor", "✅ Tor is fully connected!")
 
             self.tor_process.stdout.close()
             self.tor_process.wait()
@@ -3141,19 +3855,31 @@ class TorClientGUI:
         self._cancel_watchdog()
         self._cancel_keepalive()
         self._stop_http_proxy()
-        self.set_system_proxy(False)
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                r'Software\Microsoft\Windows\CurrentVersion\Internet Settings',
+                0, winreg.KEY_ALL_ACCESS)
+            winreg.SetValueEx(key, 'ProxyEnable',   0, winreg.REG_DWORD, 0)
+            winreg.SetValueEx(key, 'ProxyServer',   0, winreg.REG_SZ, '')
+            winreg.SetValueEx(key, 'ProxyOverride', 0, winreg.REG_SZ, '')
+            winreg.CloseKey(key)
+            ctypes.windll.wininet.InternetSetOptionW(0, 39, 0, 0)
+            ctypes.windll.wininet.InternetSetOptionW(0, 37, 0, 0)
+        except Exception:
+            pass
         self.proxy_var.set(False)
         self.root.after(0, self._refresh_proxy_btn)
         self.root.after(0, lambda: self.stop_btn.config(
-            bg=C["BTN"], fg=C["FG2"],
-            activebackground=C["BTN2"], activeforeground=C["FG"]))
+            bg="#1E2535", fg=C["FG"],
+            activebackground="#273048", activeforeground=C["FG"]))
+        self.root.after(0, self._reset_auto_btn)
         self.root.after(0, self.update_status,    "Tor stopped.")
         self.root.after(0, self.update_conn_progress, 0)
         self.root.after(0, self._stop_uptime)
         self.root.after(0, self.stat_tor_var.set,     "—")
         self.root.after(0, self.stat_ip_var.set,      "—")
         self.root.after(0, self.stat_country_var.set, "—")
-        self._notify("Tor Client", "Tor has stopped.")
+        self._notify("Delta Tor", "Tor has stopped.")
 
     def stop_tor(self):
         self._auto_connect_active = False
@@ -3169,10 +3895,10 @@ class TorClientGUI:
             except Exception: pass
             finally:
                 self.tor_process = None
-                
+
         try:
             import subprocess as _sp
-            my_pid = os.getpid() 
+            my_pid = os.getpid()
             _sp.run(
                 ["taskkill", "/F", "/FI", f"PID ne {my_pid}", "/IM", "tor.exe"],
                 creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0x08000000),
@@ -3187,7 +3913,7 @@ class TorClientGUI:
             pattern = os.path.join(extract_dir, "data_par_*")
             current_time = time.time()
             cutoff_time = current_time - (days_old * 86400)
-            
+
             for dir_path in glob.glob(pattern):
                 if os.path.isdir(dir_path):
                     mtime = os.path.getmtime(dir_path)
@@ -3224,11 +3950,29 @@ class TorClientGUI:
         tor_exe = os.path.join(self.extract_dir, "tor", "tor.exe")
         if os.path.exists(tor_exe):
             return
-        archive = os.path.join(BASE_DIR, "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz")
-        if not os.path.exists(archive):
+        bundle_name_versioned = "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz"
+        bundle_name_generic   = "tor-expert-bundle.tar.gz"
+        archive = None
+        for name in (bundle_name_versioned, bundle_name_generic):
+            for search_dir in (BASE_DIR, _EXE_DIR):
+                candidate = os.path.join(search_dir, name)
+                if os.path.exists(candidate):
+                    archive = candidate
+                    break
+            if archive:
+                break
+        if not archive:
             self.root.after(0, self.update_status, "Error: tor-expert-bundle.tar.gz missing!")
             self.root.after(0, lambda: messagebox.showerror("Error", "tor-expert-bundle.tar.gz not found in application directory!"))
             return
+        target_archive = os.path.join(BASE_DIR, os.path.basename(archive))
+        if os.path.normpath(archive) != os.path.normpath(target_archive):
+            try:
+                os.makedirs(BASE_DIR, exist_ok=True)
+                shutil.move(archive, target_archive)
+                archive = target_archive
+            except Exception:
+                pass
         self.root.after(0, self.update_status, "Extracting Tor Bundle...")
         try:
             with tarfile.open(archive, "r:gz") as tar:
@@ -3354,7 +4098,7 @@ class TorClientGUI:
 
     def show_help_window(self):
         w = tk.Toplevel(self.root)
-        w.title("Help — Tor Client")
+        w.title("Help — Delta Tor")
         w.geometry("720x660")
         w.configure(bg=C["BG"])
         w.resizable(False, False)
@@ -3364,7 +4108,7 @@ class TorClientGUI:
         self._apply_icon_to(w)
 
         tk.Frame(w, bg=C["ACC"], height=3).pack(fill='x')
-        tk.Label(w, text="⬡  How to Use — Tor Client",
+        tk.Label(w, text="⬡  How to Use — Delta Tor",
                  font=('Segoe UI', 14, 'bold'), bg=C["BG"], fg=C["ACC"]).pack(pady=(14, 4))
 
         tf = tk.Frame(w, bg=C["BLK"])
@@ -3446,8 +4190,14 @@ class TorClientGUI:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    root.withdraw() 
-    root.configure(bg="#1A1D24")
-    app = TorClientGUI(root)
-    root.after(1000, root.deiconify)
+    root.withdraw()
+    root.configure(bg=C["BG"], bd=0, relief='flat', padx=0, pady=0)
+    app = DeltaTorGUI(root)
+
+    def _show():
+        root.deiconify()
+        root.update()
+        apply_dark_titlebar(root)
+
+    root.after(200, _show)
     root.mainloop()
