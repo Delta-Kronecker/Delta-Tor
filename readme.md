@@ -1,6 +1,6 @@
 # 🧅 Delta Tor — Windows GUI
 
-> The most bridge-rich Tor client for Windows. Multi-Connect runs up to 4 simultaneous Tor tunnels, continuously pings each one, and can automatically route your traffic through the fastest — no configuration needed.
+> The most bridge-rich Tor client for Windows. Multi-Connect runs up to n simultaneous Tor tunnels, continuously pings each one, and can automatically route your traffic through the fastest — no configuration needed.
 
 ---
 
