@@ -10,9 +10,9 @@
 
 Download the latest release archive directly:
 
-**[⬇️ DeltaTor-1.2.2.rar](https://github.com/Delta-Kronecker/Delta-Tor/releases/download/1.2.2/DeltaTor-1.2.2.rar)**
+**[⬇️ DeltaTor_Setup_1.2.2.exe]((https://github.com/Delta-Kronecker/Delta-Tor/releases/download/1.2.2/DeltaTor_Setup_1.2.2.exe))**
 
-The archive contains `DeltaTor_Setup.exe`, the Tor core binaries, and everything else needed. Extract and run `DeltaTor_Setup.exe`.
+and run `DeltaTor_Setup.exe`.
 
 ### Running from Source
 
