@@ -39,16 +39,16 @@
   "exp_no_exit_stream_ports": "",
   "extract_dir": "",
   "last_success_cat": "Tested & Active",
-  "last_success_trans": "obfs4",
-  "last_success_ip": "IPv4",
+  "last_success_trans": "vanilla",
+  "last_success_ip": "Both",
   "multi_slots": [
     [
-      "Direct (No Bridge)",
-      "Direct (No Bridge)",
+      "snowflake",
+      "Default (Built-in)",
       null,
+      "snowflake",
       null,
-      null,
-      true
+      false
     ],
     [
       "Vanilla Tested Both",
