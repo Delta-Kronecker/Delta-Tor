@@ -4203,9 +4203,9 @@ class DeltaTorGUI:
   webtunnel  → Looks like HTTPS traffic
   vanilla    → Plain Tor — only if not blocked
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  TROUBLESHOOTING
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   Stuck below 100%?  → Update bridges, try Auto.
   YouTube/Instagram? → Enable Exit Nodes in Settings.
   Port {TOR_SOCKS_PORT} busy?   → Another Tor is running.
