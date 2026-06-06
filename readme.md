@@ -51,7 +51,7 @@ Every 15 seconds, for each connected slot:
   WebTunnel     ⬤ Offline
 ```
 
-With **Auto Proxy** enabled, the system proxy is **automatically switched to the slot with the lowest latency** the moment a healthier connection is detected. If your best connection drops, the proxy moves to the next healthy slot without any interruption and without any input from you.
+With **Auto Proxy** enabled, the system proxy is **automatically switched to the slot with the lowest latency average (last 20 test)** the moment a healthier connection is detected. If your best connection drops, the proxy moves to the next healthy slot without any interruption and without any input from you.
 
 > **Auto Proxy is OFF by default.** Enable it from the Multi-Connect panel when you want fully automatic proxy management. When it is off, you choose which slot to use by clicking **Set Proxy** on any card.
 
@@ -120,7 +120,7 @@ Delta Tor pulls all bridges from **[Delta-Kronecker/Tor-Bridges-Collector](https
 
 ### Fresh (72h) — Auto-updated on every launch
 
-The moment Delta Tor opens, it silently downloads all 6 Fresh bridge files in parallel before your first connection attempt. By the time you click Connect, you already have the newest bridges available anywhere.
+The moment Delta Tor opens, it silently downloads all bridge files — no action needed
 
 | File | Content |
 |---|---|
@@ -151,15 +151,6 @@ When everything else fails, the Full Archive gives you the largest possible pool
 | `webtunnel.txt` / `webtunnel_ipv6.txt` | Complete webtunnel archive — IPv4 + IPv6 |
 | `vanilla.txt` / `vanilla_ipv6.txt` | Complete vanilla archive — IPv4 + IPv6 |
 
-### Update behavior
-
-| Category | When updated |
-|---|---|
-| **Fresh (72h)** | **Automatically on every launch — no action needed** |
-| Tested & Active | Manual — **↺ Update Bridges** button |
-| Full Archive | Manual — **↺ Update Bridges** button |
-
-Clicking **↺ Update Bridges** downloads all 15 files in parallel in the background. The UI stays fully responsive.
 
 ---
 
