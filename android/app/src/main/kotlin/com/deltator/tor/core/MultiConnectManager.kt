@@ -5,6 +5,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 data class SlotState(
     val label: String,
@@ -32,6 +33,10 @@ class MultiConnectManager(
 
     private val _activeProxyLabel = MutableStateFlow<String?>(null)
     val activeProxyLabel: StateFlow<String?> = _activeProxyLabel.asStateFlow()
+
+    fun setActiveProxy(label: String?) {
+        _activeProxyLabel.value = label
+    }
 
     private val torManagers = mutableMapOf<String, TorManager>()
     private val healthJobs = mutableMapOf<String, Job>()
