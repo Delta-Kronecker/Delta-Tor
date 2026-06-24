@@ -25,11 +25,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Debug APK
-        run: gradle assembleDebug
+        run: ./gradlew assembleDebug
         working-directory: android
 
       - name: Build Release APK
-        run: gradle assembleRelease
+        run: ./gradlew assembleRelease
         working-directory: android
 
       - name: Upload Debug APK
