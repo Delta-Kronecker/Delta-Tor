@@ -1,0 +1,5 @@
+-keep class org.torproject.android.** { *; }
+-keep class net.freehaven.tor.** { *; }
+-dontwarn org.torproject.android.**
+-keepattributes Signature
+-keepattributes *Annotation*
