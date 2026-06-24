@@ -1,6 +1,9 @@
 package com.deltator.tor.core
 
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import java.net.Socket
 
 data class ScanResult(
@@ -23,12 +26,12 @@ class BridgeScanner {
         onResult: (ScanResult) -> Unit = {}
     ): List<ScanResult> = coroutineScope {
         val results = mutableListOf<ScanResult>()
-        val mutex = kotlinx.coroutines.sync.Mutex()
+        val mutex = Mutex()
         var done = 0
 
-        val semaphore = kotlinx.coroutines.sync.Semaphore(workers)
+        val semaphore = Semaphore(workers)
 
-        bridgeLines.map { line ->
+        val deferreds = bridgeLines.map { line ->
             async(Dispatchers.IO) {
                 semaphore.acquire()
                 try {
@@ -43,8 +46,9 @@ class BridgeScanner {
                     semaphore.release()
                 }
             }
-        }.awaitAll()
+        }
 
+        deferreds.awaitAll()
         results
     }
 

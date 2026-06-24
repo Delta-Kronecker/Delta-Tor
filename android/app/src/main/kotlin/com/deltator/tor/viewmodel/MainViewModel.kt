@@ -8,6 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import java.io.File
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -489,8 +490,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         stopConnect()
         proxyManager.stopHttpProxy()
     }
-}
-
-private suspend fun <T> kotlinx.coroutines.flow.Flow<T>.first(predicate: suspend (T) -> Boolean): T {
-    return kotlinx.coroutines.flow.first(this, predicate)
 }

@@ -180,7 +180,7 @@ fun BridgeScannerScreen(
 @Composable
 private fun DropdownCompact(label: String, value: String, options: List<String>, onSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
-    Column(Modifier.weight(1f)) {
+    Column(Modifier.fillMaxWidth()) {
         Text(label, color = FG2, fontSize = 11.sp)
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
             Text(value, color = FG, fontSize = 12.sp)

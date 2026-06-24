@@ -46,15 +46,17 @@ class MultiConnectViewModel(application: Application) : AndroidViewModel(applica
     fun setProxyToSlot(label: String) {
         val current = activeProxyLabel.value
         if (current == label && !_autoProxyEnabled.value) {
-            manager._activeProxyLabel.value = null
+            manager.setActiveProxy(null)
             return
         }
 
         val idx = slots.value.indexOfFirst { it.label == label }
         if (idx < 0) return
-        val (_, socksPort, _, httpPort) = Config.slotPorts(idx)
+        val ports = Config.slotPorts(idx)
+        val socksPort = ports.first
+        val httpPort = ports.third
 
-        manager._activeProxyLabel.value = label
+        manager.setActiveProxy(label)
 
         viewModelScope.launch {
             val proxyManager = ProxyManager()

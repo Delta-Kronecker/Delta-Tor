@@ -56,9 +56,11 @@ class ProxyManager {
                 if (headerBuf.size > 65536) { client.close(); return }
             }
 
-            val headerEnd = headerBuf.toByteArray().indexOf("\r\n\r\n".toByteArray())
-            val headersRaw = String(headerBuf.toByteArray(), 0, headerEnd)
-            val body = headerBuf.toByteArray().copyOfRange(headerEnd + 4, headerBuf.size)
+            val headerBytes = headerBuf.toByteArray()
+            val headerStr = String(headerBytes)
+            val headerEnd = headerStr.indexOf("\r\n\r\n")
+            val headersRaw = headerStr.substring(0, headerEnd)
+            val body = headerBytes.copyOfRange(headerEnd + 4, headerBytes.size)
 
             val firstLine = headersRaw.split("\r\n")[0]
             val parts = firstLine.split(" ", limit = 3)
