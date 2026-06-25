@@ -9,7 +9,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.GZIPInputStream
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application
@@ -52,16 +55,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isProxyEnabled = MutableStateFlow(false)
     val isProxyEnabled: StateFlow<Boolean> = _isProxyEnabled.asStateFlow()
 
-    private val _exitIp = MutableStateFlow("—")
+    private val _exitIp = MutableStateFlow("\u2014")
     val exitIp: StateFlow<String> = _exitIp.asStateFlow()
 
-    private val _country = MutableStateFlow("—")
+    private val _country = MutableStateFlow("\u2014")
     val country: StateFlow<String> = _country.asStateFlow()
 
-    private val _uptime = MutableStateFlow("—")
+    private val _uptime = MutableStateFlow("\u2014")
     val uptime: StateFlow<String> = _uptime.asStateFlow()
 
-    private val _torStatus = MutableStateFlow("—")
+    private val _torStatus = MutableStateFlow("\u2014")
     val torStatus: StateFlow<String> = _torStatus.asStateFlow()
 
     private val _logs = MutableStateFlow<List<String>>(emptyList())
@@ -100,40 +103,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun extractTorBundle() {
-        val bundleDir = File(context.filesDir, "tor_bundle")
-        if (bundleDir.exists() && File(bundleDir, "tor/pluggable_transports/lyrebird").exists()) return
+        val torDir = File(context.filesDir, "tor")
+        if (torDir.exists() && File(torDir, "pluggable_transports/lyrebird").exists()) {
+            addLog("[Bundle] Tor bundle already extracted")
+            return
+        }
 
         try {
-            val assetsDir = context.filesDir
-            val candidates = listOf(
-                File(assetsDir, "tor-expert-bundle-android-aarch64-15.0.16.tar.gz"),
-                File(context.getExternalFilesDir(null), "tor-expert-bundle-android-aarch64-15.0.16.tar.gz")
-            )
+            val inputStream = context.assets.open("tor-expert-bundle-android-aarch64-15.0.16.tar.gz")
+            val gzIn = GZIPInputStream(inputStream)
+            val tarIn = TarArchiveInputStream(gzIn)
 
-            val archive = candidates.firstOrNull { it.exists() } ?: return
-
-            val process = Runtime.getRuntime().exec(
-                arrayOf("tar", "-xzf", archive.absolutePath, "-C", assetsDir.absolutePath)
-            )
-            process.waitFor()
-
-            val extracted = File(assetsDir, "data")
-            if (extracted.exists()) {
-                extracted.renameTo(bundleDir)
+            var entry = tarIn.nextTarEntry
+            while (entry != null) {
+                val outFile = File(context.filesDir, entry.name)
+                if (entry.isDirectory) {
+                    outFile.mkdirs()
+                } else {
+                    outFile.parentFile?.mkdirs()
+                    FileOutputStream(outFile).use { out ->
+                        tarIn.copyTo(out)
+                    }
+                }
+                entry = tarIn.nextTarEntry
             }
+            tarIn.close()
 
-            val ptConfig = File(bundleDir, "tor/pluggable_transports/pt_config.json")
+            val lyrebird = File(context.filesDir, "tor/pluggable_transports/lyrebird")
+            val conjure = File(context.filesDir, "tor/pluggable_transports/conjure-client")
+
+            try {
+                Runtime.getRuntime().exec(arrayOf("chmod", "755", lyrebird.absolutePath)).waitFor()
+                Runtime.getRuntime().exec(arrayOf("chmod", "755", conjure.absolutePath)).waitFor()
+            } catch (_: Exception) {}
+
+            val ptConfig = File(context.filesDir, "tor/pluggable_transports/pt_config.json")
             if (ptConfig.exists()) {
-                ptConfig.copyTo(File(assetsDir, "pt_config.json"), overwrite = true)
+                ptConfig.copyTo(File(context.filesDir, "pt_config.json"), overwrite = true)
             }
+
+            addLog("[Bundle] Tor bundle extracted successfully")
         } catch (e: Exception) {
-            _logs.value = _logs.value + "Bundle extraction failed: ${e.message}"
+            addLog("[Bundle] Extraction failed: ${e.message}")
         }
     }
 
     fun setSelectedSource(source: String) {
         _selectedSource.value = source
-        if (source == "Custom Bridges") showCustomBridges()
         refreshBridgeInfo()
     }
 
@@ -168,7 +184,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val count = bridgeManager.getBridgeCountForSelection(
             _selectedCategory.value, _selectedTransport.value, _selectedIp.value
         )
-        _bridgeCount.value = if (count > 0) "$count" else "—"
+        _bridgeCount.value = if (count > 0) "$count" else "\u2014"
 
         val lastMod = bridgeManager.getLastModified(
             _selectedCategory.value, _selectedTransport.value, _selectedIp.value
@@ -176,7 +192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _bridgeUpdated.value = if (lastMod > 0) {
             java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
                 .format(java.util.Date(lastMod))
-        } else "—"
+        } else "\u2014"
     }
 
     fun startConnect() {
@@ -189,11 +205,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             torManager = tor
             _statusText.value = "Starting Tor..."
 
-            val ptDir = File(context.filesDir, "tor_bundle/tor/pluggable_transports").absolutePath
-            val dataDir = File(context.filesDir, "data").absolutePath
+            val ptDir = File(context.filesDir, "tor/pluggable_transports").absolutePath
+            val dataDir = context.filesDir.absolutePath
 
             val bridgeLines = getBridgeLines()
             val torrc = settings.generateTorrc(dataDir, Config.SOCKS_PORT, Config.CTRL_PORT, bridgeLines, ptDir)
+
+            addLog("[Tor] Config generated, starting TorService...")
+            addLog("[Tor] SOCKS: ${Config.SOCKS_PORT}  HTTP: ${Config.HTTP_PROXY_PORT}")
 
             tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout"))
 
@@ -269,8 +288,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val tor = createTorManager()
             torManager = tor
 
-            val ptDir = File(context.filesDir, "tor_bundle/tor/pluggable_transports").absolutePath
-            val dataDir = File(context.filesDir, "data").absolutePath
+            val ptDir = File(context.filesDir, "tor/pluggable_transports").absolutePath
+            val dataDir = context.filesDir.absolutePath
 
             val bridgeLines = bridgeManager.getBridgeLines(
                 cat, trans, ip,
@@ -314,10 +333,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isConnected.value = false
         _connectionProgress.value = 0
         _statusText.value = "Tor stopped."
-        _torStatus.value = "—"
-        _exitIp.value = "—"
-        _country.value = "—"
-        _uptime.value = "—"
+        _torStatus.value = "\u2014"
+        _exitIp.value = "\u2014"
+        _country.value = "\u2014"
+        _uptime.value = "\u2014"
     }
 
     fun testConnection() {
@@ -470,19 +489,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun resetStats() {
         _connectionProgress.value = 0
-        _exitIp.value = "—"
-        _country.value = "—"
-        _uptime.value = "—"
-        _torStatus.value = "—"
+        _exitIp.value = "\u2014"
+        _country.value = "\u2014"
+        _uptime.value = "\u2014"
+        _torStatus.value = "\u2014"
         startTime = 0
     }
 
     private fun addLog(msg: String) {
         _logs.value = _logs.value + msg
-    }
-
-    private fun showCustomBridges() {
-        // Handled in UI via navigation
     }
 
     override fun onCleared() {
