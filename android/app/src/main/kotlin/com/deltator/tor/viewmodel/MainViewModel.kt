@@ -112,11 +112,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         try {
+            addLog("[Bundle] Opening tar.gz from assets...")
             val inputStream = context.assets.open("tor-expert-bundle-android-aarch64-15.0.16.tar.gz")
+            addLog("[Bundle] Asset opened, size available: ${inputStream.available()}")
             val gzIn = GZIPInputStream(inputStream)
+            addLog("[Bundle] GZIPInputStream created")
             val tarIn = TarArchiveInputStream(gzIn)
+            addLog("[Bundle] TarArchiveInputStream created, starting extraction...")
 
             var entry = tarIn.nextTarEntry
+            var count = 0
             while (entry != null) {
                 val outFile = File(context.filesDir, entry.name)
                 if (entry.isDirectory) {
@@ -127,9 +132,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         tarIn.copyTo(out)
                     }
                 }
+                count++
                 entry = tarIn.nextTarEntry
             }
             tarIn.close()
+            addLog("[Bundle] Extracted $count files")
 
             listOf(
                 File(context.filesDir, "tor/libTor.so"),
@@ -150,7 +157,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             addLog("[Bundle] Tor bundle extracted successfully")
         } catch (e: Exception) {
-            addLog("[Bundle] Extraction failed: ${e.message}")
+            addLog("[Bundle] Extraction FAILED: ${e.javaClass.simpleName}: ${e.message}")
+            e.stackTrace.take(5).forEach { addLog("[Bundle]   at ${it}") }
         }
     }
 
