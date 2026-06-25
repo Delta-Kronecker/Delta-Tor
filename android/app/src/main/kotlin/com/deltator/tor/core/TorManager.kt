@@ -12,7 +12,6 @@ import java.io.InputStreamReader
 import java.net.Socket
 import java.util.zip.GZIPInputStream
 import javax.net.ssl.SSLContext
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 
 enum class TorState {
     IDLE, CONNECTING, CONNECTED, FAILED, STOPPED
