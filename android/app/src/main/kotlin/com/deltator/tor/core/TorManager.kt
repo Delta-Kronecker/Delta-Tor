@@ -52,32 +52,58 @@ class TorManager(
         _statusText.value = "Starting..."
         _logs.value = emptyList()
 
+        addLog("[DEBUG] === TorManager.start() called ===")
+        addLog("[DEBUG] label=$label socksPort=$socksPort ctrlPort=$ctrlPort")
+        addLog("[DEBUG] ptDir=$ptDir")
+        addLog("[DEBUG] timeoutSeconds=$timeoutSeconds")
+
         val dataDir = File(context.filesDir, "data_$socksPort").also { it.mkdirs() }
+        addLog("[DEBUG] dataDir=${dataDir.absolutePath} exists=${dataDir.exists()}")
 
         copyGeoIpFiles(dataDir)
 
         val torrcFile = File(dataDir, "torrc")
         torrcFile.writeText(torrcContent)
+        addLog("[DEBUG] torrc written to ${torrcFile.absolutePath} size=${torrcFile.length()}")
 
-        val torBinary = findTorBinary() ?: run {
+        val torBinary = findTorBinary()
+        if (torBinary == null) {
             _state.value = TorState.FAILED
             _statusText.value = "tor binary not found"
-            addLog("[Error] Tor binary not found in bundle")
+            addLog("[ERROR] No tor binary found!")
+            addLog("[ERROR] Checked paths:")
+            listOf("tor/libTor.so", "tor/tor", "tor/pluggable_transports/lyrebird").forEach { p ->
+                val f = File(context.filesDir, p)
+                addLog("[ERROR]   ${f.absolutePath} exists=${f.exists()} canExec=${f.canExecute()}")
+            }
+            addLog("[ERROR] filesDir contents:")
+            context.filesDir.listFiles()?.forEach { f ->
+                addLog("[ERROR]   ${f.name} ${if (f.isDirectory) "DIR" else "FILE ${f.length()}"}")
+            }
+            File(context.filesDir, "tor").listFiles()?.forEach { f ->
+                addLog("[ERROR]   tor/${f.name} ${if (f.isDirectory) "DIR" else "FILE ${f.length()}"}")
+            }
             return
         }
 
-        addLog("[Tor] Binary: $torBinary")
-        addLog("[Tor] DataDir: ${dataDir.absolutePath}")
+        addLog("[DEBUG] torBinary=$torBinary")
+        addLog("[DEBUG] torBinary exists=${File(torBinary).exists()} canExecute=${File(torBinary).canExecute()}")
+        addLog("[DEBUG] torBinary size=${File(torBinary).length()}")
 
         try {
+            addLog("[DEBUG] Building ProcessBuilder...")
             val pb = ProcessBuilder(torBinary, "-f", torrcFile.absolutePath)
                 .directory(dataDir)
                 .redirectErrorStream(true)
 
             val env = pb.environment()
-            env["TOR_PT_STATE_LOCATION"] = File(dataDir, "pt_state").apply { mkdirs() }.absolutePath
+            val ptStateDir = File(dataDir, "pt_state").apply { mkdirs() }
+            env["TOR_PT_STATE_LOCATION"] = ptStateDir.absolutePath
+            addLog("[DEBUG] TOR_PT_STATE_LOCATION=${ptStateDir.absolutePath}")
 
+            addLog("[DEBUG] Starting process...")
             torProcess = pb.start()
+            addLog("[DEBUG] Process started, pid=${torProcess?.toString()}")
 
             val reader = BufferedReader(InputStreamReader(torProcess!!.inputStream))
 
@@ -85,14 +111,17 @@ class TorManager(
                 var lastPercent = -1
                 var lastMoveTime = System.currentTimeMillis()
                 val timeoutMs = timeoutSeconds * 1000L
+                var lineCount = 0
 
                 reader.useLines { lines ->
                     for (line in lines) {
+                        lineCount++
                         addLog(line)
 
                         if (line.contains("Reading config failed") || line.contains("Failed to parse/validate config")) {
                             _statusText.value = "Config error"
                             _state.value = TorState.FAILED
+                            addLog("[ERROR] Config parse failed!")
                             return@useLines
                         }
 
@@ -116,6 +145,7 @@ class TorManager(
                         ) {
                             _statusText.value = "Timeout at $lastPercent%"
                             _state.value = TorState.FAILED
+                            addLog("[ERROR] Timeout at $lastPercent%")
                             stop()
                             return@useLines
                         }
@@ -123,11 +153,20 @@ class TorManager(
                         if (match != null) lastPercent = match.groupValues[1].toInt()
                     }
                 }
+                addLog("[DEBUG] Process exited. Total lines: $lineCount")
+            }
+
+            val exitCode = torProcess?.waitFor()
+            addLog("[DEBUG] Process exit code: $exitCode")
+            if (_state.value == TorState.CONNECTING) {
+                _state.value = TorState.FAILED
+                _statusText.value = "Process exited with code $exitCode"
             }
         } catch (e: Exception) {
-            addLog("Error: ${e.message}")
+            addLog("[ERROR] Exception: ${e.javaClass.simpleName}: ${e.message}")
+            e.stackTrace.forEach { addLog("[ERROR]   at ${it}") }
             _state.value = TorState.FAILED
-            _statusText.value = "Launch error: ${e.message}"
+            _statusText.value = "Error: ${e.message}"
         }
     }
 
