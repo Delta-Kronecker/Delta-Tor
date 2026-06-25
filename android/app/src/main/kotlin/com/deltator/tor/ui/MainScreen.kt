@@ -266,14 +266,13 @@ fun MainScreen(
                         .weight(1f)
                         .background(PANEL)
                         .padding(10.dp)
-                        .verticalScroll(rememberScrollState())
                 ) {
                     logs.forEach { line ->
                         Text(
                             text = line,
                             color = when {
                                 "[err]" in line.lowercase() || "error" in line.lowercase() -> RED
-                                "[warn]" in line.lowercase() || "warn" in line.lowercase() -> YLW
+                                "[warn]" in line.lowercase() || "warn " in line.lowercase() -> YLW
                                 "[notice]" in line.lowercase() || "bootstrapped" in line.lowercase() -> GRN
                                 "[auto]" in line.lowercase() -> CYAN
                                 else -> FG2
@@ -281,6 +280,9 @@ fun MainScreen(
                             fontSize = 10.sp
                         )
                     }
+                }
+            }
+        }
                 }
             }
         }
