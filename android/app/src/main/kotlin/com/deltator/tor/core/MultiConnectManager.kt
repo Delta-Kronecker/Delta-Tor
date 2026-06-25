@@ -168,8 +168,8 @@ class MultiConnectManager(
         updateSlotState(def.name, TorState.CONNECTING, 0, "Starting...")
 
         scope.launch {
-            val ptDir = File(context.filesDir, "tor_bundle/tor/pluggable_transports").absolutePath
-            val dataDir = File(context.filesDir, "data_$socks").absolutePath
+            val ptDir = File(context.filesDir, "tor/pluggable_transports").absolutePath
+            val dataDir = context.filesDir.absolutePath
 
             val bridgeLines = resolveBridges(def)
             val torrc = settings.generateTorrc(dataDir, socks, ctrl, bridgeLines, ptDir)

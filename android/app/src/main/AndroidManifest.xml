@@ -29,5 +29,10 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name="org.torproject.android.services.TorService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
+
     </application>
 </manifest>

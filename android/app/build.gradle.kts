@@ -54,6 +54,9 @@ android {
 }
 
 dependencies {
+    implementation("org.torproject.android:tor-android:0.4.8.12")
+    implementation("org.apache.commons:commons-compress:1.26.1")
+
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.activity:activity-compose:1.8.2")
