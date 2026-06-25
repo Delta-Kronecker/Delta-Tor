@@ -174,9 +174,11 @@ class MultiConnectManager(
             val bridgeLines = resolveBridges(def)
             val torrc = settings.generateTorrc(dataDir, socks, ctrl, bridgeLines, ptDir)
 
-            tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout")) { label, sPort, cPort, hPort ->
-                startHealthLoop(label, sPort)
-            }
+            tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout"),
+                onConnected = { label, sPort, cPort, hPort ->
+                    startHealthLoop(label, sPort)
+                }
+            )
 
             tor.state.collect { state ->
                 when (state) {
