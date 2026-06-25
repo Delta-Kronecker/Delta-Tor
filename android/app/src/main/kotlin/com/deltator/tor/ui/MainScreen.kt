@@ -182,8 +182,8 @@ fun MainScreen(
                         val allLogs = logs.joinToString("\n")
                         val ctx = viewModel.getApplication<android.app.Application>()
                         val clip = android.content.ClipData.newPlainText("logs", allLogs)
-                        ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                            .android.content.ClipboardManager.setPrimaryClip(clip)
+                        val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        cm.setPrimaryClip(clip)
                     }) {
                         Text("Copy", color = CYAN, fontSize = 10.sp)
                     }
