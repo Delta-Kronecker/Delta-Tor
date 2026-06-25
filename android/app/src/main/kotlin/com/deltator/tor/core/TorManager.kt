@@ -1,21 +1,18 @@
 package com.deltator.tor.core
 
 import android.content.Context
-import android.content.Intent
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.torproject.android.services.TorService
-import org.torproject.android.services.TorServiceLocalBroadcastReceiver
-import android.content.BroadcastReceiver
-import android.os.Handler
-import android.os.Looper
 import java.io.BufferedReader
 import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.Socket
+import java.util.zip.GZIPInputStream
 import javax.net.ssl.SSLContext
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 
 enum class TorState {
     IDLE, CONNECTING, CONNECTED, FAILED, STOPPED
@@ -40,8 +37,7 @@ class TorManager(
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
 
-    private var broadcastReceiver: BroadcastReceiver? = null
-    private val handler = Handler(Looper.getMainLooper())
+    private var torProcess: Process? = null
 
     suspend fun start(
         torrcContent: String,
@@ -53,19 +49,81 @@ class TorManager(
 
         _state.value = TorState.CONNECTING
         _bootstrapPercent.value = 0
-        _statusText.value = "Starting Tor..."
+        _statusText.value = "Starting..."
         _logs.value = emptyList()
 
+        val dataDir = File(context.filesDir, "data_$socksPort").also { it.mkdirs() }
+
+        copyGeoIpFiles(dataDir)
+
+        val torrcFile = File(dataDir, "torrc")
+        torrcFile.writeText(torrcContent)
+
+        val torBinary = findTorBinary() ?: run {
+            _state.value = TorState.FAILED
+            _statusText.value = "tor binary not found"
+            addLog("[Error] Tor binary not found in bundle")
+            return
+        }
+
+        addLog("[Tor] Binary: $torBinary")
+        addLog("[Tor] DataDir: ${dataDir.absolutePath}")
+
         try {
-            extractAndPrepareTor()
+            val pb = ProcessBuilder(torBinary, "-f", torrcFile.absolutePath)
+                .directory(dataDir)
+                .redirectErrorStream(true)
 
-            writeTorrc(torrcContent)
+            val env = pb.environment()
+            env["TOR_PT_STATE_LOCATION"] = File(dataDir, "pt_state").apply { mkdirs() }.absolutePath
 
-            registerReceiver(onConnected)
+            torProcess = pb.start()
 
-            startTorService()
+            val reader = BufferedReader(InputStreamReader(torProcess!!.inputStream))
 
-            waitForBootstrap(timeoutSeconds)
+            withContext(Dispatchers.IO) {
+                var lastPercent = -1
+                var lastMoveTime = System.currentTimeMillis()
+                val timeoutMs = timeoutSeconds * 1000L
+
+                reader.useLines { lines ->
+                    for (line in lines) {
+                        addLog(line)
+
+                        if (line.contains("Reading config failed") || line.contains("Failed to parse/validate config")) {
+                            _statusText.value = "Config error"
+                            _state.value = TorState.FAILED
+                            return@useLines
+                        }
+
+                        val match = Regex("Bootstrapped (\\d+)%").find(line)
+                        if (match != null) {
+                            val pct = match.groupValues[1].toInt()
+                            _bootstrapPercent.value = pct
+                            _statusText.value = "Bootstrapped $pct%"
+                            lastMoveTime = System.currentTimeMillis()
+
+                            if (pct == 100 && _state.value != TorState.CONNECTED) {
+                                _state.value = TorState.CONNECTED
+                                _statusText.value = "Connected!"
+                                onConnected?.invoke(label, socksPort, ctrlPort, httpPort)
+                            }
+                        }
+
+                        if (_state.value == TorState.CONNECTING &&
+                            lastPercent >= 0 &&
+                            System.currentTimeMillis() - lastMoveTime > timeoutMs
+                        ) {
+                            _statusText.value = "Timeout at $lastPercent%"
+                            _state.value = TorState.FAILED
+                            stop()
+                            return@useLines
+                        }
+
+                        if (match != null) lastPercent = match.groupValues[1].toInt()
+                    }
+                }
+            }
         } catch (e: Exception) {
             addLog("Error: ${e.message}")
             _state.value = TorState.FAILED
@@ -79,135 +137,16 @@ class TorManager(
         _bootstrapPercent.value = 0
 
         try {
-            unregisterReceiver()
-            val intent = Intent(context, TorService::class.java)
-            intent.action = TorService.ACTION_STOP
-            context.startService(intent)
+            torProcess?.destroy()
+            torProcess?.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+            torProcess?.destroyForcibly()
         } catch (_: Exception) {}
 
-        handler.postDelayed({
-            try {
-                val intent = Intent(context, TorService::class.java)
-                intent.action = TorService.ACTION_STOP
-                context.startService(intent)
-            } catch (_: Exception) {}
-        }, 3000)
+        torProcess = null
     }
 
     fun isRunning(): Boolean = _state.value == TorState.CONNECTED || _state.value == TorState.CONNECTING
     fun isConnected(): Boolean = _state.value == TorState.CONNECTED
-
-    private fun extractAndPrepareTor() {
-        val torDir = File(context.filesDir, "tor")
-        if (torDir.exists() && File(torDir, "tor").exists()) return
-
-        try {
-            val inputStream = context.assets.open("tor-expert-bundle-android-aarch64-15.0.16.tar.gz")
-            val tarIn = java.util.zip.GZIPInputStream(inputStream)
-            val tarArchive = org.apache.commons.compress.archivers.tar.TarArchiveInputStream(tarIn)
-
-            var entry = tarArchive.nextTarEntry
-            while (entry != null) {
-                val outFile = File(context.filesDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    outFile.outputStream().use { output ->
-                        tarArchive.copyTo(output)
-                    }
-                }
-                entry = tarArchive.nextTarEntry
-            }
-            tarArchive.close()
-
-            chmodBinary(File(context.filesDir, "tor/tor"))
-            chmodBinary(File(context.filesDir, "tor/pluggable_transports/lyrebird"))
-            chmodBinary(File(context.filesDir, "tor/pluggable_transports/conjure-client"))
-
-            addLog("[Bundle] Tor bundle extracted successfully")
-        } catch (e: Exception) {
-            addLog("[Bundle] Extraction failed: ${e.message}")
-        }
-    }
-
-    private fun chmodBinary(file: File) {
-        if (file.exists()) {
-            try {
-                Runtime.getRuntime().exec(arrayOf("chmod", "755", file.absolutePath)).waitFor()
-            } catch (_: Exception) {}
-        }
-    }
-
-    private fun writeTorrc(content: String) {
-        val torrcDir = File(context.filesDir, "torrc_dir")
-        torrcDir.mkdirs()
-        val torrcFile = File(torrcDir, "torrc")
-        torrcFile.writeText(content)
-    }
-
-    private fun registerReceiver(onConnected: ((String, Int, Int, Int) -> Unit)?) {
-        broadcastReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                if (intent?.action == TorServiceLocalBroadcastReceiver.BROADCAST_TOR_STATUS) {
-                    val status = intent.getStringExtra(TorServiceLocalBroadcastReceiver.TOR_STATUS_EXTRA)
-                    handleTorStatus(status, onConnected)
-                }
-            }
-        }
-        val filter = android.content.IntentFilter(TorServiceLocalBroadcastReceiver.BROADCAST_TOR_STATUS)
-        context.registerReceiver(broadcastReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
-    }
-
-    private fun unregisterReceiver() {
-        try {
-            broadcastReceiver?.let { context.unregisterReceiver(it) }
-        } catch (_: Exception) {}
-        broadcastReceiver = null
-    }
-
-    private fun handleTorStatus(status: String?, onConnected: ((String, Int, Int, Int) -> Unit)?) {
-        when (status) {
-            TorService.STATUS_STARTING -> {
-                _statusText.value = "Starting..."
-                addLog("[Tor] Starting...")
-            }
-            TorService.STATUS_ON -> {
-                _bootstrapPercent.value = 100
-                _statusText.value = "Connected!"
-                _state.value = TorState.CONNECTED
-                addLog("[Tor] Connected!")
-                onConnected?.invoke(label, socksPort, ctrlPort, httpPort)
-            }
-            TorService.STATUS_OFF -> {
-                if (_state.value == TorState.CONNECTING) {
-                    _state.value = TorState.FAILED
-                    _statusText.value = "Tor stopped unexpectedly"
-                }
-            }
-            TorService.STATUS_STOPPING -> {
-                _statusText.value = "Stopping..."
-            }
-            else -> {
-                addLog("[Tor] Status: $status")
-            }
-        }
-    }
-
-    private suspend fun waitForBootstrap(timeoutSeconds: Int) {
-        val startTime = System.currentTimeMillis()
-        val timeoutMs = timeoutSeconds * 1000L
-
-        while (_state.value == TorState.CONNECTING) {
-            if (System.currentTimeMillis() - startTime > timeoutMs) {
-                _statusText.value = "Timeout waiting for bootstrap"
-                _state.value = TorState.FAILED
-                stop()
-                return
-            }
-            delay(1000)
-        }
-    }
 
     private fun addLog(line: String) {
         val current = _logs.value.toMutableList()
@@ -216,14 +155,44 @@ class TorManager(
         _logs.value = current
     }
 
+    private fun copyGeoIpFiles(dataDir: File) {
+        val geoipSrc = File(context.filesDir, "data/geoip")
+        val geoip6Src = File(context.filesDir, "data/geoip6")
+
+        listOf("geoip" to geoipSrc, "geoip6" to geoip6Src).forEach { (name, src) ->
+            val dst = File(dataDir, name)
+            if (src.exists() && !dst.exists()) {
+                src.copyTo(dst)
+            }
+        }
+    }
+
+    private fun findTorBinary(): String? {
+        val candidates = listOf(
+            File(context.filesDir, "tor/pluggable_transports/lyrebird"),
+            File(context.filesDir, "tor/tor")
+        )
+        return candidates.firstOrNull { it.exists() }?.absolutePath
+    }
+
     fun requestNewCircuit(): Boolean {
         return try {
-            val ctrlSocket = Socket("127.0.0.1", ctrlPort)
-            ctrlSocket.soTimeout = 5000
-            ctrlSocket.getOutputStream().write("SIGNAL NEWNYM\r\n".toByteArray())
+            val cookieFile = File(context.filesDir, "data_$socksPort/control_auth_cookie")
+            if (!cookieFile.exists()) return false
+
+            val cookieHex = cookieFile.readBytes().joinToString("") { "%02x".format(it) }
+
+            val socket = Socket("127.0.0.1", ctrlPort)
+            socket.soTimeout = 5000
+
+            socket.getOutputStream().write("AUTHENTICATE $cookieHex\r\n".toByteArray())
+            socket.getInputStream().read(ByteArray(256))
+
+            socket.getOutputStream().write("SIGNAL NEWNYM\r\n".toByteArray())
             val resp = ByteArray(256)
-            ctrlSocket.getInputStream().read(resp)
-            ctrlSocket.close()
+            socket.getInputStream().read(resp)
+
+            socket.close()
             String(resp).contains("250")
         } catch (e: Exception) {
             false
@@ -263,7 +232,7 @@ class TorManager(
 
             Pair(ip, lookupCountry(ip))
         } catch (e: Exception) {
-            Pair("—", "—")
+            Pair("\u2014", "\u2014")
         }
     }
 
@@ -311,5 +280,8 @@ class TorManager(
 
     fun destroy() {
         stop()
+        try {
+            File(context.filesDir, "data_$socksPort").deleteRecursively()
+        } catch (_: Exception) {}
     }
 }
