@@ -211,7 +211,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun startConnect() {
         if (torManager?.isRunning() == true) return
-        _logs.value = emptyList()
+        addLog("[Connect] Starting manual connection...")
         resetStats()
 
         viewModelScope.launch {
@@ -261,7 +261,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun startAutoConnect() {
         if (autoConnectActive) return
         autoConnectActive = true
-        _logs.value = emptyList()
+        addLog("[Auto] Starting auto-connect...")
         resetStats()
 
         viewModelScope.launch {
