@@ -90,6 +90,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun initialize() {
+        addLog("[Init] DeltaTor starting...")
+        addLog("[Init] filesDir: ${context.filesDir.absolutePath}")
         _statusText.value = "Extracting Tor bundle..."
         extractTorBundle()
 
@@ -218,18 +220,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("[Tor] Config generated, starting TorService...")
             addLog("[Tor] SOCKS: ${Config.SOCKS_PORT}  HTTP: ${Config.HTTP_PROXY_PORT}")
 
-            tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout"))
-
-            var lastLogIndex = 0
-            tor.logs.collect { torLogs ->
-                if (torLogs.size > lastLogIndex) {
-                    val newLines = torLogs.subList(lastLogIndex, torLogs.size)
-                    lastLogIndex = torLogs.size
-                    for (line in newLines) {
-                        addLog(line)
-                    }
-                }
-            }
+            tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout"),
+                onConnected = null,
+                onLog = { line -> addLog(line) }
+            )
 
             tor.state.collect { state ->
                 when (state) {
