@@ -48,30 +48,15 @@ fun MainScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(BG)
-            .verticalScroll(rememberScrollState())
     ) {
-        // Header
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(ACC)
-                .height(3.dp)
-        )
+        Box(Modifier.fillMaxWidth().background(ACC).height(3.dp))
 
-        // Navigation bar
+        // Nav bar
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(PANEL)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.fillMaxWidth().background(PANEL).padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Delta Tor",
-                color = ACC,
-                fontSize = 18.sp,
-                modifier = Modifier.weight(1f)
-            )
+            Text("Delta Tor", color = ACC, fontSize = 18.sp, modifier = Modifier.weight(1f))
             NavButton("Settings") { onNavigateToSettings() }
         }
 
@@ -79,194 +64,124 @@ fun MainScreen(
             if (isProxyEnabled) "proxy: active | HTTP: 19052 | SOCKS: 9050" else ""
         )
 
-        // Bridge Configuration Card
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(0.dp),
-            colors = CardDefaults.cardColors(containerColor = PANEL)
+        // Scrollable content (everything except logs)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
         ) {
-            Column(Modifier.padding(14.dp)) {
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Bridge Configuration", color = FG, fontSize = 14.sp,
-                        modifier = Modifier.weight(1f))
-                    TextButton(onClick = { viewModel.updateBridges() }) {
-                        Text("Update Bridges", color = CYAN)
+            // Bridge Config
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = PANEL)) {
+                Column(Modifier.padding(14.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Bridge Configuration", color = FG, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { viewModel.updateBridges() }) { Text("Update Bridges", color = CYAN) }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    DropdownRow("Source:", selectedSource, viewModel.sourceOptions) { viewModel.setSelectedSource(it) }
+                    if (selectedSource != "Default (Built-in)") {
+                        DropdownRow("Category:", selectedCategory, categoryOptions) { viewModel.setSelectedCategory(it) }
+                    }
+                    DropdownRow("Transport:", selectedTransport, transports) { viewModel.setSelectedTransport(it) }
+                    if (selectedSource != "Default (Built-in)") {
+                        DropdownRow("IP Version:", selectedIp, ipOptions) { viewModel.setSelectedIp(it) }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = noBridge, onCheckedChange = { viewModel.setNoBridge(it) }, colors = CheckboxDefaults.colors(checkedColor = ACC))
+                        Text("Connect without bridge", color = FG, fontSize = 12.sp)
+                    }
+                    Row {
+                        Text("Available: ", color = FG2, fontSize = 11.sp)
+                        Text(bridgeCount, color = FG, fontSize = 11.sp)
+                        Spacer(Modifier.width(16.dp))
+                        Text("Updated: ", color = FG2, fontSize = 11.sp)
+                        Text(bridgeUpdated, color = FG2, fontSize = 11.sp)
                     }
                 }
+            }
 
-                Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(6.dp))
 
-                // Source
-                DropdownRow("Source:", selectedSource, viewModel.sourceOptions) {
-                    viewModel.setSelectedSource(it)
-                }
-
-                // Category (hidden for built-in)
-                if (selectedSource != "Default (Built-in)") {
-                    DropdownRow("Category:", selectedCategory, categoryOptions) {
-                        viewModel.setSelectedCategory(it)
+            // Buttons
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = PANEL)) {
+                Column(Modifier.padding(14.dp)) {
+                    Button(onClick = onNavigateToMulti, modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MULTI_BG, contentColor = MULTI_FG)) {
+                        Text("Multi-Connect \u2014 Recommended", fontSize = 14.sp)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = { viewModel.startAutoConnect() }, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)) { Text("Auto") }
+                        Button(onClick = { viewModel.startConnect() }, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)) { Text("Start") }
+                        Button(onClick = { viewModel.stopConnect() }, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = RED)) { Text("Stop") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Button(onClick = onNavigateToScanner, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)) { Text("Scanner") }
+                        Button(onClick = { viewModel.testConnection() }, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)) { Text("Test") }
+                        Button(onClick = { viewModel.requestNewCircuit() }, modifier = Modifier.weight(1f).height(44.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)) { Text("New Circuit") }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Button(onClick = { viewModel.toggleProxy() }, modifier = Modifier.fillMaxWidth().height(44.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isProxyEnabled) Color(0xFF0E2A1A) else BTN,
+                            contentColor = if (isProxyEnabled) GRN else FG2
+                        )) {
+                        Text("System Proxy: ${if (isProxyEnabled) "ON" else "OFF"}")
                     }
                 }
+            }
 
-                // Transport
-                DropdownRow("Transport:", selectedTransport, transports) {
-                    viewModel.setSelectedTransport(it)
-                }
+            Spacer(Modifier.height(6.dp))
 
-                // IP Version
-                if (selectedSource != "Default (Built-in)") {
-                    DropdownRow("IP Version:", selectedIp, ipOptions) {
-                        viewModel.setSelectedIp(it)
-                }
-                }
+            // Progress + Stats
+            ProgressCard(connectionProgress)
+            Spacer(Modifier.height(6.dp))
 
-                // No bridge toggle
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = noBridge,
-                        onCheckedChange = { viewModel.setNoBridge(it) },
-                        colors = CheckboxDefaults.colors(checkedColor = ACC)
-                    )
-                    Text("Connect without bridge (direct Tor)", color = FG, fontSize = 12.sp)
-                }
-
-                // Bridge info
-                Row {
-                    Text("Available: ", color = FG2, fontSize = 11.sp)
-                    Text(bridgeCount, color = FG, fontSize = 11.sp)
-                    Spacer(Modifier.width(16.dp))
-                    Text("Updated: ", color = FG2, fontSize = 11.sp)
-                    Text(bridgeUpdated, color = FG2, fontSize = 11.sp)
+            Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = PANEL)) {
+                Column {
+                    Box(Modifier.fillMaxWidth().background(ACC).height(2.dp))
+                    Column(Modifier.padding(10.dp)) {
+                        Row(Modifier.fillMaxWidth()) {
+                            StatsRowInline("Exit IP:", exitIp, Modifier.weight(1f))
+                            StatsRowInline("Country:", country, Modifier.weight(1f))
+                        }
+                        Row(Modifier.fillMaxWidth()) {
+                            StatsRowInline("Uptime:", uptime, Modifier.weight(1f))
+                            StatsRowInline("Status:", torStatus, Modifier.weight(1f))
+                        }
+                    }
                 }
             }
         }
 
-        Spacer(Modifier.height(6.dp))
-
-        // Action buttons
+        // Log viewer - OUTSIDE the scrollable area, fixed at bottom
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp),
             colors = CardDefaults.cardColors(containerColor = PANEL)
         ) {
-            Column(Modifier.padding(14.dp)) {
-                // Multi-Connect button
-                Button(
-                    onClick = onNavigateToMulti,
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = MULTI_BG, contentColor = MULTI_FG)
-                ) {
-                    Text("Multi-Connect \u2014 Recommended", fontSize = 14.sp)
-                }
-
-                Spacer(Modifier.height(6.dp))
-
-                // Main buttons row
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(
-                        onClick = { viewModel.startAutoConnect() },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)
-                    ) { Text("Auto") }
-
-                    Button(
-                        onClick = { viewModel.startConnect() },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)
-                    ) { Text("Start") }
-
-                    Button(
-                        onClick = { viewModel.stopConnect() },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = RED)
-                    ) { Text("Stop") }
-                }
-
-                Spacer(Modifier.height(4.dp))
-
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Button(
-                        onClick = onNavigateToScanner,
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)
-                    ) { Text("Bridge Scanner") }
-
-                    Button(
-                        onClick = { viewModel.testConnection() },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)
-                    ) { Text("Test Connection") }
-
-                    Button(
-                        onClick = { viewModel.requestNewCircuit() },
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = BTN, contentColor = FG)
-                    ) { Text("New Circuit") }
-                }
-
-                Spacer(Modifier.height(6.dp))
-
-                // Proxy toggle
-                Button(
-                    onClick = { viewModel.toggleProxy() },
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isProxyEnabled) Color(0xFF0E2A1A) else BTN,
-                        contentColor = if (isProxyEnabled) GRN else FG2
-                    )
-                ) {
-                    Text("System Proxy: ${if (isProxyEnabled) "ON" else "OFF"}")
-                }
-            }
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // Progress
-        ProgressCard(connectionProgress)
-
-        Spacer(Modifier.height(6.dp))
-
-        // Stats
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            colors = CardDefaults.cardColors(containerColor = PANEL)
-        ) {
-            Column {
+            Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().background(ACC).height(2.dp))
-                Column(Modifier.padding(10.dp)) {
-                    Row(Modifier.fillMaxWidth()) {
-                        StatsRow("Exit IP:", exitIp, Modifier.weight(1f))
-                        StatsRow("Country:", country, Modifier.weight(1f))
-                    }
-                    Row(Modifier.fillMaxWidth()) {
-                        StatsRow("Uptime:", uptime, Modifier.weight(1f))
-                        StatsRow("Status:", torStatus, Modifier.weight(1f))
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(6.dp))
-
-        // Log viewer
-        Card(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp),
-            colors = CardDefaults.cardColors(containerColor = PANEL)
-        ) {
-            Column {
-                Box(Modifier.fillMaxWidth().background(ACC).height(2.dp))
-                Text("Tor Logs", color = FG, fontSize = 12.sp,
-                    modifier = Modifier.padding(10.dp, 6.dp))
-
+                Text("Tor Logs (${logs.size})", color = FG, fontSize = 11.sp,
+                    modifier = Modifier.padding(8.dp, 4.dp))
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
+                        .fillMaxSize()
                         .background(PANEL)
-                        .padding(10.dp)
+                        .padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                        .verticalScroll(rememberScrollState())
                 ) {
+                    if (logs.isEmpty()) {
+                        Text("No logs yet...", color = FG2, fontSize = 10.sp)
+                    }
                     logs.forEach { line ->
                         Text(
                             text = line,
@@ -275,6 +190,7 @@ fun MainScreen(
                                 "[warn]" in line.lowercase() || "warn " in line.lowercase() -> YLW
                                 "[notice]" in line.lowercase() || "bootstrapped" in line.lowercase() -> GRN
                                 "[auto]" in line.lowercase() -> CYAN
+                                "[debug]" in line.lowercase() -> PRP
                                 else -> FG2
                             },
                             fontSize = 10.sp
@@ -283,8 +199,15 @@ fun MainScreen(
                 }
             }
         }
+    }
+}
 
-        Spacer(Modifier.height(16.dp))
+@Composable
+private fun StatsRowInline(label: String, value: String, modifier: Modifier = Modifier) {
+    Row(modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        Text(label, color = FG2, fontSize = 12.sp)
+        Spacer(Modifier.width(4.dp))
+        Text(value, color = GRN, fontSize = 12.sp)
     }
 }
 
@@ -294,51 +217,27 @@ fun NavButton(text: String, onClick: () -> Unit) {
         text = text,
         color = FG2,
         fontSize = 12.sp,
-        modifier = Modifier
-            .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 6.dp)
+        modifier = Modifier.clickable { onClick() }.padding(horizontal = 10.dp, vertical = 6.dp)
     )
 }
 
 @Composable
 fun DropdownRow(label: String, value: String, options: List<String>, onSelected: (String) -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, color = FG2, fontSize = 13.sp, modifier = Modifier.width(90.dp))
-
         var expanded by remember { mutableStateOf(false) }
-
         Box(Modifier.weight(1f)) {
             OutlinedButton(
                 onClick = { expanded = true },
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.outlinedButtonColors(containerColor = BTN, contentColor = FG),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                Text(value, fontSize = 13.sp, modifier = Modifier.fillMaxWidth())
-            }
-
+            ) { Text(value, fontSize = 13.sp, modifier = Modifier.fillMaxWidth()) }
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 options.forEach { option ->
-                    DropdownMenuItem(
-                        text = { Text(option) },
-                        onClick = { onSelected(option); expanded = false }
-                    )
+                    DropdownMenuItem(text = { Text(option) }, onClick = { onSelected(option); expanded = false })
                 }
             }
         }
     }
 }
-
-@Composable
-private fun StatsRow(label: String, value: String, modifier: Modifier = Modifier) {
-    Row(modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
-        Text(label, color = FG2, fontSize = 12.sp)
-        Spacer(Modifier.width(4.dp))
-        Text(value, color = GRN, fontSize = 12.sp)
-    }
-}
-
-
