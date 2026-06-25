@@ -220,6 +220,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             tor.start(torrc, ptDir, settings.getInt("auto_connect_timeout"))
 
+            var lastLogIndex = 0
+            tor.logs.collect { torLogs ->
+                if (torLogs.size > lastLogIndex) {
+                    val newLines = torLogs.subList(lastLogIndex, torLogs.size)
+                    lastLogIndex = torLogs.size
+                    for (line in newLines) {
+                        addLog(line)
+                    }
+                }
+            }
+
             tor.state.collect { state ->
                 when (state) {
                     TorState.CONNECTED -> {
