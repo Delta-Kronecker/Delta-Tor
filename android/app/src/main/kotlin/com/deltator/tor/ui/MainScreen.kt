@@ -161,17 +161,33 @@ fun MainScreen(
             }
         }
 
-        // Log viewer - OUTSIDE the scrollable area, fixed at bottom
+        // Log viewer - fixed at bottom
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(180.dp),
+                .height(200.dp),
             colors = CardDefaults.cardColors(containerColor = PANEL)
         ) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.fillMaxWidth().background(ACC).height(2.dp))
-                Text("Tor Logs (${logs.size})", color = FG, fontSize = 11.sp,
-                    modifier = Modifier.padding(8.dp, 4.dp))
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Logs (${logs.size})", color = FG, fontSize = 11.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onNavigateToMulti() }) {
+                        Text("Full View", color = CYAN, fontSize = 10.sp)
+                    }
+                    TextButton(onClick = {
+                        val allLogs = logs.joinToString("\n")
+                        val ctx = viewModel.getApplication<android.app.Application>()
+                        val clip = android.content.ClipData.newPlainText("logs", allLogs)
+                        ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                            .android.content.ClipboardManager.setPrimaryClip(clip)
+                    }) {
+                        Text("Copy", color = CYAN, fontSize = 10.sp)
+                    }
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -182,7 +198,7 @@ fun MainScreen(
                     if (logs.isEmpty()) {
                         Text("No logs yet...", color = FG2, fontSize = 10.sp)
                     }
-                    logs.forEach { line ->
+                    logs.takeLast(50).forEach { line ->
                         Text(
                             text = line,
                             color = when {
@@ -190,7 +206,8 @@ fun MainScreen(
                                 "[warn]" in line.lowercase() || "warn " in line.lowercase() -> YLW
                                 "[notice]" in line.lowercase() || "bootstrapped" in line.lowercase() -> GRN
                                 "[auto]" in line.lowercase() -> CYAN
-                                "[debug]" in line.lowercase() -> PRP
+                                "[debug]" in line.lowercase() || "[extract]" in line.lowercase() -> PRP
+                                "[bundle]" in line.lowercase() -> CYAN
                                 else -> FG2
                             },
                             fontSize = 10.sp
