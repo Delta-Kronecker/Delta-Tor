@@ -104,7 +104,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun extractTorBundle() {
         val torDir = File(context.filesDir, "tor")
-        if (torDir.exists() && File(torDir, "pluggable_transports/lyrebird").exists()) {
+        if (torDir.exists() && File(torDir, "libTor.so").exists()) {
             addLog("[Bundle] Tor bundle already extracted")
             return
         }
@@ -129,13 +129,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             tarIn.close()
 
-            val lyrebird = File(context.filesDir, "tor/pluggable_transports/lyrebird")
-            val conjure = File(context.filesDir, "tor/pluggable_transports/conjure-client")
-
-            try {
-                Runtime.getRuntime().exec(arrayOf("chmod", "755", lyrebird.absolutePath)).waitFor()
-                Runtime.getRuntime().exec(arrayOf("chmod", "755", conjure.absolutePath)).waitFor()
-            } catch (_: Exception) {}
+            listOf(
+                File(context.filesDir, "tor/libTor.so"),
+                File(context.filesDir, "tor/pluggable_transports/lyrebird"),
+                File(context.filesDir, "tor/pluggable_transports/conjure-client")
+            ).forEach { bin ->
+                if (bin.exists()) {
+                    try {
+                        Runtime.getRuntime().exec(arrayOf("chmod", "755", bin.absolutePath)).waitFor()
+                    } catch (_: Exception) {}
+                }
+            }
 
             val ptConfig = File(context.filesDir, "tor/pluggable_transports/pt_config.json")
             if (ptConfig.exists()) {
