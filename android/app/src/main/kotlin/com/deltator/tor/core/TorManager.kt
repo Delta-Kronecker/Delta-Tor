@@ -169,10 +169,17 @@ class TorManager(
 
     private fun findTorBinary(): String? {
         val candidates = listOf(
-            File(context.filesDir, "tor/pluggable_transports/lyrebird"),
-            File(context.filesDir, "tor/tor")
+            File(context.filesDir, "tor/libTor.so"),
+            File(context.filesDir, "tor/tor"),
+            File(context.filesDir, "tor/pluggable_transports/lyrebird")
         )
-        return candidates.firstOrNull { it.exists() }?.absolutePath
+        val found = candidates.firstOrNull { it.exists() }
+        if (found != null) {
+            try {
+                Runtime.getRuntime().exec(arrayOf("chmod", "755", found.absolutePath)).waitFor()
+            } catch (_: Exception) {}
+        }
+        return found?.absolutePath
     }
 
     fun requestNewCircuit(): Boolean {
