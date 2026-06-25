@@ -43,7 +43,8 @@ class TorManager(
         torrcContent: String,
         ptDir: String,
         timeoutSeconds: Int = 180,
-        onConnected: ((label: String, socksPort: Int, ctrlPort: Int, httpPort: Int) -> Unit)? = null
+        onConnected: ((label: String, socksPort: Int, ctrlPort: Int, httpPort: Int) -> Unit)? = null,
+        onLog: ((String) -> Unit)? = null
     ) {
         if (_state.value == TorState.CONNECTING || _state.value == TorState.CONNECTED) return
 
@@ -53,6 +54,7 @@ class TorManager(
         _logs.value = emptyList()
 
         addLog("[DEBUG] === TorManager.start() called ===")
+        onLogCallback = onLog
         addLog("[DEBUG] label=$label socksPort=$socksPort ctrlPort=$ctrlPort")
         addLog("[DEBUG] ptDir=$ptDir")
         addLog("[DEBUG] timeoutSeconds=$timeoutSeconds")
@@ -187,11 +189,14 @@ class TorManager(
     fun isRunning(): Boolean = _state.value == TorState.CONNECTED || _state.value == TorState.CONNECTING
     fun isConnected(): Boolean = _state.value == TorState.CONNECTED
 
+    private var onLogCallback: ((String) -> Unit)? = null
+
     private fun addLog(line: String) {
         val current = _logs.value.toMutableList()
         current.add(line)
         if (current.size > 500) current.removeFirst()
         _logs.value = current
+        onLogCallback?.invoke(line)
     }
 
     private fun copyGeoIpFiles(dataDir: File) {
