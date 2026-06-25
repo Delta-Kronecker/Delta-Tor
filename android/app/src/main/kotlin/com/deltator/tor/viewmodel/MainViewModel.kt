@@ -9,10 +9,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.util.zip.GZIPInputStream
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val context = application
@@ -111,33 +109,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        try {
-            addLog("[Bundle] Opening tar.gz from assets...")
-            val inputStream = context.assets.open("tor-expert-bundle-android-aarch64-15.0.16.tar.gz")
-            addLog("[Bundle] Asset opened, size available: ${inputStream.available()}")
-            val gzIn = GZIPInputStream(inputStream)
-            addLog("[Bundle] GZIPInputStream created")
-            val tarIn = TarArchiveInputStream(gzIn)
-            addLog("[Bundle] TarArchiveInputStream created, starting extraction...")
+        addLog("[Bundle] Starting extraction...")
+        val success = SimpleTarExtractor.extractTarGz(
+            context,
+            "tor-expert-bundle-android-aarch64-15.0.16.tar.gz",
+            context.filesDir
+        ) { addLog(it) }
 
-            var entry = tarIn.nextTarEntry
-            var count = 0
-            while (entry != null) {
-                val outFile = File(context.filesDir, entry.name)
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { out ->
-                        tarIn.copyTo(out)
-                    }
-                }
-                count++
-                entry = tarIn.nextTarEntry
-            }
-            tarIn.close()
-            addLog("[Bundle] Extracted $count files")
-
+        if (success) {
             listOf(
                 File(context.filesDir, "tor/libTor.so"),
                 File(context.filesDir, "tor/pluggable_transports/lyrebird"),
@@ -146,6 +125,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (bin.exists()) {
                     try {
                         Runtime.getRuntime().exec(arrayOf("chmod", "755", bin.absolutePath)).waitFor()
+                        addLog("[Bundle] chmod +x ${bin.name}")
                     } catch (_: Exception) {}
                 }
             }
@@ -154,11 +134,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (ptConfig.exists()) {
                 ptConfig.copyTo(File(context.filesDir, "pt_config.json"), overwrite = true)
             }
-
-            addLog("[Bundle] Tor bundle extracted successfully")
-        } catch (e: Exception) {
-            addLog("[Bundle] Extraction FAILED: ${e.javaClass.simpleName}: ${e.message}")
-            e.stackTrace.take(5).forEach { addLog("[Bundle]   at ${it}") }
+            addLog("[Bundle] Extraction complete!")
+        } else {
+            addLog("[Bundle] EXTRACTION FAILED!")
         }
     }
 
