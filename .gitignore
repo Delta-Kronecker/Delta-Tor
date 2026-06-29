@@ -1,0 +1,32 @@
+# Binaries
+DeltaTor.exe
+deltatior
+*.exe
+
+# Wails build
+build/bin/
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Old structure (kept locally, not in repo)
+old_structure/
+
+# Mimocode
+.mimocode/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temp
+*.tmp
+*.log
