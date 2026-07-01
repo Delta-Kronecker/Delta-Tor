@@ -196,6 +196,13 @@ body {
     animation: shimmer 3s linear infinite;
 }
 
+.card-accent-thin {
+    height: 2px;
+    background: linear-gradient(90deg, var(--acc), var(--acc2));
+    background-size: 200px 100%;
+    animation: shimmer 3s linear infinite;
+}
+
 .card .card-inner {
     padding: 12px 16px;
 }
@@ -377,11 +384,17 @@ body {
 }
 
 /* ========== MULTI-CONNECT TOP CARD ========== */
+.multi-top-spacer {
+    height: 8px;
+}
+
 .multi-top-card {
     background: linear-gradient(135deg, #0F2840, #1A3A5C, #1F4878);
     border: 1px solid #2A5A8C;
     border-radius: 10px;
     margin-bottom: 8px;
+    margin-left: 10px;
+    margin-right: 10px;
     cursor: pointer;
     position: relative;
     overflow: hidden;
@@ -969,52 +982,112 @@ body {
 .slot-meta {
     font-size: 13px;
     color: var(--fg2);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
+}
+
+.slot-meta-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.slot-progress-pct-inline {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--fg2);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-left: 8px;
 }
 
 .slot-progress-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
+    gap: 0;
+    margin-bottom: 4px;
+    width: 100%;
 }
 
 .slot-progress-label {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--fg2);
     white-space: nowrap;
+    flex-shrink: 0;
+    margin-right: 0;
 }
 
 .slot-progress-pct {
-    font-size: 13px;
-    font-weight: bold;
-    color: var(--fg);
-    min-width: 36px;
-    white-space: nowrap;
-}
-
-.slot-progress-bar {
-    flex: 1;
-    height: 24px;
-    background: var(--btn);
-    border-radius: 6px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-}
-
-.slot-progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--acc), var(--acc2));
-    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-    border-radius: 5px;
-}
-
-.slot-pct {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: bold;
     color: var(--fg2);
     min-width: 36px;
     text-align: right;
+    flex-shrink: 0;
+    margin-right: 6px;
+}
+
+.slot-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 4px;
+    width: 100%;
+}
+
+.slot-progress-label {
+    font-size: 12px;
+    color: var(--fg2);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-right: 4;
+	margin-right: 35;
+	
+}
+
+.slot-progress-pct {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--fg2);
+    min-width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+    margin-right: 6px;
+}
+
+.slot-progress-pct {
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--fg2);
+    min-width: 30px;
+    text-align: right;
+    flex-shrink: 0;
+    margin-right: 0;
+}
+
+.slot-progress-bar {
+    flex: 1;
+    min-width: 0;
+    max-width: 100%;
+    height: 14px;
+    background: var(--btn);
+    border-radius: 4px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    margin-bottom: 4px;
+}
+
+.slot-progress-fill {
+    height: 100%;
+    background: var(--acc);
+    transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 3px;
+    animation: fillPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes fillPulse {
+    0%, 100% { opacity: 1; filter: brightness(1); }
+    50% { opacity: 0.7; filter: brightness(1.4); }
 }
 
 /* Stats grid inside slot */
@@ -1254,8 +1327,22 @@ body {
 }
 .progress-label { font-size: 14px; color: var(--fg2); margin-right: 6px; }
 .progress-pct { font-size: 14px; font-weight: bold; color: var(--fg); margin-right: 12px; min-width: 36px; }
-.progress-bar { flex: 1; height: 24px; background: var(--btn); border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
-.progress-fill { height: 100%; background: linear-gradient(90deg, var(--acc), var(--acc2)); width: 0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 5px; }
+.progress-bar { flex: 1; height: 24px; background: var(--btn); border-radius: 6px; overflow: hidden; border: 1px solid var(--border); position: relative; }
+.progress-fill { height: 100%; background: var(--acc); width: 0%; transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 5px; animation: fillPulse 1.5s ease-in-out infinite; }
+
+@keyframes blinkProxy {
+    0%, 100% { box-shadow: 0 0 8px rgba(58,114,176,0.3); }
+    50% { box-shadow: 0 0 20px rgba(58,114,176,0.6), 0 0 40px rgba(58,114,176,0.3); }
+}
+
+@keyframes progressSweep {
+    0% { left: -100%; }
+    100% { left: 100%; }
+}
+
+.proxy-blink {
+    animation: blinkProxy 1s ease-in-out infinite;
+}
 
 /* ========== STATS ========== */
 .stats-card {
@@ -1318,36 +1405,6 @@ body {
     letter-spacing: 0.5px;
 }
 .stat-speed { color: var(--cyan) !important; }
-
-.slot-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 4px;
-}
-
-.slot-progress-bar {
-    flex: 1;
-    height: 16px;
-    background: var(--btn);
-    border-radius: 3px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-}
-
-.slot-progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--acc), var(--acc2));
-    transition: width 0.3s ease;
-}
-
-.slot-pct {
-    font-size: 13px;
-    font-weight: bold;
-    color: var(--fg2);
-    min-width: 36px;
-    text-align: right;
-}
 
 .slot-health {
     font-size: 13px;

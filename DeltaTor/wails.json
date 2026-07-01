@@ -9,5 +9,12 @@
   "author": {
     "name": "Delta-Kronecker",
     "email": "your-email@example.com"
+  },
+  "info": {
+    "companyName": "Delta-Kronecker",
+    "productName": "Delta Tor",
+    "productVersion": "1.2.2",
+    "copyright": "Delta-Kronecker",
+    "comments": "The most bridge-rich Tor client for Windows"
   }
 }
