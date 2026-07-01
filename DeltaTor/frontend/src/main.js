@@ -5,6 +5,20 @@ const app = document.getElementById('app');
 let currentMode = 'normal';
 let autoProxyOn = false;
 
+// Persistent state
+let appState = {
+    isRunning: false,
+    progress: 0,
+    torConnected: false,
+    exitIp: '\u2014',
+    country: '\u2014',
+    uptime: '\u2014',
+    download: '\u2014',
+    upload: '\u2014',
+    proxyOn: false,
+    logLines: [],
+};
+
 const defaultSlots = [
     { label: 'Snowflake',              source: 'Default (Built-in)',  cat: null,         trans: 'snowflake',  ip: null,   noBridge: false },
     { label: 'obfs4 · Tested IPv4',    source: 'Delta-Kronecker',     cat: 'Tested & Active', trans: 'obfs4',    ip: 'IPv4', noBridge: false },
@@ -30,6 +44,7 @@ function renderNormalMode() {
 <div class="main-content">
 
     <!-- Multi-Connect Top -->
+    <div class="multi-top-spacer"></div>
     <div class="multi-top-card" onclick="switchToMulti()">
         <div class="multi-top-glow"></div>
         <div class="multi-top-content">
@@ -73,7 +88,7 @@ function renderNormalMode() {
                 <div class="btn-group-title">TOOLS</div>
                 <div class="btn-group-row">
                     <button class="btn btn-secondary" onclick="switchToScanner()">Scanner</button>
-                    <button class="btn btn-secondary">Test Connection</button>
+                    <button class="btn btn-secondary" onclick="runManualTest()">Test Connection</button>
                     <button class="btn btn-secondary">New Circuit</button>
                 </div>
             </div>
@@ -95,6 +110,7 @@ function renderNormalMode() {
     <!-- Stats -->
     <div class="stats-card">
         <div class="card-accent"></div>
+        <div class="card-accent-thin"></div>
         <div class="card-inner">
             <div class="stats-card-title">Connection Status</div>
             <div class="stats-dashboard">
@@ -167,12 +183,11 @@ function renderSlotCard(slot, index) {
                     <button class="slot-btn-sm slot-btn-del">Delete</button>
                 </div>
             </div>
-            <div class="slot-meta">${slot.source} &middot; ${slot.cat || '&mdash;'} &middot; ${slot.trans} &middot; ${slot.ip || 'auto'} &nbsp;|&nbsp; SOCKS ${ports.socks} &middot; HTTP ${ports.http}</div>
-                <div class="slot-progress-row">
-                    <span class="slot-progress-label">Progress:</span>
-                    <span class="slot-progress-pct">0%</span>
-                    <div class="slot-progress-bar"><div class="slot-progress-fill" style="width:0%"></div></div>
+                <div class="slot-meta-row">
+                    <span class="slot-meta">${slot.source} &middot; ${slot.cat || '&mdash;'} &middot; ${slot.trans} &middot; ${slot.ip || 'auto'} &nbsp;|&nbsp; SOCKS ${ports.socks} &middot; HTTP ${ports.http}</span>
+                    <span class="slot-progress-pct-inline">Progress : 0%</span>
                 </div>
+                <div class="slot-progress-bar"><div class="slot-progress-fill" style="width:0%"></div></div>
             <div class="slot-stats-grid">
                 <div class="slot-stat-box"><div class="slot-stat-icon" style="color:var(--grn)">&#9679;</div><div class="slot-stat-val">&mdash;</div><div class="slot-stat-lbl">Status</div></div>
                 <div class="slot-stat-box"><div class="slot-stat-icon" style="color:var(--cyan)">IP</div><div class="slot-stat-val">&mdash;</div><div class="slot-stat-lbl">Exit IP</div></div>
@@ -407,12 +422,78 @@ function renderHelpMode() {
 
 /* ===== RENDER ===== */
 function render() {
-    if (currentMode === 'multi') { app.innerHTML = renderMultiMode(); bindSlotToggles(); }
-    else if (currentMode === 'settings') { app.innerHTML = renderSettingsMode(); }
-    else if (currentMode === 'help') { app.innerHTML = renderHelpMode(); }
-    else if (currentMode === 'scanner') { app.innerHTML = renderScannerMode(); }
-    else if (currentMode === 'bridgeinfo') { app.innerHTML = renderBridgeInfoMode(); }
-    else { app.innerHTML = renderNormalMode(); }
+    let html = '';
+    if (currentMode === 'multi') { html = renderMultiMode(); }
+    else if (currentMode === 'settings') { html = renderSettingsMode(); }
+    else if (currentMode === 'help') { html = renderHelpMode(); }
+    else if (currentMode === 'scanner') { html = renderScannerMode(); }
+    else if (currentMode === 'bridgeinfo') { html = renderBridgeInfoMode(); }
+    else { html = renderNormalMode(); }
+
+    app.innerHTML = html;
+
+    // Restore state
+    if (currentMode === 'normal') {
+        const startBtn = document.getElementById('startBtn');
+        const proxyBtn = document.getElementById('proxyBtn');
+        if (startBtn) {
+            if (appState.isRunning) {
+                startBtn.textContent = '\u23F9 Stop';
+                startBtn.className = 'btn btn-stop-lg';
+            }
+        }
+        if (proxyBtn && appState.proxyOn) {
+            proxyBtn.textContent = 'System Proxy : ON';
+            proxyBtn.classList.add('proxy-on');
+        }
+
+        // Restore progress
+        const pctEl = document.getElementById('conn-pct');
+        const fillEl = document.getElementById('conn-progress');
+        if (pctEl) pctEl.textContent = appState.progress + '%';
+        if (fillEl) fillEl.style.width = appState.progress + '%';
+
+        // Restore stats
+        const ipEl = document.getElementById('stat-ip');
+        const countryEl = document.getElementById('stat-country');
+        const uptimeEl = document.getElementById('stat-uptime');
+        const torEl = document.getElementById('stat-tor');
+        const dlEl = document.getElementById('stat-download');
+        const ulEl = document.getElementById('stat-upload');
+
+        if (ipEl) ipEl.textContent = appState.exitIp;
+        if (countryEl) countryEl.textContent = appState.country;
+        if (uptimeEl) uptimeEl.textContent = appState.uptime;
+        if (dlEl) dlEl.textContent = appState.download;
+        if (ulEl) ulEl.textContent = appState.upload;
+
+        if (torEl) {
+            if (appState.torConnected) {
+                torEl.textContent = 'Connected';
+                torEl.style.color = 'var(--grn)';
+            } else {
+                torEl.textContent = '\u2014';
+            }
+        }
+
+        // Restore log
+        const logEl = document.getElementById('logOutput');
+        if (logEl && appState.logLines.length > 0) {
+            appState.logLines.forEach(line => {
+                const div = document.createElement('div');
+                div.className = 'log-line';
+                if (line.includes('[err]') || line.includes('Error')) div.classList.add('log-err');
+                else if (line.includes('[warn]')) div.classList.add('log-warn');
+                else if (line.includes('Bootstrapped')) div.classList.add('log-ok');
+                else if (line.includes('[auto]')) div.classList.add('log-auto');
+                div.textContent = line;
+                logEl.appendChild(div);
+            });
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+    }
+
+    if (currentMode === 'multi') { bindSlotToggles(); }
 }
 
 function bindSlotToggles() {
@@ -434,25 +515,236 @@ window.switchToScanner = function() { currentMode = 'scanner'; render(); };
 window.switchToBridgeInfo = function() { currentMode = 'bridgeinfo'; render(); };
 
 let proxyOn = false;
-window.toggleProxy = function() {
+window.toggleProxy = async function() {
     proxyOn = !proxyOn;
     const btn = document.getElementById('proxyBtn');
-    if (proxyOn) { btn.textContent = 'System Proxy : ON'; btn.classList.add('proxy-on'); }
-    else { btn.textContent = 'System Proxy : OFF'; btn.classList.remove('proxy-on'); }
+    if (btn) btn.classList.remove('proxy-blink');
+    if (proxyOn) {
+        try { await window.go.main.App.SetSystemProxy(); } catch(e) {}
+        if (btn) {
+            btn.textContent = 'System Proxy : ON';
+            btn.classList.add('proxy-on');
+        }
+    } else {
+        try { await window.go.main.App.UnsetSystemProxy(); } catch(e) {}
+        if (btn) {
+            btn.textContent = 'System Proxy : OFF';
+            btn.classList.remove('proxy-on');
+        }
+    }
 };
 
 let isRunning = false;
-window.toggleStart = function() {
-    isRunning = !isRunning;
+window.toggleStart = async function() {
     const btn = document.getElementById('startBtn');
     if (isRunning) {
-        btn.textContent = '\u23F9 Stop';
-        btn.className = 'btn btn-stop-lg';
-    } else {
+        btn.textContent = '\u23F9 Stopping...';
+        btn.disabled = true;
+        try { await window.go.main.App.StopTor(); } catch(e) {}
+        isRunning = false;
+        appState.isRunning = false;
         btn.textContent = '\u25B6 Start';
         btn.className = 'btn btn-start-lg';
+        btn.disabled = false;
+        document.getElementById('conn-pct').textContent = '0%';
+        document.getElementById('conn-progress').style.width = '0%';
+    } else {
+        isRunning = true;
+        appState.isRunning = true;
+        btn.textContent = '\u23F9 Stop';
+        btn.className = 'btn btn-stop-lg';
+        document.getElementById('stat-tor').textContent = 'Connecting...';
+        document.getElementById('stat-tor').style.color = 'var(--ylw)';
+
+        const source = document.getElementById('source').value;
+        const cat = document.getElementById('category').value;
+        const transport = document.getElementById('transport').value;
+        const ip = document.getElementById('ipversion').value;
+
+        let src = 'delta-kronecker';
+        if (source === 'Default (Built-in)') src = 'builtin';
+        else if (source === 'Custom Bridges') src = 'custom';
+
+        try {
+            const err = await window.go.main.App.StartTor(cat, transport, ip, src);
+            if (err) {
+                console.error('Start error:', err);
+                isRunning = false;
+                btn.textContent = '\u25B6 Start';
+                btn.className = 'btn btn-start-lg';
+            }
+        } catch(e) {
+            console.error(e);
+            isRunning = false;
+            btn.textContent = '\u25B6 Start';
+            btn.className = 'btn btn-start-lg';
+        }
     }
 };
+
+// Listen for Tor events from Go backend
+window.runtime.EventsOn('tor:progress', (pct) => {
+    appState.progress = pct;
+    const pctEl = document.getElementById('conn-pct');
+    const fillEl = document.getElementById('conn-progress');
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (fillEl) fillEl.style.width = pct + '%';
+});
+
+window.runtime.EventsOn('tor:connected', () => {
+    appState.torConnected = true;
+    appState.isRunning = true;
+    const torEl = document.getElementById('stat-tor');
+    if (torEl) {
+        torEl.textContent = 'Connected';
+        torEl.style.color = 'var(--grn)';
+    }
+    const proxyBtn = document.getElementById('proxyBtn');
+    if (proxyBtn && !proxyOn) {
+        proxyBtn.classList.add('proxy-blink');
+    }
+    startUptimeTimer();
+    startAutoTest();
+    startTrafficMonitor();
+});
+
+window.runtime.EventsOn('tor:log', (line) => {
+    appState.logLines.push(line);
+    if (appState.logLines.length > 500) {
+        appState.logLines = appState.logLines.slice(-500);
+    }
+    const el = document.getElementById('logOutput');
+    if (!el) return;
+    const div = document.createElement('div');
+    div.className = 'log-line';
+    if (line.includes('[err]') || line.includes('Error')) div.classList.add('log-err');
+    else if (line.includes('[warn]') || line.includes('Warn')) div.classList.add('log-warn');
+    else if (line.includes('Bootstrapped')) div.classList.add('log-ok');
+    else if (line.includes('[auto]')) div.classList.add('log-auto');
+    div.textContent = line;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+});
+
+window.runtime.EventsOn('tor:stopped', () => {
+    isRunning = false;
+    appState.torConnected = false;
+    appState.isRunning = false;
+    appState.progress = 0;
+    appState.exitIp = '\u2014';
+    appState.country = '\u2014';
+    appState.uptime = '\u2014';
+    appState.download = '0 B/s';
+    appState.upload = '0 B/s';
+    appState.logLines = [];
+    document.getElementById('stat-tor').textContent = '\u2014';
+    document.getElementById('stat-tor').style.color = '';
+    document.getElementById('stat-ip').textContent = '\u2014';
+    document.getElementById('stat-country').textContent = '\u2014';
+    document.getElementById('stat-uptime').textContent = '\u2014';
+    document.getElementById('stat-download').textContent = '\u2014';
+    document.getElementById('stat-upload').textContent = '\u2014';
+    document.getElementById('conn-pct').textContent = '0%';
+    document.getElementById('conn-progress').style.width = '0%';
+    stopUptimeTimer();
+    stopAutoTest();
+    stopTrafficMonitor();
+});
+
+window.runtime.EventsOn('tor:speed', (data) => {
+    if (data.download) {
+        appState.download = data.download;
+        const dlEl = document.getElementById('stat-download');
+        if (dlEl) dlEl.textContent = data.download;
+    }
+    if (data.upload) {
+        appState.upload = data.upload;
+        const ulEl = document.getElementById('stat-upload');
+        if (ulEl) ulEl.textContent = data.upload;
+    }
+});
+
+let uptimeInterval = null;
+function startUptimeTimer() {
+    stopUptimeTimer();
+    const startTime = Date.now();
+    uptimeInterval = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const h = Math.floor(elapsed / 3600);
+        const m = Math.floor((elapsed % 3600) / 60);
+        const s = elapsed % 60;
+        document.getElementById('stat-uptime').textContent =
+            String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    }, 1000);
+}
+function stopUptimeTimer() { if (uptimeInterval) { clearInterval(uptimeInterval); uptimeInterval = null; } }
+
+let autoTestInterval = null;
+function startAutoTest() {
+    stopAutoTest();
+    console.log('[Test] Starting auto test (every 30s)');
+
+    // First test immediately
+    runAutoTest();
+
+    autoTestInterval = setInterval(() => {
+        runAutoTest();
+    }, 30000);
+}
+
+async function runAutoTest() {
+    try {
+        const result = await window.go.main.App.TestConnection();
+        if (result && result.ip && result.ip !== '\u2014' && result.ip !== '—') {
+            appState.exitIp = result.ip;
+            const ipEl = document.getElementById('stat-ip');
+            if (ipEl) ipEl.textContent = result.ip;
+        }
+        if (result && result.country && result.country !== '\u2014' && result.country !== '?' && result.country !== '—') {
+            appState.country = result.country;
+            const countryEl = document.getElementById('stat-country');
+            if (countryEl) countryEl.textContent = result.country;
+        }
+    } catch(e) {
+        console.error('[Test] Error:', e);
+    }
+}
+
+window.runManualTest = async function() {
+    try {
+        await runAutoTest();
+    } catch(e) {
+        console.error(e);
+    }
+};
+function stopAutoTest() { if (autoTestInterval) { clearInterval(autoTestInterval); autoTestInterval = null; } }
+
+let trafficInterval = null;
+let prevDl = 0, prevUl = 0, prevTime = 0;
+
+function startTrafficMonitor() {
+    stopTrafficMonitor();
+    prevDl = 0; prevUl = 0; prevTime = Date.now();
+    trafficInterval = setInterval(async () => {
+        try {
+            const stats = await window.go.main.App.GetTrafficStats();
+            const now = Date.now();
+            const elapsed = (now - prevTime) / 1000;
+            prevTime = now;
+            if (stats.download !== undefined) {
+                document.getElementById('stat-download').textContent = stats.download;
+            }
+            if (stats.upload !== undefined) {
+                document.getElementById('stat-upload').textContent = stats.upload;
+            }
+        } catch(e) {}
+    }, 2000);
+}
+
+function stopTrafficMonitor() {
+    if (trafficInterval) { clearInterval(trafficInterval); trafficInterval = null; }
+    prevDl = 0; prevUl = 0; prevTime = 0;
+}
 
 window.toggleAutoProxy = function() {
     autoProxyOn = !autoProxyOn;
@@ -495,15 +787,61 @@ window.appendLog = function(msg, type) {
     el.scrollTop = el.scrollHeight;
 };
 
-window.showBridgeInfo = function() { currentMode = 'bridgeinfo'; render(); };
-window.updateBridges = function() { console.log('Update bridges requested'); };
-window.copyDonateAddr = function() {
-    const addr = document.getElementById('donateAddr').textContent;
-    navigator.clipboard.writeText(addr).then(() => {
-        const btn = document.querySelector('.btn-donate-copy');
-        btn.textContent = 'Copied!';
-        setTimeout(() => { btn.textContent = 'Copy Address'; }, 2000);
-    });
+window.updateBridges = async function() {
+    try {
+        await window.go.main.App.DownloadAllBridges();
+    } catch(e) {
+        console.error(e);
+    }
+};
+
+window.showBridgeInfo = function() {
+    currentMode = 'bridgeinfo';
+    render();
+    loadBridgeInfo();
+};
+
+async function loadBridgeInfo() {
+    try {
+        const info = await window.go.main.App.GetBridgeInfo();
+        if (!info) return;
+        const groups = {};
+        if (info.bridges) {
+            for (const b of info.bridges) {
+                if (!groups[b.category]) groups[b.category] = [];
+                groups[b.category].push(b);
+            }
+        }
+        const map = { 'Tested & Active': 'TestedActive', 'Fresh (72h)': 'Fresh72h', 'Full Archive': 'FullArchive' };
+        for (const [cat, id] of Object.entries(map)) {
+            const tbody = document.getElementById('bridge-table-' + id);
+            if (!tbody) continue;
+            const bridges = groups[cat] || [];
+            let html = '';
+            for (const b of bridges) {
+                html += '<tr><td>' + b.transport + '</td><td>' + b.ip + '</td><td>' + b.filename + '</td><td>' + b.count + '</td><td>' + b.updated + '</td></tr>';
+            }
+            tbody.innerHTML = html;
+        }
+        const ov = document.getElementById('bridge-overview');
+        if (ov && info.totalFiles !== undefined) {
+            ov.innerHTML = '<div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">' + info.totalFiles + '</div><div class="bridgeinfo-stat-lbl">Total Files</div></div>' +
+                '<div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">' + info.totalBridges + '</div><div class="bridgeinfo-stat-lbl">Total Bridges</div></div>' +
+                '<div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">' + info.transports + '</div><div class="bridgeinfo-stat-lbl">Transports</div></div>' +
+                '<div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">' + info.categories + '</div><div class="bridgeinfo-stat-lbl">Categories</div></div>';
+        }
+    } catch(e) {
+        console.error('BridgeInfo error:', e);
+    }
+}
+
+window.updateBridges = async function() {
+    try {
+        await window.go.main.App.DownloadAllBridges();
+        loadBridgeInfo();
+    } catch(e) {
+        console.error(e);
+    }
 };
 
 let scanRunning = false;
@@ -529,43 +867,15 @@ function renderBridgeInfoMode() {
 <div class="bridgeinfo-top"><button class="btn btn-primary" onclick="switchToNormal()">&#9664; Back</button><span class="bridgeinfo-title">Bridge Information</span></div></div>
 <div class="bridgeinfo-scroll">
     <div class="bridgeinfo-section">Overview</div>
-    <div class="bridgeinfo-overview">
-        <div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">15</div><div class="bridgeinfo-stat-lbl">Total Files</div></div>
-        <div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">142</div><div class="bridgeinfo-stat-lbl">Total Bridges</div></div>
-        <div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">3</div><div class="bridgeinfo-stat-lbl">Transports</div></div>
-        <div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">3</div><div class="bridgeinfo-stat-lbl">Categories</div></div>
+    <div class="bridgeinfo-overview" id="bridge-overview">
+        <div class="bridgeinfo-stat"><div class="bridgeinfo-stat-val">...</div><div class="bridgeinfo-stat-lbl">Loading...</div></div>
     </div>
-    <div class="bridgeinfo-section">Tested &amp; Active</div>
-    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody>
-        <tr><td>obfs4</td><td>IPv4</td><td>obfs4_tested.txt</td><td>45</td><td>2025-06-29</td></tr>
-        <tr><td>vanilla</td><td>IPv4</td><td>vanilla_tested.txt</td><td>32</td><td>2025-06-29</td></tr>
-        <tr><td>webtunnel</td><td>IPv4</td><td>webtunnel_tested.txt</td><td>28</td><td>2025-06-29</td></tr>
-    </tbody></table></div>
-    <div class="bridgeinfo-section">Fresh (72h)</div>
-    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody>
-        <tr><td>obfs4</td><td>IPv4</td><td>obfs4_72h.txt</td><td>38</td><td>2025-06-29</td></tr>
-        <tr><td>obfs4</td><td>IPv6</td><td>obfs4_ipv6_72h.txt</td><td>12</td><td>2025-06-29</td></tr>
-        <tr><td>webtunnel</td><td>IPv4</td><td>webtunnel_72h.txt</td><td>25</td><td>2025-06-29</td></tr>
-        <tr><td>webtunnel</td><td>IPv6</td><td>webtunnel_ipv6_72h.txt</td><td>8</td><td>2025-06-29</td></tr>
-        <tr><td>vanilla</td><td>IPv4</td><td>vanilla_72h.txt</td><td>41</td><td>2025-06-29</td></tr>
-        <tr><td>vanilla</td><td>IPv6</td><td>vanilla_ipv6_72h.txt</td><td>15</td><td>2025-06-29</td></tr>
-    </tbody></table></div>
     <div class="bridgeinfo-section">Full Archive</div>
-    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody>
-        <tr><td>obfs4</td><td>IPv4</td><td>obfs4.txt</td><td>220</td><td>2025-06-29</td></tr>
-        <tr><td>obfs4</td><td>IPv6</td><td>obfs4_ipv6.txt</td><td>85</td><td>2025-06-29</td></tr>
-        <tr><td>webtunnel</td><td>IPv4</td><td>webtunnel.txt</td><td>160</td><td>2025-06-29</td></tr>
-        <tr><td>webtunnel</td><td>IPv6</td><td>webtunnel_ipv6.txt</td><td>45</td><td>2025-06-29</td></tr>
-        <tr><td>vanilla</td><td>IPv4</td><td>vanilla.txt</td><td>310</td><td>2025-06-29</td></tr>
-        <tr><td>vanilla</td><td>IPv6</td><td>vanilla_ipv6.txt</td><td>95</td><td>2025-06-29</td></tr>
-    </tbody></table></div>
-    <div class="bridgeinfo-section">Port Mapping (Multi-Connect)</div>
-    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Slot</th><th>SOCKS5</th><th>Control</th><th>HTTP Proxy</th></tr></thead><tbody>
-        <tr><td>Slot 0</td><td>9061</td><td>9071</td><td>19061</td></tr>
-        <tr><td>Slot 1</td><td>9062</td><td>9072</td><td>19062</td></tr>
-        <tr><td>Slot 2</td><td>9063</td><td>9073</td><td>19063</td></tr>
-        <tr><td>Slot 3</td><td>9064</td><td>9074</td><td>19064</td></tr>
-    </tbody></table></div>
+    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody id="bridge-table-FullArchive"></tbody></table></div>
+    <div class="bridgeinfo-section">Tested &amp; Active</div>
+    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody id="bridge-table-TestedActive"></tbody></table></div>
+    <div class="bridgeinfo-section">Fresh (72h)</div>
+    <div class="bridgeinfo-table-wrap"><table class="bridgeinfo-table"><thead><tr><th>Transport</th><th>IP</th><th>File</th><th>Bridges</th><th>Updated</th></tr></thead><tbody id="bridge-table-Fresh72h"></tbody></table></div>
     <div class="bridgeinfo-source">Source: <a href="https://github.com/Delta-Kronecker/Tor-Bridges-Collector" target="_blank">Delta-Kronecker/Tor-Bridges-Collector</a></div>
     <div style="height:20px"></div>
 </div>`;
