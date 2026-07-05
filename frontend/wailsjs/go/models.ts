@@ -62,6 +62,30 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class SlotDef {
+	    label: string;
+	    source: string;
+	    category: string;
+	    transport: string;
+	    ip: string;
+	    noBridge: boolean;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SlotDef(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.label = source["label"];
+	        this.source = source["source"];
+	        this.category = source["category"];
+	        this.transport = source["transport"];
+	        this.ip = source["ip"];
+	        this.noBridge = source["noBridge"];
+	        this.enabled = source["enabled"];
+	    }
+	}
 	export class Config {
 	    auto_connect_timeout: number;
 	    bridges_in_torrc: number;
@@ -83,6 +107,9 @@ export namespace main {
 	    last_success_cat: string;
 	    last_success_trans: string;
 	    last_success_ip: string;
+	    multi_slots: SlotDef[];
+	    custom_bridges: string;
+	    use_custom_bridges: boolean;
 	    extract_dir?: string;
 	
 	    static createFrom(source: any = {}) {
@@ -111,7 +138,65 @@ export namespace main {
 	        this.last_success_cat = source["last_success_cat"];
 	        this.last_success_trans = source["last_success_trans"];
 	        this.last_success_ip = source["last_success_ip"];
+	        this.multi_slots = this.convertValues(source["multi_slots"], SlotDef);
+	        this.custom_bridges = source["custom_bridges"];
+	        this.use_custom_bridges = source["use_custom_bridges"];
 	        this.extract_dir = source["extract_dir"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class PingResult {
+	    host: string;
+	    port: number;
+	    ok: boolean;
+	    latency: number;
+	    error: string;
+	    line: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PingResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.ok = source["ok"];
+	        this.latency = source["latency"];
+	        this.error = source["error"];
+	        this.line = source["line"];
+	    }
+	}
+	
+	export class SlotTrafficResult {
+	    download: string;
+	    upload: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SlotTrafficResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.download = source["download"];
+	        this.upload = source["upload"];
 	    }
 	}
 	export class SpeedResult {

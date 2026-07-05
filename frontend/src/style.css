@@ -547,6 +547,26 @@ body {
     box-shadow: 0 0 8px rgba(58,114,176,0.2);
 }
 
+.btn-auto-active {
+    background: linear-gradient(135deg, #1E2535 0%, #2A3A4A 100%);
+    color: var(--red);
+    border: 1px solid var(--red);
+    font-size: 14px;
+    padding: 12px 16px;
+    border-radius: 6px;
+    animation: autoPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes autoPulse {
+    0%, 100% { box-shadow: 0 0 8px rgba(217,85,85,0.3); }
+    50% { box-shadow: 0 0 16px rgba(217,85,85,0.5); }
+}
+
+.btn-auto-active:hover {
+    border-color: #FF6B6B;
+    box-shadow: 0 0 12px rgba(217,85,85,0.4);
+}
+
 .btn-proxy-toggle {
     background: var(--btn);
     color: var(--fg2);
@@ -1471,6 +1491,161 @@ body {
     background: var(--btn2);
     border-color: var(--cyan);
     box-shadow: 0 0 8px rgba(58,168,192,0.2);
+}
+
+/* ========================================================
+   ADD MODE MODAL
+   ======================================================== */
+.modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.15s ease;
+}
+.modal-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: 420px;
+    max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.modal-accent {
+    height: 3px;
+    background: linear-gradient(90deg, var(--acc), var(--acc2));
+    border-radius: 8px 8px 0 0;
+}
+.modal-title {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 16px;
+    font-weight: bold;
+    color: var(--acc);
+    padding: 16px 20px 8px;
+}
+.modal-body {
+    padding: 0 20px 12px;
+}
+.modal-field {
+    margin-bottom: 10px;
+}
+.modal-field label {
+    display: block;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 12px;
+    color: var(--fg2);
+    margin-bottom: 4px;
+}
+.modal-field input,
+.modal-field select {
+    width: 100%;
+    background: var(--btn);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.15s;
+    box-sizing: border-box;
+}
+.modal-field input:focus,
+.modal-field select:focus {
+    border-color: var(--acc);
+    box-shadow: 0 0 6px rgba(58,114,176,0.3);
+}
+.modal-field select option {
+    background: var(--btn);
+    color: var(--fg);
+}
+.modal-btns {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px 16px;
+    justify-content: flex-end;
+}
+.modal-btn {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 13px;
+    font-weight: bold;
+    padding: 8px 20px;
+    border-radius: 4px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.modal-btn-cancel {
+    background: var(--btn2);
+    color: var(--fg2);
+}
+.modal-btn-cancel:hover { background: var(--border); color: var(--fg); }
+.modal-btn-add {
+    background: var(--acc);
+    color: #fff;
+}
+.modal-btn-add:hover { background: var(--acc2); }
+
+/* ========================================================
+   SET PROXY BUTTON ANIMATION
+   ======================================================== */
+.slot-btn-proxy-active {
+    background: var(--grn) !important;
+    color: #0D1A13 !important;
+    animation: proxyPulse 2s ease-in-out infinite;
+}
+
+@keyframes proxyPulse {
+    0%, 100% { box-shadow: 0 0 6px rgba(46,184,122,0.3); }
+    50% { box-shadow: 0 0 16px rgba(46,184,122,0.6); }
+}
+
+.slot-btn-proxy-active:hover {
+    background: #24A066 !important;
+    box-shadow: 0 0 12px rgba(46,184,122,0.5);
+}
+
+/* ========================================================
+   SCANNER COPY BUTTON
+   ======================================================== */
+.scan-copy-btn {
+    background: var(--btn2);
+    color: var(--cyan);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.scan-copy-btn:hover {
+    background: var(--btn);
+    border-color: var(--cyan);
+}
+.scan-copy-btn:active {
+    transform: scale(0.95);
+}
+
+/* ========================================================
+   PORT INFO
+   ======================================================== */
+.port-badges {
+    display: inline-flex;
+    gap: 8px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+.port-badge {
+    font-family: 'Consolas', monospace;
+    font-size: 10px;
+    color: var(--cyan);
+    background: var(--btn);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
 }
 
 /* ========================================================
