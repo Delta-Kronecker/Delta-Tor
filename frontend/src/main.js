@@ -4,6 +4,7 @@ const app = document.getElementById('app');
 
 let currentMode = 'normal';
 let autoProxyOn = false;
+let autoConnecting = false;
 
 // Persistent state
 let appState = {
@@ -19,15 +20,8 @@ let appState = {
     logLines: [],
 };
 
-const defaultSlots = [
-    { label: 'Snowflake',              source: 'Default (Built-in)',  cat: null,         trans: 'snowflake',  ip: null,   noBridge: false },
-    { label: 'obfs4 · Tested IPv4',    source: 'Delta-Kronecker',     cat: 'Tested & Active', trans: 'obfs4',    ip: 'IPv4', noBridge: false },
-    { label: 'Vanilla · Tested IPv4',  source: 'Delta-Kronecker',     cat: 'Tested & Active', trans: 'vanilla',  ip: 'IPv4', noBridge: false },
-    { label: 'WebTunnel · Tested',     source: 'Delta-Kronecker',     cat: 'Tested & Active', trans: 'webtunnel', ip: 'IPv4', noBridge: false },
-];
-
 function slotPorts(index) {
-    return { socks: 9061 + index, ctrl: 9071 + index, http: 19061 + index };
+    return { socks: 9051 + index, http: 9061 + index };
 }
 
 /* ===== NORMAL MODE ===== */
@@ -80,7 +74,7 @@ function renderNormalMode() {
                 <div class="btn-group-title">CONNECTION</div>
                 <div class="btn-group-row btn-row-3">
                     <button class="btn btn-start-lg" id="startBtn" onclick="toggleStart()">&#9654; Start</button>
-                    <button class="btn btn-auto">&#9889; Auto</button>
+                    <button class="btn btn-auto" id="autoBtn" onclick="toggleAuto()">&#9889; Auto</button>
                     <button class="btn btn-proxy-toggle" id="proxyBtn" onclick="toggleProxy()">System Proxy : OFF</button>
                 </div>
             </div>
@@ -89,7 +83,7 @@ function renderNormalMode() {
                 <div class="btn-group-row">
                     <button class="btn btn-secondary" onclick="switchToScanner()">Scanner</button>
                     <button class="btn btn-secondary" onclick="runManualTest()">Test Connection</button>
-                    <button class="btn btn-secondary">New Circuit</button>
+                    <button class="btn btn-secondary" onclick="requestNewCircuit()">New Circuit</button>
                 </div>
             </div>
         </div>
@@ -112,7 +106,7 @@ function renderNormalMode() {
         <div class="card-accent"></div>
         <div class="card-accent-thin"></div>
         <div class="card-inner">
-            <div class="stats-card-title">Connection Status</div>
+            <div class="stats-card-title">Connection Status <span class="port-badges" id="portBadges" style="display:none"><span class="port-badge">SOCKS : 9050</span><span class="port-badge">HTTP : 9060</span></span></div>
             <div class="stats-dashboard">
                 <div class="stat-box">
                     <div class="stat-box-icon" style="color:var(--cyan)">IP</div>
@@ -165,6 +159,118 @@ function renderNormalMode() {
 }
 
 /* ===== MULTI MODE ===== */
+let multiRunning = false;
+let multiSlotLabels = [];
+let multiSlotState = {};
+let multiSlotsData = [];
+
+async function loadMultiSlots() {
+    try {
+        const slots = await window.go.main.App.GetMultiSlots();
+        if (slots && slots.length > 0) {
+            multiSlotsData = slots.map(s => ({
+                label: s.label,
+                source: s.source === 'builtin' ? 'Default (Built-in)' : s.source === 'delta-kronecker' ? 'Delta-Kronecker' : s.source,
+                cat: s.category || null,
+                trans: s.transport,
+                ip: s.ip || null,
+                noBridge: s.noBridge || false,
+                enabled: s.enabled !== false,
+            }));
+        } else {
+            multiSlotsData = [];
+        }
+    } catch(e) {
+        multiSlotsData = [];
+    }
+}
+
+function renderMultiMode() {
+    const slots = multiSlotsData;
+    multiSlotLabels = slots.map(s => s.label);
+    const slotsHtml = slots.map((s, i) => renderSlotCard(s, i)).join('');
+    return `
+<div class="multi-toolbar">
+    <div class="card-accent"></div>
+    <div class="multi-toolbar-inner">
+        <div class="multi-toolbar-left">
+            <button class="btn btn-primary" onclick="switchToNormal()">&#9664; Normal</button>
+            <button class="btn btn-start" id="multiStartBtn" onclick="multiStartAll()">&#9654; Start</button>
+            <button class="btn btn-stop" onclick="multiStopAll()">&#9209; Stop</button>
+        </div>
+        <button class="btn btn-auto-proxy" id="autoProxyBtn" onclick="toggleAutoProxy()">Auto Proxy : OFF</button>
+    </div>
+</div>
+<div class="multi-separator"></div>
+<div class="multi-scroll"><div class="multi-list" id="slotGrid">${slotsHtml}</div></div>
+<div class="multi-log-area" id="multiLogArea" style="display:none">
+    <div class="log-panel-header">
+        <span class="log-panel-title" id="multiLogTitle">Slot Log</span>
+        <span class="spacer"></span>
+        <button class="log-panel-btn" onclick="clearMultiLog()">Clear</button>
+        <button class="log-panel-btn" onclick="closeMultiLog()">&#10005;</button>
+    </div>
+    <div class="log-panel-body" id="multiLogOutput" style="height:200px;overflow-y:auto;font-family:Consolas,monospace;font-size:12px;padding:8px;background:var(--panel);color:var(--fg2)"></div>
+</div>
+<div class="multi-bottom"><button class="btn-add-mode" onclick="addConnectionMode()">+ Add Connection Mode</button></div>`;
+}
+
+function restoreMultiSlotState() {
+    for (const [label, st] of Object.entries(multiSlotState)) {
+        const card = document.querySelector(`.slot-toggle[data-label="${label}"]`);
+        if (!card) continue;
+        const cardEl = card.closest('.slot-card-full');
+        if (!cardEl) continue;
+        if (st.pct !== undefined) {
+            const fill = cardEl.querySelector('.slot-progress-fill');
+            const pctLabel = cardEl.querySelector('.slot-progress-pct-inline');
+            if (fill) fill.style.width = st.pct + '%';
+            if (pctLabel) pctLabel.textContent = 'Progress : ' + st.pct + '%';
+        }
+        if (st.status) {
+            const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+            if (statusEl) {
+                statusEl.textContent = st.status;
+                if (st.connected) statusEl.style.color = 'var(--grn)';
+                else if (st.failed) statusEl.style.color = 'var(--red)';
+                else statusEl.style.color = 'var(--ylw)';
+            }
+        }
+        if (st.health) {
+            const healthBoxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (healthBoxes[0]) {
+                healthBoxes[0].textContent = st.health;
+                healthBoxes[0].style.color = st.healthOnline ? 'var(--grn)' : 'var(--red)';
+            }
+        }
+        if (st.exitIp) {
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[1]) boxes[1].textContent = st.exitIp;
+        }
+        if (st.country) {
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[2]) boxes[2].textContent = st.country;
+        }
+        if (st.uptime) {
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[3]) boxes[3].textContent = st.uptime;
+        }
+        if (st.download) {
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[4]) boxes[4].textContent = st.download;
+        }
+        if (st.upload) {
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[5]) boxes[5].textContent = st.upload;
+        }
+    }
+    if (multiRunning) {
+        const btn = document.getElementById('multiStartBtn');
+        if (btn) { btn.textContent = '\u23F9 Stop'; btn.disabled = false; }
+    }
+}
+
+/* ===== SLOT CARD ===== */
 function renderSlotCard(slot, index) {
     const ports = slotPorts(index);
     return `
@@ -172,22 +278,22 @@ function renderSlotCard(slot, index) {
         <div class="slot-accent-bar"></div>
         <div class="slot-main-area">
             <div class="slot-top-row">
-                <div class="slot-toggle" data-index="${index}"><div class="toggle-box toggle-on"></div></div>
+                <div class="slot-toggle" data-label="${slot.label}"><div class="toggle-box toggle-on"></div></div>
                 <span class="slot-label">${slot.label}</span>
                 <span class="spacer"></span>
                 <div class="slot-actions-inline">
-                    <button class="slot-btn-sm">Set Proxy</button>
-                    <button class="slot-btn-sm">Retry</button>
-                    <button class="slot-btn-sm">Health</button>
-                    <button class="slot-btn-sm">Log</button>
-                    <button class="slot-btn-sm slot-btn-del">Delete</button>
+                    <button class="slot-btn-sm" onclick="multiSetProxy('${slot.label.replace(/'/g, "\\'")}')">Set Proxy</button>
+                    <button class="slot-btn-sm" onclick="multiRetrySlot('${slot.label.replace(/'/g, "\\'")}')">Retry</button>
+                    <button class="slot-btn-sm" onclick="multiCheckHealth('${slot.label.replace(/'/g, "\\'")}')">Health</button>
+                    <button class="slot-btn-sm" onclick="multiShowLog('${slot.label.replace(/'/g, "\\'")}')">Log</button>
+                    <button class="slot-btn-sm slot-btn-del" onclick="multiDeleteSlot('${slot.label.replace(/'/g, "\\'")}')">Delete</button>
                 </div>
             </div>
-                <div class="slot-meta-row">
-                    <span class="slot-meta">${slot.source} &middot; ${slot.cat || '&mdash;'} &middot; ${slot.trans} &middot; ${slot.ip || 'auto'} &nbsp;|&nbsp; SOCKS ${ports.socks} &middot; HTTP ${ports.http}</span>
-                    <span class="slot-progress-pct-inline">Progress : 0%</span>
-                </div>
-                <div class="slot-progress-bar"><div class="slot-progress-fill" style="width:0%"></div></div>
+            <div class="slot-meta-row">
+                <span class="slot-meta">${slot.source} &middot; ${slot.cat || '&mdash;'} &middot; ${slot.trans} &middot; ${slot.ip || 'auto'} &nbsp;|&nbsp; SOCKS ${ports.socks} &middot; HTTP ${ports.http}</span>
+                <span class="slot-progress-pct-inline">Progress : 0%</span>
+            </div>
+            <div class="slot-progress-bar"><div class="slot-progress-fill" style="width:0%"></div></div>
             <div class="slot-stats-grid">
                 <div class="slot-stat-box"><div class="slot-stat-icon" style="color:var(--grn)">&#9679;</div><div class="slot-stat-val">&mdash;</div><div class="slot-stat-lbl">Status</div></div>
                 <div class="slot-stat-box"><div class="slot-stat-icon" style="color:var(--cyan)">IP</div><div class="slot-stat-val">&mdash;</div><div class="slot-stat-lbl">Exit IP</div></div>
@@ -198,25 +304,6 @@ function renderSlotCard(slot, index) {
             </div>
         </div>
     </div>`;
-}
-
-function renderMultiMode() {
-    const slotsHtml = defaultSlots.map((s, i) => renderSlotCard(s, i)).join('');
-    return `
-<div class="multi-toolbar">
-    <div class="card-accent"></div>
-    <div class="multi-toolbar-inner">
-        <div class="multi-toolbar-left">
-            <button class="btn btn-primary" onclick="switchToNormal()">&#9664; Normal</button>
-            <button class="btn btn-start">&#9654; Start</button>
-            <button class="btn btn-stop">&#9209; Stop</button>
-        </div>
-        <button class="btn btn-auto-proxy" id="autoProxyBtn" onclick="toggleAutoProxy()">Auto Proxy : OFF</button>
-    </div>
-</div>
-<div class="multi-separator"></div>
-<div class="multi-scroll"><div class="multi-list" id="slotGrid">${slotsHtml}</div></div>
-<div class="multi-bottom"><button class="btn-add-mode">+ Add Connection Mode</button></div>`;
 }
 
 /* ===== SCANNER MODE ===== */
@@ -233,14 +320,15 @@ function renderScannerMode() {
         <div class="scanner-ctrl-row"><span class="scanner-ctrl-label">Workers:</span><input type="number" class="scanner-input-sm" id="scan_workers" min="1" max="50" value="20"/></div>
         <div class="scanner-ctrl-row"><span class="scanner-ctrl-label">Timeout(s):</span><input type="number" class="scanner-input-sm" id="scan_timeout" min="1" max="30" value="5"/></div>
     </div>
-    <div class="scanner-progress-area"><div class="scanner-progress-label" id="scanProgressLabel">Ready.</div><div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scanProgressFill" style="width:0%"></div></div></div>
-    <div class="scanner-table-wrap"><table class="scanner-table"><thead><tr><th>Bridge Type</th><th>Host</th><th>Port</th><th>Ping (ms)</th><th>Status</th></tr></thead><tbody id="scanResults"></tbody></table></div>
-    <div class="scanner-summary" id="scanSummary"></div>
     <div class="scanner-btns">
         <button class="btn btn-start" onclick="startScan()">&#9654; Start Scan</button>
         <button class="btn btn-stop" onclick="stopScan()">&#9209; Stop</button>
+        <button class="btn btn-cyan" onclick="useAsCustomBridge()">Use as Custom Bridge</button>
         <button class="btn btn-cyan" onclick="exportScan()">Export Working</button>
     </div>
+    <div class="scanner-summary" id="scanSummary"></div>
+    <div class="scanner-progress-area"><div class="scanner-progress-label" id="scanProgressLabel">Ready.</div><div class="scanner-progress-bar"><div class="scanner-progress-fill" id="scanProgressFill" style="width:0%"></div></div></div>
+    <div class="scanner-table-wrap"><table class="scanner-table"><thead><tr><th>Bridge Type</th><th>Host</th><th>Port</th><th>Ping (ms)</th><th>Status</th><th>Action</th></tr></thead><tbody id="scanResults"></tbody></table></div>
 </div>`;
 }
 
@@ -493,7 +581,7 @@ function render() {
         }
     }
 
-    if (currentMode === 'multi') { bindSlotToggles(); }
+    if (currentMode === 'multi') { bindSlotToggles(); restoreMultiSlotState(); }
 }
 
 function bindSlotToggles() {
@@ -507,7 +595,11 @@ function bindSlotToggles() {
 }
 
 /* ===== WINDOW FUNCTIONS ===== */
-window.switchToMulti = function() { currentMode = 'multi'; render(); };
+window.switchToMulti = async function() {
+    currentMode = 'multi';
+    await loadMultiSlots();
+    render();
+};
 window.switchToNormal = function() { currentMode = 'normal'; render(); };
 window.switchToSettings = function() { currentMode = 'settings'; render(); };
 window.switchToHelp = function() { currentMode = 'help'; render(); };
@@ -540,6 +632,10 @@ window.toggleStart = async function() {
     if (isRunning) {
         btn.textContent = '\u23F9 Stopping...';
         btn.disabled = true;
+        if (autoConnecting) {
+            try { await window.go.main.App.StopAutoConnect(); } catch(e) {}
+            autoConnecting = false;
+        }
         try { await window.go.main.App.StopTor(); } catch(e) {}
         isRunning = false;
         appState.isRunning = false;
@@ -548,6 +644,11 @@ window.toggleStart = async function() {
         btn.disabled = false;
         document.getElementById('conn-pct').textContent = '0%';
         document.getElementById('conn-progress').style.width = '0%';
+        const autoBtn = document.getElementById('autoBtn');
+        if (autoBtn) {
+            autoBtn.textContent = '\u26A1 Auto';
+            autoBtn.className = 'btn btn-auto';
+        }
     } else {
         isRunning = true;
         appState.isRunning = true;
@@ -582,6 +683,47 @@ window.toggleStart = async function() {
     }
 };
 
+window.toggleAuto = async function() {
+    const btn = document.getElementById('autoBtn');
+    if (autoConnecting) {
+        // Stop auto-connect
+        btn.textContent = '\u26A1 Auto';
+        btn.className = 'btn btn-auto';
+        btn.disabled = false;
+        autoConnecting = false;
+        try { await window.go.main.App.StopAutoConnect(); } catch(e) {}
+        try { await window.go.main.App.StopTor(); } catch(e) {}
+        isRunning = false;
+        appState.isRunning = false;
+        document.getElementById('conn-pct').textContent = '0%';
+        document.getElementById('conn-progress').style.width = '0%';
+        document.getElementById('stat-tor').textContent = '\u2014';
+        document.getElementById('stat-tor').style.color = '';
+    } else {
+        // Start auto-connect
+        autoConnecting = true;
+        isRunning = true;
+        appState.isRunning = true;
+        btn.textContent = '\u26A1 Auto (active)';
+        btn.className = 'btn btn-auto-active';
+        document.getElementById('startBtn').textContent = '\u23F9 Stop';
+        document.getElementById('startBtn').className = 'btn btn-stop-lg';
+        document.getElementById('stat-tor').textContent = 'Auto-connecting...';
+        document.getElementById('stat-tor').style.color = 'var(--ylw)';
+        document.getElementById('conn-pct').textContent = '0%';
+        document.getElementById('conn-progress').style.width = '0%';
+        try {
+            await window.go.main.App.StartAutoConnect();
+        } catch(e) {
+            console.error(e);
+            autoConnecting = false;
+            isRunning = false;
+            btn.textContent = '\u26A1 Auto';
+            btn.className = 'btn btn-auto';
+        }
+    }
+};
+
 // Listen for Tor events from Go backend
 window.runtime.EventsOn('tor:progress', (pct) => {
     appState.progress = pct;
@@ -594,10 +736,18 @@ window.runtime.EventsOn('tor:progress', (pct) => {
 window.runtime.EventsOn('tor:connected', () => {
     appState.torConnected = true;
     appState.isRunning = true;
+    autoConnecting = false;
     const torEl = document.getElementById('stat-tor');
     if (torEl) {
         torEl.textContent = 'Connected';
         torEl.style.color = 'var(--grn)';
+    }
+    const portBadges = document.getElementById('portBadges');
+    if (portBadges) portBadges.style.display = 'inline';
+    const autoBtn = document.getElementById('autoBtn');
+    if (autoBtn) {
+        autoBtn.textContent = '\u26A1 Auto';
+        autoBtn.className = 'btn btn-auto';
     }
     const proxyBtn = document.getElementById('proxyBtn');
     if (proxyBtn && !proxyOn) {
@@ -626,8 +776,98 @@ window.runtime.EventsOn('tor:log', (line) => {
     el.scrollTop = el.scrollHeight;
 });
 
+// Auto-connect events
+window.runtime.EventsOn('auto:step', (data) => {
+    const torEl = document.getElementById('stat-tor');
+    if (torEl) {
+        torEl.textContent = data.label || 'Auto-connecting...';
+        torEl.style.color = 'var(--ylw)';
+    }
+    const logEl = document.getElementById('logOutput');
+    if (logEl) {
+        const div = document.createElement('div');
+        div.className = 'log-line log-auto';
+        div.textContent = '[Auto] Trying ' + data.label;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+});
+
+window.runtime.EventsOn('auto:progress', (pct) => {
+    appState.progress = pct;
+    const pctEl = document.getElementById('conn-pct');
+    const fillEl = document.getElementById('conn-progress');
+    if (pctEl) pctEl.textContent = pct + '%';
+    if (fillEl) fillEl.style.width = pct + '%';
+});
+
+window.runtime.EventsOn('auto:done', (data) => {
+    autoConnecting = false;
+    appState.torConnected = true;
+    const autoBtn = document.getElementById('autoBtn');
+    if (autoBtn) {
+        autoBtn.textContent = '\u26A1 Auto';
+        autoBtn.className = 'btn btn-auto';
+    }
+    const torEl = document.getElementById('stat-tor');
+    if (torEl) {
+        torEl.textContent = 'Connected';
+        torEl.style.color = 'var(--grn)';
+    }
+    const proxyBtn = document.getElementById('proxyBtn');
+    if (proxyBtn && !proxyOn) {
+        proxyBtn.classList.add('proxy-blink');
+    }
+    startUptimeTimer();
+    startAutoTest();
+    startTrafficMonitor();
+});
+
+window.runtime.EventsOn('auto:failed', (data) => {
+    autoConnecting = false;
+    isRunning = false;
+    appState.isRunning = false;
+    const autoBtn = document.getElementById('autoBtn');
+    if (autoBtn) {
+        autoBtn.textContent = '\u26A1 Auto';
+        autoBtn.className = 'btn btn-auto';
+    }
+    const startBtn = document.getElementById('startBtn');
+    if (startBtn) {
+        startBtn.textContent = '\u25B6 Start';
+        startBtn.className = 'btn btn-start-lg';
+    }
+    const torEl = document.getElementById('stat-tor');
+    if (torEl) {
+        torEl.textContent = '\u2014';
+        torEl.style.color = '';
+    }
+    document.getElementById('conn-pct').textContent = '0%';
+    document.getElementById('conn-progress').style.width = '0%';
+    const logEl = document.getElementById('logOutput');
+    if (logEl) {
+        const div = document.createElement('div');
+        div.className = 'log-line log-err';
+        div.textContent = '[Auto] ❌ ' + (data.message || 'All bridge groups exhausted.');
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+});
+
+window.runtime.EventsOn('auto:log', (msg) => {
+    const logEl = document.getElementById('logOutput');
+    if (logEl) {
+        const div = document.createElement('div');
+        div.className = 'log-line log-auto';
+        div.textContent = msg;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+});
+
 window.runtime.EventsOn('tor:stopped', () => {
     isRunning = false;
+    autoConnecting = false;
     appState.torConnected = false;
     appState.isRunning = false;
     appState.progress = 0;
@@ -646,6 +886,13 @@ window.runtime.EventsOn('tor:stopped', () => {
     document.getElementById('stat-upload').textContent = '\u2014';
     document.getElementById('conn-pct').textContent = '0%';
     document.getElementById('conn-progress').style.width = '0%';
+    const portBadges = document.getElementById('portBadges');
+    if (portBadges) portBadges.style.display = 'none';
+    const autoBtn = document.getElementById('autoBtn');
+    if (autoBtn) {
+        autoBtn.textContent = '\u26A1 Auto';
+        autoBtn.className = 'btn btn-auto';
+    }
     stopUptimeTimer();
     stopAutoTest();
     stopTrafficMonitor();
@@ -717,6 +964,18 @@ window.runManualTest = async function() {
         console.error(e);
     }
 };
+
+window.requestNewCircuit = async function() {
+    if (!appState.torConnected) {
+        appendLog('[Circuit] Not connected.\n', 'warn');
+        return;
+    }
+    try {
+        await window.go.main.App.RequestNewCircuit();
+    } catch(e) {
+        console.error(e);
+    }
+};
 function stopAutoTest() { if (autoTestInterval) { clearInterval(autoTestInterval); autoTestInterval = null; } }
 
 let trafficInterval = null;
@@ -746,12 +1005,469 @@ function stopTrafficMonitor() {
     prevDl = 0; prevUl = 0; prevTime = 0;
 }
 
-window.toggleAutoProxy = function() {
+let autoProxyInterval = null;
+
+window.toggleAutoProxy = async function() {
     autoProxyOn = !autoProxyOn;
     const btn = document.getElementById('autoProxyBtn');
-    if (autoProxyOn) { btn.textContent = 'Auto Proxy : ON'; btn.classList.add('auto-proxy-on'); }
-    else { btn.textContent = 'Auto Proxy : OFF'; btn.classList.remove('auto-proxy-on'); }
+    if (autoProxyOn) {
+        btn.textContent = 'Auto Proxy : ON';
+        btn.classList.add('auto-proxy-on');
+        autoProxyCheck();
+        autoProxyInterval = setInterval(autoProxyCheck, 15000);
+    } else {
+        btn.textContent = 'Auto Proxy : OFF';
+        btn.classList.remove('auto-proxy-on');
+        if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
+        if (activeProxyLabel) {
+            try { await window.go.main.App.SetProxyToSlot(activeProxyLabel); } catch(e) {}
+            activeProxyLabel = null;
+            document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+                b.classList.remove('slot-btn-proxy-active');
+                b.textContent = 'Set Proxy';
+            });
+        }
+    }
 };
+
+async function autoProxyCheck() {
+    if (!autoProxyOn || !multiRunning) return;
+    try {
+        const best = await window.go.main.App.GetBestAutoProxySlot();
+        if (!best) return;
+        if (best === activeProxyLabel) return;
+        activeProxyLabel = best;
+        await window.go.main.App.SetProxyToSlot(best);
+        document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+            b.classList.remove('slot-btn-proxy-active');
+            b.textContent = 'Set Proxy';
+        });
+        const card = document.querySelector(`.slot-toggle[data-label="${best}"]`);
+        if (card) {
+            const cardEl = card.closest('.slot-card-full');
+            if (cardEl) {
+                const proxyBtn = cardEl.querySelector('.slot-btn-sm');
+                if (proxyBtn) {
+                    proxyBtn.classList.add('slot-btn-proxy-active');
+                    proxyBtn.textContent = 'Proxy ON';
+                }
+            }
+        }
+        appendLog('[Auto Proxy] Switched to ' + best, 'ok');
+    } catch(e) {}
+}
+
+let activeProxyLabel = null;
+
+window.multiStartAll = async function() {
+    if (multiRunning) return;
+    multiRunning = true;
+    const btn = document.getElementById('multiStartBtn');
+    if (btn) { btn.textContent = '\u23F9 Starting...'; btn.disabled = true; }
+    // Reset all slot cards
+    document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
+    document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
+    try { await window.go.main.App.StartAllSlots(); } catch(e) { console.error(e); }
+    if (btn) { btn.textContent = '\u23F9 Stop'; btn.disabled = false; }
+};
+
+window.multiStopAll = async function() {
+    multiRunning = false;
+    autoProxyOn = false;
+    activeProxyLabel = null;
+    if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
+    const proxyBtn = document.getElementById('autoProxyBtn');
+    if (proxyBtn) { proxyBtn.textContent = 'Auto Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    try { await window.go.main.App.StopAllSlots(); } catch(e) { console.error(e); }
+    document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+        b.classList.remove('slot-btn-proxy-active');
+        b.textContent = 'Set Proxy';
+    });
+};
+
+window.multiRetrySlot = async function(label) {
+    try { await window.go.main.App.RetrySlot(label); } catch(e) { console.error(e); }
+};
+
+window.multiCheckHealth = async function(label) {
+    try { await window.go.main.App.CheckSlotHealthNow(label); } catch(e) { console.error(e); }
+};
+
+window.multiSetProxy = async function(label) {
+    const card = document.querySelector(`.slot-toggle[data-label="${label}"]`);
+    const cardEl = card ? card.closest('.slot-card-full') : null;
+    const proxyBtn = cardEl ? cardEl.querySelector('.slot-btn-sm') : null;
+
+    try {
+        await window.go.main.App.SetProxyToSlot(label);
+        if (proxyBtn) {
+            if (proxyBtn.classList.contains('slot-btn-proxy-active')) {
+                proxyBtn.classList.remove('slot-btn-proxy-active');
+                proxyBtn.textContent = 'Set Proxy';
+                activeProxyLabel = null;
+            } else {
+                document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+                    b.classList.remove('slot-btn-proxy-active');
+                    b.textContent = 'Set Proxy';
+                });
+                proxyBtn.classList.add('slot-btn-proxy-active');
+                proxyBtn.textContent = 'Proxy ON';
+                activeProxyLabel = label;
+            }
+        }
+    } catch(e) { console.error(e); }
+};
+
+window.multiShowLog = function(label) {
+    const area = document.getElementById('multiLogArea');
+    const title = document.getElementById('multiLogTitle');
+    const logEl = document.getElementById('multiLogOutput');
+    if (!area || !logEl) return;
+    area.style.display = 'block';
+    if (title) title.textContent = 'Log \u2014 ' + label;
+    logEl.innerHTML = '';
+    window.go.main.App.GetSlotLogs(label).then(logs => {
+        if (logs) {
+            logs.forEach(line => {
+                const d = document.createElement('div');
+                d.style.cssText = 'padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)';
+                if (line.includes('[err]') || line.includes('Error')) d.style.color = '#D95555';
+                else if (line.includes('[warn]') || line.includes('Warn')) d.style.color = '#C9A020';
+                else if (line.includes('Bootstrapped')) d.style.color = '#2EB87A';
+                else d.style.color = '#6B7A94';
+                d.textContent = line;
+                logEl.appendChild(d);
+            });
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+        if (!logs || logs.length === 0) {
+            const d = document.createElement('div');
+            d.style.color = '#6B7A94';
+            d.textContent = 'No log yet. Start the connection first.';
+            logEl.appendChild(d);
+        }
+    }).catch(e => {});
+    multiLogActiveLabel = label;
+};
+
+window.clearMultiLog = function() {
+    const logEl = document.getElementById('multiLogOutput');
+    if (logEl) logEl.innerHTML = '';
+};
+
+window.closeMultiLog = function() {
+    const area = document.getElementById('multiLogArea');
+    if (area) area.style.display = 'none';
+    multiLogActiveLabel = null;
+};
+
+let multiLogActiveLabel = null;
+
+window.multiDeleteSlot = async function(label) {
+    try { await window.go.main.App.DeleteMultiSlot(label); } catch(e) { console.error(e); }
+};
+
+window.addConnectionMode = function() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+    <div class="modal-box">
+        <div class="modal-accent"></div>
+        <div class="modal-title">+ Add Connection Mode</div>
+        <div class="modal-body">
+            <div class="modal-field">
+                <label>Name</label>
+                <input type="text" id="modal-name" value="New Mode" />
+            </div>
+            <div class="modal-field">
+                <label>Source</label>
+                <select id="modal-source">
+                    <option value="delta-kronecker">Delta-Kronecker</option>
+                    <option value="builtin">Default (Built-in)</option>
+                    <option value="direct">Direct (No Bridge)</option>
+                </select>
+            </div>
+            <div class="modal-field" id="modal-cat-field">
+                <label>Category</label>
+                <select id="modal-cat">
+                    <option>Tested &amp; Active</option>
+                    <option>Fresh (72h)</option>
+                    <option>Full Archive</option>
+                </select>
+            </div>
+            <div class="modal-field" id="modal-trans-field">
+                <label>Transport</label>
+                <select id="modal-trans">
+                    <option value="obfs4">obfs4</option>
+                    <option value="webtunnel">webtunnel</option>
+                    <option value="vanilla">vanilla</option>
+                </select>
+            </div>
+            <div class="modal-field" id="modal-ip-field">
+                <label>IP Version</label>
+                <select id="modal-ip">
+                    <option>IPv4</option>
+                    <option>IPv6</option>
+                    <option>Both</option>
+                </select>
+            </div>
+        </div>
+        <div class="modal-btns">
+            <button class="modal-btn modal-btn-cancel" id="modal-cancel">Cancel</button>
+            <button class="modal-btn modal-btn-add" id="modal-add">Add</button>
+        </div>
+    </div>`;
+
+    document.body.appendChild(overlay);
+
+    const srcSelect = overlay.querySelector('#modal-source');
+    const catField = overlay.querySelector('#modal-cat-field');
+    const transSelect = overlay.querySelector('#modal-trans');
+    const ipField = overlay.querySelector('#modal-ip-field');
+
+    function updateFields() {
+        const src = srcSelect.value;
+        if (src === 'builtin') {
+            transSelect.innerHTML = '<option value="snowflake">snowflake</option><option value="meek">meek</option>';
+            catField.style.display = 'none';
+            ipField.style.display = 'none';
+        } else if (src === 'direct') {
+            catField.style.display = 'none';
+            transSelect.innerHTML = '';
+            ipField.style.display = 'none';
+        } else {
+            transSelect.innerHTML = '<option value="obfs4">obfs4</option><option value="webtunnel">webtunnel</option><option value="vanilla">vanilla</option>';
+            catField.style.display = '';
+            ipField.style.display = '';
+        }
+    }
+    srcSelect.addEventListener('change', updateFields);
+    updateFields();
+
+    overlay.querySelector('#modal-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#modal-add').addEventListener('click', async () => {
+        const name = overlay.querySelector('#modal-name').value.trim() || 'New Mode';
+        const src = srcSelect.value;
+        const cat = src === 'delta-kronecker' ? (overlay.querySelector('#modal-cat').value || 'Tested & Active') : '';
+        const trans = overlay.querySelector('#modal-trans').value || '';
+        const ip = src === 'delta-kronecker' ? (overlay.querySelector('#modal-ip').value || 'IPv4') : '';
+        const noBridge = src === 'direct';
+        try {
+            await window.go.main.App.AddMultiSlot({ label: name, source: src, category: cat, transport: trans, ip: ip, noBridge: noBridge, enabled: true });
+            await loadMultiSlots();
+            render();
+        } catch(e) { console.error(e); }
+        overlay.remove();
+    });
+};
+
+window.multiDeleteSlot = async function(label) {
+    try {
+        await window.go.main.App.DeleteMultiSlot(label);
+        await loadMultiSlots();
+        render();
+    } catch(e) { console.error(e); }
+};
+
+// Multi-connect events
+window.runtime.EventsOn('multi:slot:progress', (data) => {
+    if (!multiSlotState[data.label]) multiSlotState[data.label] = {};
+    multiSlotState[data.label].pct = data.pct || 0;
+    multiSlotState[data.label].status = data.status || '—';
+    multiSlotState[data.label].connected = !!data.connected;
+    multiSlotState[data.label].failed = !!data.failed;
+
+    const card = document.querySelector(`.slot-toggle[data-label="${data.label}"]`);
+    if (!card) return;
+    const cardEl = card.closest('.slot-card-full');
+    if (!cardEl) return;
+
+    const fill = cardEl.querySelector('.slot-progress-fill');
+    const pctLabel = cardEl.querySelector('.slot-progress-pct-inline');
+    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+
+    if (fill) fill.style.width = (data.pct || 0) + '%';
+    if (pctLabel) pctLabel.textContent = 'Progress : ' + (data.pct || 0) + '%';
+    if (statusEl) {
+        statusEl.textContent = data.status || '—';
+        if (data.connected) statusEl.style.color = 'var(--grn)';
+        else if (data.failed) statusEl.style.color = 'var(--red)';
+        else statusEl.style.color = 'var(--ylw)';
+    }
+
+    if (data.connected) {
+        startSlotTestLoop(data.label);
+        startSlotTrafficLoop(data.label);
+        startSlotUptime(data.label);
+    }
+});
+
+window.runtime.EventsOn('multi:slot:health', (data) => {
+    if (!multiSlotState[data.label]) multiSlotState[data.label] = {};
+    multiSlotState[data.label].health = data.text || '—';
+    multiSlotState[data.label].healthOnline = !!data.online;
+
+    const card = document.querySelector(`.slot-toggle[data-label="${data.label}"]`);
+    if (!card) return;
+    const cardEl = card.closest('.slot-card-full');
+    if (!cardEl) return;
+    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+    if (statusEl) {
+        statusEl.textContent = data.text || '—';
+        statusEl.style.color = data.online ? 'var(--grn)' : 'var(--red)';
+    }
+});
+
+window.runtime.EventsOn('multi:slot:stopped', (data) => {
+    if (multiSlotState[data.label]) {
+        delete multiSlotState[data.label];
+        stopSlotTestLoop(data.label);
+        stopSlotTrafficLoop(data.label);
+    }
+    const card = document.querySelector(`.slot-toggle[data-label="${data.label}"]`);
+    if (!card) return;
+    const cardEl = card.closest('.slot-card-full');
+    if (!cardEl) return;
+    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+    const fill = cardEl.querySelector('.slot-progress-fill');
+    const pctLabel = cardEl.querySelector('.slot-progress-pct-inline');
+    if (statusEl) { statusEl.textContent = 'Stopped'; statusEl.style.color = ''; }
+    if (fill) fill.style.width = '0%';
+    if (pctLabel) pctLabel.textContent = 'Progress : 0%';
+});
+
+window.runtime.EventsOn('multi:stopped', () => {
+    multiRunning = false;
+    multiSlotState = {};
+    activeProxyLabel = null;
+    autoProxyOn = false;
+    if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
+    stopAllSlotTimers();
+    const btn = document.getElementById('multiStartBtn');
+    if (btn) { btn.textContent = '\u25B6 Start'; btn.disabled = false; }
+    const proxyBtn = document.getElementById('autoProxyBtn');
+    if (proxyBtn) { proxyBtn.textContent = 'Auto Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
+    document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
+    document.querySelectorAll('.slot-stat-box .slot-stat-val').forEach(el => { el.textContent = '\u2014'; el.style.color = ''; });
+    document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+        b.classList.remove('slot-btn-proxy-active');
+        b.textContent = 'Set Proxy';
+    });
+});
+
+window.runtime.EventsOn('multi:proxy:on', (data) => {
+    appendLog('[Multi] Proxy \u2192 ' + data.label + ' (HTTP ' + data.httpPort + ')', 'ok');
+});
+
+window.runtime.EventsOn('multi:proxy:off', (data) => {
+    appendLog('[Multi] Proxy disabled for ' + data.label, 'auto');
+});
+
+window.runtime.EventsOn('multi:slot:log', (data) => {
+    if (multiLogActiveLabel === data.label) {
+        const logEl = document.getElementById('multiLogOutput');
+        if (logEl) {
+            const d = document.createElement('div');
+            d.style.cssText = 'padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)';
+            if (data.line.includes('[err]') || data.line.includes('Error')) d.style.color = '#D95555';
+            else if (data.line.includes('[warn]') || data.line.includes('Warn')) d.style.color = '#C9A020';
+            else if (data.line.includes('Bootstrapped')) d.style.color = '#2EB87A';
+            else d.style.color = '#6B7A94';
+            d.textContent = data.line;
+            logEl.appendChild(d);
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+    }
+});
+
+// Per-slot test and traffic timers
+const slotTestIntervals = {};
+const slotTrafficIntervals = {};
+const slotUptimeIntervals = {};
+
+function startSlotTestLoop(label) {
+    if (slotTestIntervals[label]) return;
+    runSlotTest(label);
+    slotTestIntervals[label] = setInterval(() => runSlotTest(label), 30000);
+}
+
+function stopSlotTestLoop(label) {
+    if (slotTestIntervals[label]) { clearInterval(slotTestIntervals[label]); delete slotTestIntervals[label]; }
+}
+
+function stopAllSlotTimers() {
+    for (const k in slotTestIntervals) { clearInterval(slotTestIntervals[k]); delete slotTestIntervals[k]; }
+    for (const k in slotTrafficIntervals) { clearInterval(slotTrafficIntervals[k]); delete slotTrafficIntervals[k]; }
+    for (const k in slotUptimeIntervals) { clearInterval(slotUptimeIntervals[k]); delete slotUptimeIntervals[k]; }
+}
+
+async function runSlotTest(label) {
+    try {
+        const result = await window.go.main.App.TestSlotConnection(label);
+        if (!result) return;
+        if (!multiSlotState[label]) multiSlotState[label] = {};
+        if (result.ip && result.ip !== '\u2014') {
+            multiSlotState[label].exitIp = result.ip;
+            updateSlotStat(label, 1, result.ip);
+        }
+        if (result.country && result.country !== '\u2014' && result.country !== '?') {
+            multiSlotState[label].country = result.country;
+            updateSlotStat(label, 2, result.country);
+        }
+    } catch(e) {}
+}
+
+function startSlotTrafficLoop(label) {
+    if (slotTrafficIntervals[label]) return;
+    slotTrafficIntervals[label] = setInterval(async () => {
+        try {
+            const stats = await window.go.main.App.GetSlotTrafficStats(label);
+            if (stats) {
+                if (stats.download) {
+                    multiSlotState[label] = multiSlotState[label] || {};
+                    multiSlotState[label].download = stats.download;
+                    updateSlotStat(label, 4, stats.download);
+                }
+                if (stats.upload) {
+                    multiSlotState[label] = multiSlotState[label] || {};
+                    multiSlotState[label].upload = stats.upload;
+                    updateSlotStat(label, 5, stats.upload);
+                }
+            }
+        } catch(e) {}
+    }, 2000);
+}
+
+function stopSlotTrafficLoop(label) {
+    if (slotTrafficIntervals[label]) { clearInterval(slotTrafficIntervals[label]); delete slotTrafficIntervals[label]; }
+}
+
+function startSlotUptime(label) {
+    if (slotUptimeIntervals[label]) return;
+    const startTime = Date.now();
+    slotUptimeIntervals[label] = setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const h = Math.floor(elapsed / 3600);
+        const m = Math.floor((elapsed % 3600) / 60);
+        const s = elapsed % 60;
+        const txt = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+        multiSlotState[label] = multiSlotState[label] || {};
+        multiSlotState[label].uptime = txt;
+        updateSlotStat(label, 3, txt);
+    }, 1000);
+}
+
+function updateSlotStat(label, index, value) {
+    const card = document.querySelector(`.slot-toggle[data-label="${label}"]`);
+    if (!card) return;
+    const cardEl = card.closest('.slot-card-full');
+    if (!cardEl) return;
+    const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+    if (boxes[index]) boxes[index].textContent = value;
+}
 
 let logPanelOpen = false;
 window.toggleLogPanel = function() {
@@ -844,11 +1560,6 @@ window.updateBridges = async function() {
     }
 };
 
-let scanRunning = false;
-window.startScan = function() { scanRunning = true; document.getElementById('scanProgressLabel').textContent = 'Scanning...'; document.getElementById('scanResults').innerHTML = ''; document.getElementById('scanSummary').textContent = ''; };
-window.stopScan = function() { scanRunning = false; document.getElementById('scanProgressLabel').textContent = 'Stopped.'; };
-window.exportScan = function() { console.log('Export scan results'); };
-
 window.applySettings = function() {
     const s = {};
     document.querySelectorAll('.settings-input, .settings-input-text').forEach(el => { s[el.id] = el.value; });
@@ -880,5 +1591,187 @@ function renderBridgeInfoMode() {
     <div style="height:20px"></div>
 </div>`;
 }
+
+/* ===== CUSTOM BRIDGES MODAL ===== */
+window.showCustomBridges = function() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+    <div class="modal-box" style="width:700px;max-height:85vh;display:flex;flex-direction:column">
+        <div class="modal-accent"></div>
+        <div class="modal-title">Custom Bridge Lines</div>
+        <div style="padding:0 20px 4px;font-size:12px;color:var(--fg2)">Enter one bridge per line. Format: obfs4 1.2.3.4:1234 FINGERPRINT cert=... iat-mode=0</div>
+        <div class="modal-body" style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+            <label style="font-size:12px;color:var(--fg2);margin-bottom:6px;display:flex;align-items:center;gap:6px">
+                <input type="checkbox" id="cb-use" /> Use custom bridges (overrides category selection)
+            </label>
+            <textarea id="cb-text" style="flex:1;min-height:200px;background:var(--blk);color:#2EB87A;font-family:Consolas,monospace;font-size:12px;border:1px solid var(--border);border-radius:4px;padding:10px;resize:none;outline:none" placeholder="obfs4 1.2.3.4:1234 ABCDEF... cert=... iat-mode=0"></textarea>
+            <div style="margin-top:8px;display:flex;gap:6px">
+                <button class="modal-btn modal-btn-add" id="cb-ping" style="background:var(--btn2);color:var(--cyan)">Ping All Bridges</button>
+            </div>
+            <div style="margin-top:6px;font-size:12px;font-weight:bold;color:var(--fg2)">Ping Results:</div>
+            <div id="cb-results" style="height:120px;overflow-y:auto;background:var(--card);border-radius:4px;padding:8px;font-family:Consolas,monospace;font-size:11px;color:var(--fg2)"></div>
+        </div>
+        <div class="modal-btns">
+            <button class="modal-btn modal-btn-cancel" id="cb-cancel">Cancel</button>
+            <button class="modal-btn modal-btn-add" id="cb-save">Save</button>
+        </div>
+    </div>`;
+    document.body.appendChild(overlay);
+
+    window.go.main.App.GetCustomBridges().then(data => {
+        if (data) {
+            overlay.querySelector('#cb-text').value = data.text || '';
+            overlay.querySelector('#cb-use').checked = data.useCustom || false;
+        }
+    });
+
+    overlay.querySelector('#cb-cancel').addEventListener('click', () => overlay.remove());
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+
+    overlay.querySelector('#cb-ping').addEventListener('click', async () => {
+        const text = overlay.querySelector('#cb-text').value;
+        const resEl = overlay.querySelector('#cb-results');
+        resEl.innerHTML = '<div style="color:var(--cyan)">Pinging...</div>';
+        try {
+            const results = await window.go.main.App.PingCustomBridges(text);
+            resEl.innerHTML = '';
+            if (!results || results.length === 0) {
+                resEl.innerHTML = '<div style="color:var(--fg2)">No bridges to ping.</div>';
+                return;
+            }
+            let okCount = 0;
+            for (const r of results) {
+                const d = document.createElement('div');
+                d.style.cssText = 'padding:1px 0';
+                if (r.ok) {
+                    okCount++;
+                    d.style.color = r.latency < 500 ? 'var(--grn)' : 'var(--ylw)';
+                    d.textContent = `\u2714 ${r.host}:${r.port}  ${r.latency} ms`;
+                } else {
+                    d.style.color = 'var(--red)';
+                    d.textContent = `\u2718 ${r.host || '?'}:${r.port || '?'}  ${r.error || 'Failed'}`;
+                }
+                resEl.appendChild(d);
+            }
+            const summary = document.createElement('div');
+            summary.style.cssText = 'margin-top:4px;color:var(--cyan);font-weight:bold';
+            summary.textContent = `Done. ${okCount}/${results.length} reachable.`;
+            resEl.appendChild(summary);
+        } catch(e) {
+            resEl.innerHTML = '<div style="color:var(--red)">Error: ' + e + '</div>';
+        }
+    });
+
+    overlay.querySelector('#cb-save').addEventListener('click', async () => {
+        const text = overlay.querySelector('#cb-text').value.trim();
+        const useCustom = overlay.querySelector('#cb-use').checked;
+        try {
+            await window.go.main.App.SaveCustomBridges(text, useCustom);
+        } catch(e) { console.error(e); }
+        overlay.remove();
+    });
+};
+
+/* ===== BRIDGE SCANNER ===== */
+let scanRunning = false;
+
+window.startScan = async function() {
+    const cat = document.getElementById('scan_cat')?.value || 'Tested & Active';
+    const trans = document.getElementById('scan_trans')?.value || 'obfs4';
+    const ip = document.getElementById('scan_ip')?.value || 'IPv4';
+    const workers = parseInt(document.getElementById('scan_workers')?.value) || 20;
+    const timeout = parseInt(document.getElementById('scan_timeout')?.value) || 5;
+    const resultsEl = document.getElementById('scanResults');
+    const progressLabel = document.getElementById('scanProgressLabel');
+    const progressFill = document.getElementById('scanProgressFill');
+    const summaryEl = document.getElementById('scanSummary');
+
+    scanRunning = true;
+    if (resultsEl) resultsEl.innerHTML = '';
+    if (progressLabel) progressLabel.textContent = 'Scanning...';
+    if (progressFill) progressFill.style.width = '0%';
+    if (summaryEl) summaryEl.textContent = '';
+
+    try {
+        await window.go.main.App.ScanBridges(cat, trans, ip, workers, timeout);
+    } catch(e) {
+        console.error(e);
+        scanRunning = false;
+        if (progressLabel) progressLabel.textContent = 'Error: ' + e;
+    }
+};
+
+window.stopScan = async function() {
+    scanRunning = false;
+    try { await window.go.main.App.StopScan(); } catch(e) {}
+    const progressLabel = document.getElementById('scanProgressLabel');
+    if (progressLabel) progressLabel.textContent = 'Stopped.';
+};
+
+window.runtime.EventsOn('scan:progress', (data) => {
+    const progressLabel = document.getElementById('scanProgressLabel');
+    const progressFill = document.getElementById('scanProgressFill');
+    const resultsEl = document.getElementById('scanResults');
+    if (progressLabel) progressLabel.textContent = `Scanning... ${data.done}/${data.total}`;
+    if (progressFill) progressFill.style.width = data.pct + '%';
+    if (resultsEl && data.result) {
+        const r = data.result;
+        const tr = document.createElement('tr');
+        const pingColor = r.ping < 0 ? 'var(--red)' : r.ping < 500 ? 'var(--grn)' : 'var(--ylw)';
+        const statusColor = r.ping < 0 ? 'var(--red)' : r.ping < 500 ? 'var(--grn)' : 'var(--ylw)';
+        tr.innerHTML = `<td>${r.bridgeType}</td><td>${r.host}</td><td>${r.port}</td><td style="color:${pingColor}">${r.ping >= 0 ? r.ping + ' ms' : '\u2014'}</td><td style="color:${statusColor}">${r.status}</td><td><button class="scan-copy-btn" onclick="copyScanBridge(this)" data-line="${r.fullLine.replace(/"/g, '&quot;')}">Copy</button></td>`;
+        resultsEl.appendChild(tr);
+    }
+});
+
+window.runtime.EventsOn('scan:done', (data) => {
+    scanRunning = false;
+    const progressLabel = document.getElementById('scanProgressLabel');
+    const summaryEl = document.getElementById('scanSummary');
+    if (progressLabel) progressLabel.textContent = 'Done.';
+    if (summaryEl) summaryEl.textContent = `\u2714 ${data.reachable} reachable  /  ${data.unreachable} unreachable  /  ${data.total} total`;
+});
+
+window.runtime.EventsOn('scan:error', (msg) => {
+    scanRunning = false;
+    const progressLabel = document.getElementById('scanProgressLabel');
+    if (progressLabel) progressLabel.textContent = 'Error: ' + msg;
+});
+
+window.copyScanBridge = function(btn) {
+    const line = btn.getAttribute('data-line');
+    navigator.clipboard.writeText(line).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 1500);
+    });
+};
+
+window.useAsCustomBridge = async function() {
+    try {
+        const text = await window.go.main.App.GetWorkingBridgesText();
+        if (!text) {
+            alert('No working bridges. Run a scan first.');
+            return;
+        }
+        await window.go.main.App.SaveCustomBridges(text, true);
+        alert('Working bridges saved as Custom Bridges. Select "Custom Bridges" as source to use them.');
+    } catch(e) { console.error(e); }
+};
+
+window.exportScan = async function() {
+    try {
+        const text = await window.go.main.App.GetWorkingBridgesText();
+        if (!text) {
+            alert('No working bridges. Run a scan first.');
+            return;
+        }
+        const blob = new Blob([text], { type: 'text/plain' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'working_bridges_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.txt';
+        a.click();
+    } catch(e) { console.error(e); }
+};
 
 render();
