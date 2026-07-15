@@ -108,14 +108,14 @@ type AutoStep struct {
 }
 
 var autoSequence = []AutoStep{
-	{"Tested & Active", "obfs4", "IPv4"},
 	{"Tested & Active", "vanilla", "IPv4"},
+	{"Tested & Active", "obfs4", "IPv4"},
 	{"Tested & Active", "webtunnel", "IPv4"},
-	{"Fresh (72h)", "obfs4", "IPv4"},
 	{"Fresh (72h)", "vanilla", "IPv4"},
+	{"Fresh (72h)", "obfs4", "IPv4"},
 	{"Fresh (72h)", "webtunnel", "IPv4"},
-	{"Full Archive", "obfs4", "IPv4"},
 	{"Full Archive", "vanilla", "IPv4"},
+	{"Full Archive", "obfs4", "IPv4"},
 	{"Full Archive", "webtunnel", "IPv4"},
 }
 
@@ -191,51 +191,71 @@ type SlotTraffic struct {
 }
 
 type Config struct {
-	Version             float64  `json:"version"`
-	AutoConnectTimeout  int      `json:"auto_connect_timeout"`
-	BridgesInTorrc      int      `json:"bridges_in_torrc"`
-	ShuffleBridges      bool     `json:"shuffle_bridges"`
-	DNSOverTor          bool     `json:"dns_over_tor"`
-	MaxCircuitDirtiness int      `json:"max_circuit_dirtiness"`
-	NewCircuitPeriod    int      `json:"new_circuit_period"`
-	NumEntryGuards      int      `json:"num_entry_guards"`
-	KeepAliveEnabled    bool     `json:"keep_alive_enabled"`
-	KeepAliveInterval   int      `json:"keep_alive_interval"`
-	WatchdogEnabled     bool     `json:"watchdog_enabled"`
-	WatchdogInterval    int      `json:"watchdog_interval"`
-	ExitNodesEnabled    bool     `json:"exit_nodes_enabled"`
-	ExitNodesCountries  string   `json:"exit_nodes_countries"`
-	StrictExitNodes     bool     `json:"strict_exit_nodes"`
-	AutoProxyOnConnect  bool     `json:"auto_proxy_on_connect"`
-	SNIEnabled          bool     `json:"sni_enabled"`
-	SNIHost             string   `json:"sni_host"`
-	LastSuccessCat      string   `json:"last_success_cat"`
-	LastSuccessTrans    string   `json:"last_success_trans"`
-	LastSuccessIP       string   `json:"last_success_ip"`
+	Version             float64   `json:"version"`
+	AutoConnectTimeout  int       `json:"auto_connect_timeout"`
+	BridgesInTorrc      int       `json:"bridges_in_torrc"`
+	ShuffleBridges      bool      `json:"shuffle_bridges"`
+	DNSOverTor          bool      `json:"dns_over_tor"`
+	MaxCircuitDirtiness int       `json:"max_circuit_dirtiness"`
+	NewCircuitPeriod    int       `json:"new_circuit_period"`
+	NumEntryGuards      int       `json:"num_entry_guards"`
+	KeepAliveEnabled    bool      `json:"keep_alive_enabled"`
+	KeepAliveInterval   int       `json:"keep_alive_interval"`
+	WatchdogEnabled     bool      `json:"watchdog_enabled"`
+	WatchdogInterval    int       `json:"watchdog_interval"`
+	ExitNodesEnabled    bool      `json:"exit_nodes_enabled"`
+	ExitNodesCountries  string    `json:"exit_nodes_countries"`
+	StrictExitNodes     bool      `json:"strict_exit_nodes"`
+	AutoProxyOnConnect  bool      `json:"auto_proxy_on_connect"`
+	SNIEnabled          bool      `json:"sni_enabled"`
+	SNIHost             string    `json:"sni_host"`
+	LastSuccessCat      string    `json:"last_success_cat"`
+	LastSuccessTrans    string    `json:"last_success_trans"`
+	LastSuccessIP       string    `json:"last_success_ip"`
 	MultiSlots          []SlotDef `json:"multi_slots"`
-	CustomBridges       string   `json:"custom_bridges"`
-	UseCustomBridges    bool     `json:"use_custom_bridges"`
-	CircuitBuildTimeout int      `json:"circuit_build_timeout"`
-	ConnectionPadding   bool     `json:"connection_padding"`
-	HardwareAccel       bool     `json:"hardware_accel"`
-	ExtractDir          string   `json:"extract_dir,omitempty"`
+	CustomBridges       string    `json:"custom_bridges"`
+	UseCustomBridges    bool      `json:"use_custom_bridges"`
+	CircuitBuildTimeout int       `json:"circuit_build_timeout"`
+	ConnectionPadding   bool      `json:"connection_padding"`
+	HardwareAccel       bool      `json:"hardware_accel"`
+	ExtractDir          string    `json:"extract_dir,omitempty"`
+
+	ExpConnectionPadding         bool   `json:"exp_connection_padding"`
+	ExpReducedConnectionPadding  bool   `json:"exp_reduced_connection_padding"`
+	ExpCircuitStreamTimeout      int    `json:"exp_circuit_stream_timeout"`
+	ExpSocksTimeout              int    `json:"exp_socks_timeout"`
+	ExpSafeLogging               bool   `json:"exp_safe_logging"`
+	ExpAvoidDiskWrites           bool   `json:"exp_avoid_disk_writes"`
+	ExpHardwareAccel             bool   `json:"exp_hardware_accel"`
+	ExpClientDNSRejectInternal   bool   `json:"exp_client_dns_reject_internal"`
+	ExpFascistFirewall           bool   `json:"exp_fascist_firewall"`
+	ExpFirewallPorts             string `json:"exp_firewall_ports"`
+	ExpReachableAddresses        string `json:"exp_reachable_addresses"`
+	ExpNumCPUs                   int    `json:"exp_num_cpus"`
+	ExpExcludeNodes              string `json:"exp_exclude_nodes"`
+	ExpExcludeExitNodes          string `json:"exp_exclude_exit_nodes"`
+	ExpUseEntryGuardsAsDirGuards bool   `json:"exp_use_entry_guards_as_dir_guards"`
+	ExpPathBiasCircThreshold     int    `json:"exp_path_bias_circ_threshold"`
+	ExpIsolateDestAddr           bool   `json:"exp_isolate_dest_addr"`
+	ExpIsolateDestPort           bool   `json:"exp_isolate_dest_port"`
+	ExpNoExitStreamPorts         string `json:"exp_no_exit_stream_ports"`
 }
 
 var defaultConfig = Config{
 	AutoConnectTimeout:  180,
 	BridgesInTorrc:      200,
 	ShuffleBridges:      true,
-	MaxCircuitDirtiness: 600,
-	NewCircuitPeriod:    10,
-	NumEntryGuards:      15,
+	MaxCircuitDirtiness: 300,
+	NewCircuitPeriod:    5,
+	NumEntryGuards:      5,
 	KeepAliveEnabled:    true,
-	KeepAliveInterval:   120,
+	KeepAliveInterval:   30,
 	WatchdogEnabled:     true,
 	WatchdogInterval:    30,
 	ExitNodesCountries:  "{nl},{de},{fr},{ch},{at},{se},{no},{fi},{is}",
 	SNIHost:             "www.google.com",
-	CircuitBuildTimeout: 120,
-	ConnectionPadding:   true,
+	CircuitBuildTimeout: 60,
+	ConnectionPadding:   false,
 	HardwareAccel:       true,
 	ExtractDir:          "",
 }
@@ -329,6 +349,21 @@ func (a *App) SaveConfig(cfg Config) error {
 		return err
 	}
 	return os.WriteFile(a.configPath, data, 0644)
+}
+
+func (a *App) ClearTorData() error {
+	dataDir := filepath.Join(a.dataDir, "data")
+	return os.RemoveAll(dataDir)
+}
+
+func (a *App) SetDataDir(dir string) error {
+	appdata := os.Getenv("LOCALAPPDATA")
+	if appdata == "" {
+		home, _ := os.UserHomeDir()
+		appdata = filepath.Join(home, "AppData", "Local")
+	}
+	ptrFile := filepath.Join(appdata, "DeltaTor", "datadir.txt")
+	return os.WriteFile(ptrFile, []byte(dir), 0644)
 }
 
 func (a *App) GetTorExePath() string {
@@ -450,7 +485,7 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	sb.WriteString(fmt.Sprintf("SOCKSPort 127.0.0.1:%d\n", TorSOCKSPort))
 	sb.WriteString(fmt.Sprintf("ControlPort 127.0.0.1:%d\n", TorCtrlPort))
 	sb.WriteString("CookieAuthentication 1\n")
-	sb.WriteString("DormantClientTimeout 24 hours\n")
+	sb.WriteString("DormantClientTimeout 30 minutes\n")
 	sb.WriteString("DormantOnFirstStartup 0\n")
 	sb.WriteString("DormantCanceledByStartup 1\n")
 	sb.WriteString(fmt.Sprintf("UseBridges %s\n", useBridges))
@@ -462,19 +497,72 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	sb.WriteString("MaxClientCircuitsPending 128\n")
 	sb.WriteString(fmt.Sprintf("CircuitBuildTimeout %d\n", cfg.CircuitBuildTimeout))
 	sb.WriteString("LearnCircuitBuildTimeout 1\n")
-	sb.WriteString("GuardLifetime 90 days\n")
-	sb.WriteString("NumDirectoryGuards 6\n")
+	sb.WriteString("GuardLifetime 30 days\n")
+	sb.WriteString("NumDirectoryGuards 4\n")
 	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
-	if cfg.ConnectionPadding {
+	sb.WriteString("OptimisticData 1\n")
+	if cfg.ExpConnectionPadding {
+		sb.WriteString("ConnectionPadding 1\n")
+		if cfg.ExpReducedConnectionPadding {
+			sb.WriteString("ReducedConnectionPadding 1\n")
+		} else {
+			sb.WriteString("ReducedConnectionPadding 0\n")
+		}
+	} else if cfg.ConnectionPadding {
 		sb.WriteString("ConnectionPadding 1\n")
 		sb.WriteString("ReducedConnectionPadding 0\n")
 	}
-	if cfg.HardwareAccel {
+	if cfg.HardwareAccel || cfg.ExpHardwareAccel {
 		sb.WriteString("HardwareAccel 1\n")
+	}
+
+	if cfg.ExpCircuitStreamTimeout > 0 {
+		sb.WriteString(fmt.Sprintf("CircuitStreamTimeout %d\n", cfg.ExpCircuitStreamTimeout))
+	}
+	if cfg.ExpSocksTimeout > 0 {
+		sb.WriteString(fmt.Sprintf("SocksTimeout %d\n", cfg.ExpSocksTimeout))
+	}
+	if cfg.ExpAvoidDiskWrites {
+		sb.WriteString("AvoidDiskWrites 1\n")
+	}
+	if cfg.ExpNumCPUs > 0 {
+		sb.WriteString(fmt.Sprintf("NumCPUs %d\n", cfg.ExpNumCPUs))
+	}
+	if cfg.ExpSafeLogging {
+		sb.WriteString("SafeLogging 1\n")
+	}
+	if cfg.ExpClientDNSRejectInternal {
+		sb.WriteString("ClientDNSRejectInternalAddresses 1\n")
+	}
+	if cfg.ExpFascistFirewall {
+		sb.WriteString("FascistFirewall 1\n")
+		if cfg.ExpFirewallPorts != "" {
+			sb.WriteString(fmt.Sprintf("ReachableDirPorts %s\n", cfg.ExpFirewallPorts))
+			sb.WriteString(fmt.Sprintf("ReachableORPorts %s\n", cfg.ExpFirewallPorts))
+		}
+	}
+	if cfg.ExpReachableAddresses != "" {
+		sb.WriteString(fmt.Sprintf("ReachableAddresses %s\n", cfg.ExpReachableAddresses))
+	}
+	if cfg.ExpExcludeNodes != "" {
+		sb.WriteString(fmt.Sprintf("ExcludeNodes %s\n", cfg.ExpExcludeNodes))
+	}
+	if cfg.ExpExcludeExitNodes != "" {
+		sb.WriteString(fmt.Sprintf("ExcludeExitNodes %s\n", cfg.ExpExcludeExitNodes))
+	}
+	if cfg.ExpUseEntryGuardsAsDirGuards {
+		sb.WriteString("UseEntryGuardsAsDirGuards 1\n")
+	}
+	if cfg.ExpPathBiasCircThreshold > 0 {
+		sb.WriteString(fmt.Sprintf("PathBiasCircThreshold %d\n", cfg.ExpPathBiasCircThreshold))
+	}
+	if cfg.ExpNoExitStreamPorts != "" {
+		sb.WriteString(fmt.Sprintf("RejectPlaintextPorts %s\n", cfg.ExpNoExitStreamPorts))
 	}
 
 	if cfg.DNSOverTor {
 		sb.WriteString("DNSPort 127.0.0.1:9053\n")
+		sb.WriteString("CacheDNS 1\n")
 	}
 	if cfg.ExitNodesEnabled && cfg.ExitNodesCountries != "" {
 		sb.WriteString(fmt.Sprintf("ExitNodes %s\n", cfg.ExitNodesCountries))
@@ -1033,7 +1121,7 @@ func (a *App) watchdogTick() {
 	a.torProcess = nil
 	a.connected = false
 	a.torMu.Unlock()
-	time.Sleep(2 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 	a.runTorInternal()
 }
 
@@ -1279,7 +1367,7 @@ func socks5Request(host string, port int, path string, proxyPort int, useSSL boo
 		defer tlsConn.Close()
 		tlsConn.Write([]byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n", path, host)))
 		var result strings.Builder
-		buf := make([]byte, 4096)
+		buf := make([]byte, 65536)
 		for {
 			n, err := tlsConn.Read(buf)
 			if n > 0 {
@@ -1299,7 +1387,7 @@ func socks5Request(host string, port int, path string, proxyPort int, useSSL boo
 
 	conn.Write([]byte(fmt.Sprintf("GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n", path, host)))
 	var result strings.Builder
-	buf := make([]byte, 4096)
+	buf := make([]byte, 65536)
 	for {
 		n, err := conn.Read(buf)
 		if n > 0 {
@@ -1681,9 +1769,13 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 	if tc, ok := clientConn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		tc.SetReadBuffer(524288)
+		tc.SetWriteBuffer(524288)
 	}
 	if tc, ok := torConn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		tc.SetReadBuffer(524288)
+		tc.SetWriteBuffer(524288)
 	}
 
 	var wg sync.WaitGroup
@@ -1839,7 +1931,7 @@ func testDownloadSpeed(a *App) string {
 	defer tlsConn.Close()
 
 	tlsConn.Write([]byte("GET /api/ip HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"))
-	buf := make([]byte, 8192)
+	buf := make([]byte, 65536)
 	for {
 		n, err := tlsConn.Read(buf)
 		if n > 0 {
@@ -1894,10 +1986,10 @@ func testUploadSpeed(a *App) string {
 	defer tlsConn.Close()
 
 	// Upload 10KB of data
-	postData := strings.Repeat("X", 10240)
+ postData := strings.Repeat("X", 1048576)
 	tlsConn.Write([]byte("POST /post HTTP/1.1\r\nHost: " + host + "\r\nContent-Length: " + strconv.Itoa(len(postData)) + "\r\nConnection: close\r\n\r\n" + postData))
 
-	buf := make([]byte, 8192)
+	buf := make([]byte, 65536)
 	for {
 		n, err := tlsConn.Read(buf)
 		if n > 0 {
@@ -1919,11 +2011,11 @@ func testUploadSpeed(a *App) string {
 // ===================== MULTI-CONNECT =====================
 
 func (a *App) slotPorts(index int) (socksPort int, httpPort int) {
-	return 9051 + index, 9061 + index
+	return 9070 + index, 9100 + index
 }
 
 func (a *App) slotCtrlPort(index int) int {
-	return 9081 + index
+	return 9120 + index
 }
 
 func (a *App) GetMultiSlots() []SlotDef {
@@ -2010,7 +2102,7 @@ func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source 
 	sb.WriteString(fmt.Sprintf("SOCKSPort 127.0.0.1:%d\n", socksPort))
 	sb.WriteString(fmt.Sprintf("ControlPort 127.0.0.1:%d\n", ctrlPort))
 	sb.WriteString("CookieAuthentication 1\n")
-	sb.WriteString("DormantClientTimeout 24 hours\n")
+	sb.WriteString("DormantClientTimeout 30 minutes\n")
 	sb.WriteString("DormantOnFirstStartup 0\n")
 	sb.WriteString("DormantCanceledByStartup 1\n")
 	sb.WriteString(fmt.Sprintf("UseBridges %s\n", useBridges))
@@ -2022,15 +2114,83 @@ func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source 
 	sb.WriteString("MaxClientCircuitsPending 128\n")
 	sb.WriteString(fmt.Sprintf("CircuitBuildTimeout %d\n", cfg.CircuitBuildTimeout))
 	sb.WriteString("LearnCircuitBuildTimeout 1\n")
-	sb.WriteString("GuardLifetime 90 days\n")
-	sb.WriteString("NumDirectoryGuards 6\n")
+	sb.WriteString("GuardLifetime 30 days\n")
+	sb.WriteString("NumDirectoryGuards 4\n")
 	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
-	if cfg.ConnectionPadding {
+	sb.WriteString("OptimisticData 1\n")
+	if cfg.ExpConnectionPadding {
+		sb.WriteString("ConnectionPadding 1\n")
+		if cfg.ExpReducedConnectionPadding {
+			sb.WriteString("ReducedConnectionPadding 1\n")
+		} else {
+			sb.WriteString("ReducedConnectionPadding 0\n")
+		}
+	} else if cfg.ConnectionPadding {
 		sb.WriteString("ConnectionPadding 1\n")
 		sb.WriteString("ReducedConnectionPadding 0\n")
 	}
-	if cfg.HardwareAccel {
+	if cfg.HardwareAccel || cfg.ExpHardwareAccel {
 		sb.WriteString("HardwareAccel 1\n")
+	}
+
+	if cfg.ExpCircuitStreamTimeout > 0 {
+		sb.WriteString(fmt.Sprintf("CircuitStreamTimeout %d\n", cfg.ExpCircuitStreamTimeout))
+	}
+	if cfg.ExpSocksTimeout > 0 {
+		sb.WriteString(fmt.Sprintf("SocksTimeout %d\n", cfg.ExpSocksTimeout))
+	}
+	if cfg.ExpAvoidDiskWrites {
+		sb.WriteString("AvoidDiskWrites 1\n")
+	}
+	if cfg.ExpNumCPUs > 0 {
+		sb.WriteString(fmt.Sprintf("NumCPUs %d\n", cfg.ExpNumCPUs))
+	}
+	if cfg.ExpSafeLogging {
+		sb.WriteString("SafeLogging 1\n")
+	}
+	if cfg.ExpClientDNSRejectInternal {
+		sb.WriteString("ClientDNSRejectInternalAddresses 1\n")
+	}
+	if cfg.ExpFascistFirewall {
+		sb.WriteString("FascistFirewall 1\n")
+		if cfg.ExpFirewallPorts != "" {
+			sb.WriteString(fmt.Sprintf("ReachableDirPorts %s\n", cfg.ExpFirewallPorts))
+			sb.WriteString(fmt.Sprintf("ReachableORPorts %s\n", cfg.ExpFirewallPorts))
+		}
+	}
+	if cfg.ExpReachableAddresses != "" {
+		sb.WriteString(fmt.Sprintf("ReachableAddresses %s\n", cfg.ExpReachableAddresses))
+	}
+	if cfg.ExpExcludeNodes != "" {
+		sb.WriteString(fmt.Sprintf("ExcludeNodes %s\n", cfg.ExpExcludeNodes))
+	}
+	if cfg.ExpExcludeExitNodes != "" {
+		sb.WriteString(fmt.Sprintf("ExcludeExitNodes %s\n", cfg.ExpExcludeExitNodes))
+	}
+	if cfg.ExpUseEntryGuardsAsDirGuards {
+		sb.WriteString("UseEntryGuardsAsDirGuards 1\n")
+	}
+	if cfg.ExpPathBiasCircThreshold > 0 {
+		sb.WriteString(fmt.Sprintf("PathBiasCircThreshold %d\n", cfg.ExpPathBiasCircThreshold))
+	}
+	if cfg.ExpNoExitStreamPorts != "" {
+		sb.WriteString(fmt.Sprintf("RejectPlaintextPorts %s\n", cfg.ExpNoExitStreamPorts))
+	}
+
+	if cfg.DNSOverTor {
+		sb.WriteString("DNSPort 127.0.0.1:9053\n")
+		sb.WriteString("CacheDNS 1\n")
+	}
+	if cfg.ExitNodesEnabled && cfg.ExitNodesCountries != "" {
+		sb.WriteString(fmt.Sprintf("ExitNodes %s\n", cfg.ExitNodesCountries))
+		if cfg.StrictExitNodes {
+			sb.WriteString("StrictNodes 1\n")
+		} else {
+			sb.WriteString("StrictNodes 0\n")
+		}
+	}
+	if cfg.SNIEnabled && cfg.SNIHost != "" {
+		sb.WriteString(fmt.Sprintf("# SNI override active: %s\n", cfg.SNIHost))
 	}
 
 	if useBridges == "1" {
@@ -2320,9 +2480,13 @@ func handleHTTPRequestProxy(clientConn net.Conn, initialData []byte, method, tar
 func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) {
 	if tc, ok := clientConn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		tc.SetReadBuffer(524288)
+		tc.SetWriteBuffer(524288)
 	}
 	if tc, ok := torConn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		tc.SetReadBuffer(524288)
+		tc.SetWriteBuffer(524288)
 	}
 
 	var wg sync.WaitGroup
@@ -2576,9 +2740,9 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 			})
 			return
 		}
-		delay := 90 + retryCount*30
-		if delay > 180 {
-			delay = 180
+		delay := 30 + retryCount*15
+		if delay > 90 {
+			delay = 90
 		}
 		runtime.EventsEmit(a.ctx, "multi:slot:progress", map[string]interface{}{
 			"label": slot.Label, "status": fmt.Sprintf("↺ Retry %d/%d in %ds…", retryCount+1, maxRetries, delay),
@@ -2867,10 +3031,22 @@ func (a *App) GetBestAutoProxySlot() string {
 		return ""
 	}
 	bestLabel := ""
-	bestAvg := float64(999999)
+	bestScore := float64(999999)
 	for lbl, hd := range a.multiHealthData {
-		if hd.Online && hd.AvgLat < bestAvg {
-			bestAvg = hd.AvgLat
+		if !hd.Online {
+			continue
+		}
+		variance := 0.0
+		if len(hd.History) > 1 {
+			sum := 0.0
+			for _, v := range hd.History {
+				sum += (v - hd.AvgLat) * (v - hd.AvgLat)
+			}
+			variance = sum / float64(len(hd.History))
+		}
+		score := hd.AvgLat * (1 + variance/10000.0)
+		if score < bestScore {
+			bestScore = score
 			bestLabel = lbl
 		}
 	}

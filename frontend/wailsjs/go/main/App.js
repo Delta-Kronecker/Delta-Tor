@@ -14,6 +14,10 @@ export function CheckVersion() {
   return window['go']['main']['App']['CheckVersion']();
 }
 
+export function ClearTorData() {
+  return window['go']['main']['App']['ClearTorData']();
+}
+
 export function DeleteMultiSlot(arg1) {
   return window['go']['main']['App']['DeleteMultiSlot'](arg1);
 }
@@ -164,6 +168,10 @@ export function ScanBridges(arg1, arg2, arg3, arg4, arg5) {
 
 export function SetProxyToSlot(arg1) {
   return window['go']['main']['App']['SetProxyToSlot'](arg1);
+}
+
+export function SetDataDir(arg1) {
+  return window['go']['main']['App']['SetDataDir'](arg1);
 }
 
 export function SetSystemProxy() {
