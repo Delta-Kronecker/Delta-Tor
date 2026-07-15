@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -135,7 +136,6 @@ type App struct {
 	ulBytes          int64
 	dlPrev           int64
 	ulPrev           int64
-	trafficMu        sync.Mutex
 	autoConnectActive bool
 	autoConnectMu    sync.Mutex
 	autoConnectStop  chan struct{}
@@ -188,7 +188,6 @@ type SlotTraffic struct {
 	UlBytes    int64
 	DlPrev     int64
 	UlPrev     int64
-	mu         sync.Mutex
 }
 
 type Config struct {
@@ -1667,22 +1666,34 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 }
 
 func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
+	if tc, ok := clientConn.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+	if tc, ok := torConn.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
+		buf := make([]byte, 262144)
 		for {
-			torConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-			n, err := torConn.Read(buf)
-			if n > 0 {
-				a.trafficMu.Lock()
-				a.dlBytes += int64(n)
-				a.trafficMu.Unlock()
-				clientConn.Write(buf[:n])
+			nr, er := torConn.Read(buf)
+			if nr > 0 {
+				atomic.AddInt64(&a.dlBytes, int64(nr))
+				nw, ew := clientConn.Write(buf[:nr])
+				for nw < nr && ew == nil {
+					n, e := clientConn.Write(buf[nw:nr])
+					nw += n
+					ew = e
+				}
+				if ew != nil {
+					return
+				}
 			}
-			if err != nil {
+			if er != nil {
 				return
 			}
 		}
@@ -1690,17 +1701,22 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
+		buf := make([]byte, 262144)
 		for {
-			clientConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-			n, err := clientConn.Read(buf)
-			if n > 0 {
-				a.trafficMu.Lock()
-				a.ulBytes += int64(n)
-				a.trafficMu.Unlock()
-				torConn.Write(buf[:n])
+			nr, er := clientConn.Read(buf)
+			if nr > 0 {
+				atomic.AddInt64(&a.ulBytes, int64(nr))
+				nw, ew := torConn.Write(buf[:nr])
+				for nw < nr && ew == nil {
+					n, e := torConn.Write(buf[nw:nr])
+					nw += n
+					ew = e
+				}
+				if ew != nil {
+					return
+				}
 			}
-			if err != nil {
+			if er != nil {
 				return
 			}
 		}
@@ -1712,14 +1728,12 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 }
 
 func (a *App) GetTrafficStats() map[string]string {
-	a.trafficMu.Lock()
-	dl := a.dlBytes
-	ul := a.ulBytes
-	dlPrev := a.dlPrev
-	ulPrev := a.ulPrev
-	a.dlPrev = dl
-	a.ulPrev = ul
-	a.trafficMu.Unlock()
+	dl := atomic.LoadInt64(&a.dlBytes)
+	ul := atomic.LoadInt64(&a.ulBytes)
+	dlPrev := atomic.LoadInt64(&a.dlPrev)
+	ulPrev := atomic.LoadInt64(&a.ulPrev)
+	atomic.StoreInt64(&a.dlPrev, dl)
+	atomic.StoreInt64(&a.ulPrev, ul)
 
 	dlSpeed := float64(dl-dlPrev) / 2.0
 	ulSpeed := float64(ul-ulPrev) / 2.0
@@ -1740,10 +1754,10 @@ func formatSpeed(bytesPerSec float64) string {
 }
 
 func (a *App) ResetTrafficStats() {
-	a.trafficMu.Lock()
-	a.dlBytes = 0
-	a.ulBytes = 0
-	a.trafficMu.Unlock()
+	atomic.StoreInt64(&a.dlBytes, 0)
+	atomic.StoreInt64(&a.ulBytes, 0)
+	atomic.StoreInt64(&a.dlPrev, 0)
+	atomic.StoreInt64(&a.ulPrev, 0)
 }
 
 func formatBytes(bytes int64) string {
@@ -2284,24 +2298,36 @@ func handleHTTPRequestProxy(clientConn net.Conn, initialData []byte, method, tar
 }
 
 func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) {
+	if tc, ok := clientConn.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+	if tc, ok := torConn.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
+		buf := make([]byte, 262144)
 		for {
-			torConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-			n, err := torConn.Read(buf)
-			if n > 0 {
+			nr, er := torConn.Read(buf)
+			if nr > 0 {
 				if traffic != nil {
-					traffic.mu.Lock()
-					traffic.DlBytes += int64(n)
-					traffic.mu.Unlock()
+					atomic.AddInt64(&traffic.DlBytes, int64(nr))
 				}
-				clientConn.Write(buf[:n])
+				nw, ew := clientConn.Write(buf[:nr])
+				for nw < nr && ew == nil {
+					n, e := clientConn.Write(buf[nw:nr])
+					nw += n
+					ew = e
+				}
+				if ew != nil {
+					return
+				}
 			}
-			if err != nil {
+			if er != nil {
 				return
 			}
 		}
@@ -2309,19 +2335,24 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 65536)
+		buf := make([]byte, 262144)
 		for {
-			clientConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-			n, err := clientConn.Read(buf)
-			if n > 0 {
+			nr, er := clientConn.Read(buf)
+			if nr > 0 {
 				if traffic != nil {
-					traffic.mu.Lock()
-					traffic.UlBytes += int64(n)
-					traffic.mu.Unlock()
+					atomic.AddInt64(&traffic.UlBytes, int64(nr))
 				}
-				torConn.Write(buf[:n])
+				nw, ew := torConn.Write(buf[:nr])
+				for nw < nr && ew == nil {
+					n, e := torConn.Write(buf[nw:nr])
+					nw += n
+					ew = e
+				}
+				if ew != nil {
+					return
+				}
 			}
-			if err != nil {
+			if er != nil {
 				return
 			}
 		}
@@ -2792,14 +2823,12 @@ func (a *App) GetSlotTrafficStats(label string) SlotTrafficResult {
 			if !ok {
 				return SlotTrafficResult{Download: "\u2014", Upload: "\u2014"}
 			}
-			t.mu.Lock()
-			dl := t.DlBytes
-			ul := t.UlBytes
-			dlPrev := t.DlPrev
-			ulPrev := t.UlPrev
-			t.DlPrev = dl
-			t.UlPrev = ul
-			t.mu.Unlock()
+			dl := atomic.LoadInt64(&t.DlBytes)
+			ul := atomic.LoadInt64(&t.UlBytes)
+			dlPrev := atomic.LoadInt64(&t.DlPrev)
+			ulPrev := atomic.LoadInt64(&t.UlPrev)
+			atomic.StoreInt64(&t.DlPrev, dl)
+			atomic.StoreInt64(&t.UlPrev, ul)
 			dlSpeed := float64(dl-dlPrev) / 2.0
 			ulSpeed := float64(ul-ulPrev) / 2.0
 			return SlotTrafficResult{
