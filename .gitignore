@@ -2,6 +2,9 @@
 DeltaTor.exe
 deltatior
 *.exe
+tor-expert-bundle-windows-x86_64-15.0.14.tar.gz
+bridges/
+.gitignore
 
 # Wails build
 build/bin/
