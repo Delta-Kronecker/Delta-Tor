@@ -87,6 +87,7 @@ export namespace main {
 	    }
 	}
 	export class Config {
+	    version: number;
 	    auto_connect_timeout: number;
 	    bridges_in_torrc: number;
 	    shuffle_bridges: boolean;
@@ -118,6 +119,7 @@ export namespace main {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
 	        this.auto_connect_timeout = source["auto_connect_timeout"];
 	        this.bridges_in_torrc = source["bridges_in_torrc"];
 	        this.shuffle_bridges = source["shuffle_bridges"];

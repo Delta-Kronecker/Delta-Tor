@@ -6,6 +6,8 @@ export function AddMultiSlot(arg1:main.SlotDef):Promise<void>;
 
 export function CheckSlotHealthNow(arg1:string):Promise<void>;
 
+export function CheckVersion():Promise<Record<string, any>>;
+
 export function DeleteMultiSlot(arg1:string):Promise<void>;
 
 export function DownloadAllBridges():Promise<void>;
@@ -25,6 +27,8 @@ export function GetBridgeLines(arg1:string,arg2:string,arg3:string):Promise<Arra
 export function GetCustomBridges():Promise<Record<string, any>>;
 
 export function GetDataDir():Promise<string>;
+
+export function GetDefaultDataDir():Promise<string>;
 
 export function GetMultiSlots():Promise<Array<main.SlotDef>>;
 
@@ -54,6 +58,8 @@ export function LoadConfig():Promise<main.Config>;
 
 export function NotifyDesktop(arg1:string,arg2:string):Promise<void>;
 
+export function PickDataDir():Promise<string>;
+
 export function PingBridge(arg1:string,arg2:number,arg3:number):Promise<main.PingResult>;
 
 export function PingCustomBridges(arg1:string):Promise<Array<main.PingResult>>;
@@ -62,7 +68,11 @@ export function RequestNewCircuit():Promise<void>;
 
 export function ResetTrafficStats():Promise<void>;
 
+export function RestartApp():Promise<void>;
+
 export function RetrySlot(arg1:string):Promise<void>;
+
+export function RunSetup(arg1:string):Promise<void>;
 
 export function SaveConfig(arg1:main.Config):Promise<void>;
 

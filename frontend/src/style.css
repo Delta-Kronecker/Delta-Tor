@@ -1609,6 +1609,204 @@ body {
 }
 
 /* ========================================================
+   SETUP PAGE
+   ======================================================== */
+.setup-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--bg);
+}
+.setup-header {
+    padding: 16px 20px 0;
+}
+.setup-title {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 20px;
+    font-weight: bold;
+    color: var(--acc);
+}
+.setup-body {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+.setup-card {
+    width: 100%;
+    max-width: 500px;
+    background: var(--panel);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+.setup-card-accent {
+    height: 3px;
+    background: linear-gradient(90deg, var(--acc), var(--acc2));
+}
+.setup-card-inner {
+    padding: 24px;
+}
+.setup-info {
+    display: flex;
+    gap: 14px;
+    margin-bottom: 24px;
+    padding: 14px;
+    background: var(--btn);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+.setup-info-icon {
+    font-size: 28px;
+    color: var(--ylw);
+    line-height: 1;
+}
+.setup-info-title {
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--fg);
+    margin-bottom: 4px;
+}
+.setup-info-desc {
+    font-size: 12px;
+    color: var(--fg2);
+    line-height: 1.5;
+}
+.setup-field {
+    margin-bottom: 20px;
+}
+.setup-label {
+    display: block;
+    font-size: 12px;
+    color: var(--fg2);
+    margin-bottom: 6px;
+}
+.setup-path-row {
+    display: flex;
+    gap: 8px;
+}
+.setup-path-input {
+    flex: 1;
+    background: var(--btn);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    outline: none;
+}
+.setup-path-input:focus {
+    border-color: var(--acc);
+}
+.setup-browse-btn {
+    background: var(--btn2);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-size: 12px;
+    cursor: pointer;
+}
+.setup-browse-btn:hover {
+    border-color: var(--acc);
+}
+.setup-hint {
+    font-size: 11px;
+    color: var(--fg2);
+    margin-top: 4px;
+}
+.setup-log {
+    margin-bottom: 16px;
+    background: var(--blk);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 12px;
+}
+.setup-log-title {
+    font-size: 11px;
+    color: var(--fg2);
+    margin-bottom: 8px;
+}
+.setup-log-content {
+    max-height: 120px;
+    overflow-y: auto;
+    font-family: 'Consolas', monospace;
+    font-size: 11px;
+}
+.setup-log-line {
+    padding: 2px 0;
+    color: var(--acc);
+}
+.setup-success {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 30px 0;
+}
+.setup-success-icon {
+    font-size: 48px;
+    color: var(--grn);
+    margin-bottom: 12px;
+}
+.setup-success-text {
+    font-size: 18px;
+    font-weight: bold;
+    color: var(--grn);
+    margin-bottom: 6px;
+}
+.setup-success-desc {
+    font-size: 13px;
+    color: var(--fg2);
+    margin-bottom: 20px;
+}
+.setup-restart-btn {
+    background: var(--acc);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 32px;
+    font-size: 14px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.setup-restart-btn:hover {
+    background: var(--acc2);
+}
+.setup-btns {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+}
+.setup-btn-cancel {
+    background: var(--btn2);
+    color: var(--fg2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.setup-btn-cancel:hover {
+    border-color: var(--fg2);
+}
+.setup-btn-start {
+    background: var(--acc);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 24px;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.setup-btn-start:hover {
+    background: var(--acc2);
+}
+
+/* ========================================================
    SCANNER COPY BUTTON
    ======================================================== */
 .scan-copy-btn {

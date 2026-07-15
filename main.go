@@ -23,7 +23,7 @@ func main() {
 	go setupTray(app)
 
 	err := wails.Run(&options.App{
-		Title:             "Delta Tor 1.3.0",
+		Title:             "Delta Tor 1.3.1",
 		Width:             800,
 		Height:            1000,
 		HideWindowOnClose: true,
