@@ -10,6 +10,10 @@ export function CheckSlotHealthNow(arg1) {
   return window['go']['main']['App']['CheckSlotHealthNow'](arg1);
 }
 
+export function CheckVersion() {
+  return window['go']['main']['App']['CheckVersion']();
+}
+
 export function DeleteMultiSlot(arg1) {
   return window['go']['main']['App']['DeleteMultiSlot'](arg1);
 }
@@ -48,6 +52,10 @@ export function GetCustomBridges() {
 
 export function GetDataDir() {
   return window['go']['main']['App']['GetDataDir']();
+}
+
+export function GetDefaultDataDir() {
+  return window['go']['main']['App']['GetDefaultDataDir']();
 }
 
 export function GetMultiSlots() {
@@ -106,6 +114,10 @@ export function NotifyDesktop(arg1, arg2) {
   return window['go']['main']['App']['NotifyDesktop'](arg1, arg2);
 }
 
+export function PickDataDir() {
+  return window['go']['main']['App']['PickDataDir']();
+}
+
 export function PingBridge(arg1, arg2, arg3) {
   return window['go']['main']['App']['PingBridge'](arg1, arg2, arg3);
 }
@@ -122,8 +134,16 @@ export function ResetTrafficStats() {
   return window['go']['main']['App']['ResetTrafficStats']();
 }
 
+export function RestartApp() {
+  return window['go']['main']['App']['RestartApp']();
+}
+
 export function RetrySlot(arg1) {
   return window['go']['main']['App']['RetrySlot'](arg1);
+}
+
+export function RunSetup(arg1) {
+  return window['go']['main']['App']['RunSetup'](arg1);
 }
 
 export function SaveConfig(arg1) {
