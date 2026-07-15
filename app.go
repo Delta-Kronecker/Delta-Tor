@@ -215,14 +215,17 @@ type Config struct {
 	MultiSlots          []SlotDef `json:"multi_slots"`
 	CustomBridges       string   `json:"custom_bridges"`
 	UseCustomBridges    bool     `json:"use_custom_bridges"`
+	CircuitBuildTimeout int      `json:"circuit_build_timeout"`
+	ConnectionPadding   bool     `json:"connection_padding"`
+	HardwareAccel       bool     `json:"hardware_accel"`
 	ExtractDir          string   `json:"extract_dir,omitempty"`
 }
 
 var defaultConfig = Config{
 	AutoConnectTimeout:  180,
-	BridgesInTorrc:      100,
+	BridgesInTorrc:      200,
 	ShuffleBridges:      true,
-	MaxCircuitDirtiness: 1800,
+	MaxCircuitDirtiness: 600,
 	NewCircuitPeriod:    10,
 	NumEntryGuards:      15,
 	KeepAliveEnabled:    true,
@@ -231,6 +234,9 @@ var defaultConfig = Config{
 	WatchdogInterval:    30,
 	ExitNodesCountries:  "{nl},{de},{fr},{ch},{at},{se},{no},{fi},{is}",
 	SNIHost:             "www.google.com",
+	CircuitBuildTimeout: 120,
+	ConnectionPadding:   true,
+	HardwareAccel:       true,
 	ExtractDir:          "",
 }
 
@@ -453,12 +459,19 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	sb.WriteString(fmt.Sprintf("NumEntryGuards %d\n", cfg.NumEntryGuards))
 	sb.WriteString("AllowNonRFC953Hostnames 1\n")
 	sb.WriteString("EnforceDistinctSubnets 0\n")
-	sb.WriteString("MaxClientCircuitsPending 64\n")
-	sb.WriteString("CircuitBuildTimeout 30\n")
-	sb.WriteString("LearnCircuitBuildTimeout 0\n")
+	sb.WriteString("MaxClientCircuitsPending 128\n")
+	sb.WriteString(fmt.Sprintf("CircuitBuildTimeout %d\n", cfg.CircuitBuildTimeout))
+	sb.WriteString("LearnCircuitBuildTimeout 1\n")
 	sb.WriteString("GuardLifetime 90 days\n")
 	sb.WriteString("NumDirectoryGuards 6\n")
 	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
+	if cfg.ConnectionPadding {
+		sb.WriteString("ConnectionPadding 1\n")
+		sb.WriteString("ReducedConnectionPadding 0\n")
+	}
+	if cfg.HardwareAccel {
+		sb.WriteString("HardwareAccel 1\n")
+	}
 
 	if cfg.DNSOverTor {
 		sb.WriteString("DNSPort 127.0.0.1:9053\n")
@@ -2006,12 +2019,19 @@ func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source 
 	sb.WriteString(fmt.Sprintf("NumEntryGuards %d\n", cfg.NumEntryGuards))
 	sb.WriteString("AllowNonRFC953Hostnames 1\n")
 	sb.WriteString("EnforceDistinctSubnets 0\n")
-	sb.WriteString("MaxClientCircuitsPending 64\n")
-	sb.WriteString("CircuitBuildTimeout 60\n")
-	sb.WriteString("LearnCircuitBuildTimeout 0\n")
+	sb.WriteString("MaxClientCircuitsPending 128\n")
+	sb.WriteString(fmt.Sprintf("CircuitBuildTimeout %d\n", cfg.CircuitBuildTimeout))
+	sb.WriteString("LearnCircuitBuildTimeout 1\n")
 	sb.WriteString("GuardLifetime 90 days\n")
 	sb.WriteString("NumDirectoryGuards 6\n")
 	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
+	if cfg.ConnectionPadding {
+		sb.WriteString("ConnectionPadding 1\n")
+		sb.WriteString("ReducedConnectionPadding 0\n")
+	}
+	if cfg.HardwareAccel {
+		sb.WriteString("HardwareAccel 1\n")
+	}
 
 	if useBridges == "1" {
 		sb.WriteString(fmt.Sprintf("ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,scramblesuit,webtunnel exec %s\n", lyrebird))
