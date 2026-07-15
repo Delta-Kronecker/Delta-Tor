@@ -21,6 +21,8 @@ import (
 	"time"
 	"unsafe"
 
+	"fyne.io/systray"
+	"github.com/go-ole/go-ole"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -119,6 +121,7 @@ var autoSequence = []AutoStep{
 type App struct {
 	ctx              context.Context
 	dataDir          string
+	exeDir           string
 	configPath       string
 	bridgesDir       string
 	torProcess       *os.Process
@@ -189,30 +192,31 @@ type SlotTraffic struct {
 }
 
 type Config struct {
-	AutoConnectTimeout    int    `json:"auto_connect_timeout"`
-	BridgesInTorrc        int    `json:"bridges_in_torrc"`
-	ShuffleBridges        bool   `json:"shuffle_bridges"`
-	DNSOverTor            bool   `json:"dns_over_tor"`
-	MaxCircuitDirtiness   int    `json:"max_circuit_dirtiness"`
-	NewCircuitPeriod      int    `json:"new_circuit_period"`
-	NumEntryGuards        int    `json:"num_entry_guards"`
-	KeepAliveEnabled      bool   `json:"keep_alive_enabled"`
-	KeepAliveInterval     int    `json:"keep_alive_interval"`
-	WatchdogEnabled       bool   `json:"watchdog_enabled"`
-	WatchdogInterval      int    `json:"watchdog_interval"`
-	ExitNodesEnabled      bool   `json:"exit_nodes_enabled"`
-	ExitNodesCountries    string `json:"exit_nodes_countries"`
-	StrictExitNodes       bool   `json:"strict_exit_nodes"`
-	AutoProxyOnConnect    bool   `json:"auto_proxy_on_connect"`
-	SNIEnabled            bool   `json:"sni_enabled"`
-	SNIHost               string `json:"sni_host"`
-	LastSuccessCat        string `json:"last_success_cat"`
-	LastSuccessTrans      string `json:"last_success_trans"`
-	LastSuccessIP         string `json:"last_success_ip"`
-	MultiSlots            []SlotDef `json:"multi_slots"`
-	CustomBridges         string `json:"custom_bridges"`
-	UseCustomBridges      bool   `json:"use_custom_bridges"`
-	ExtractDir            string `json:"extract_dir,omitempty"`
+	Version             float64  `json:"version"`
+	AutoConnectTimeout  int      `json:"auto_connect_timeout"`
+	BridgesInTorrc      int      `json:"bridges_in_torrc"`
+	ShuffleBridges      bool     `json:"shuffle_bridges"`
+	DNSOverTor          bool     `json:"dns_over_tor"`
+	MaxCircuitDirtiness int      `json:"max_circuit_dirtiness"`
+	NewCircuitPeriod    int      `json:"new_circuit_period"`
+	NumEntryGuards      int      `json:"num_entry_guards"`
+	KeepAliveEnabled    bool     `json:"keep_alive_enabled"`
+	KeepAliveInterval   int      `json:"keep_alive_interval"`
+	WatchdogEnabled     bool     `json:"watchdog_enabled"`
+	WatchdogInterval    int      `json:"watchdog_interval"`
+	ExitNodesEnabled    bool     `json:"exit_nodes_enabled"`
+	ExitNodesCountries  string   `json:"exit_nodes_countries"`
+	StrictExitNodes     bool     `json:"strict_exit_nodes"`
+	AutoProxyOnConnect  bool     `json:"auto_proxy_on_connect"`
+	SNIEnabled          bool     `json:"sni_enabled"`
+	SNIHost             string   `json:"sni_host"`
+	LastSuccessCat      string   `json:"last_success_cat"`
+	LastSuccessTrans    string   `json:"last_success_trans"`
+	LastSuccessIP       string   `json:"last_success_ip"`
+	MultiSlots          []SlotDef `json:"multi_slots"`
+	CustomBridges       string   `json:"custom_bridges"`
+	UseCustomBridges    bool     `json:"use_custom_bridges"`
+	ExtractDir          string   `json:"extract_dir,omitempty"`
 }
 
 var defaultConfig = Config{
@@ -237,12 +241,43 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.exeDir = getExeDir()
 	a.dataDir = a.resolveDataDir()
 	a.configPath = filepath.Join(a.dataDir, "tor_client_config.json")
 	a.bridgesDir = filepath.Join(a.dataDir, "bridges")
 	os.MkdirAll(a.bridgesDir, 0755)
 	os.MkdirAll(filepath.Join(a.dataDir, "data"), 0755)
 	runtime.LogInfo(ctx, fmt.Sprintf("Data directory: %s", a.dataDir))
+}
+
+func (a *App) CheckVersion() map[string]interface{} {
+	dataCfg := a.LoadConfig()
+
+	// Read config from exe directory (reference config)
+	exeCfgPath := filepath.Join(a.exeDir, "tor_client_config.json")
+	var exeCfg Config
+	if data, err := os.ReadFile(exeCfgPath); err == nil {
+		json.Unmarshal(data, &exeCfg)
+	}
+
+	exeVersion := exeCfg.Version
+	dataVersion := dataCfg.Version
+
+	needsSetup := dataVersion < exeVersion
+
+	return map[string]interface{}{
+		"needsSetup": needsSetup,
+		"oldVersion": dataVersion,
+		"newVersion": exeVersion,
+	}
+}
+
+func getExeDir() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return "."
+	}
+	return filepath.Dir(exe)
 }
 
 func (a *App) resolveDataDir() string {
@@ -1512,6 +1547,7 @@ func (a *App) handleHTTPConnection(clientConn net.Conn) {
 	defer clientConn.Close()
 
 	buf := make([]byte, 65536)
+	clientConn.SetReadDeadline(time.Now().Add(15 * time.Second))
 	n, err := clientConn.Read(buf)
 	if err != nil || n == 0 {
 		return
@@ -1524,6 +1560,8 @@ func (a *App) handleHTTPConnection(clientConn net.Conn) {
 	} else if strings.HasPrefix(firstLine, "GET ") || strings.HasPrefix(firstLine, "POST ") || strings.HasPrefix(firstLine, "PUT ") || strings.HasPrefix(firstLine, "HEAD ") {
 		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[HTTP Proxy] %s", truncate(firstLine, 100)))
 		a.handleHTTPRequest(clientConn, buf[:n])
+	} else {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
 	}
 }
 
@@ -1547,33 +1585,21 @@ func (a *App) handleHTTPConnect(clientConn net.Conn, initialData []byte) {
 		port, _ = strconv.Atoi(parts[1])
 	}
 
-	// Connect to Tor SOCKS
 	torConn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(TorSOCKSPort), 10*time.Second)
 	if err != nil {
 		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[HTTP Proxy] SOCKS connect failed: %v", err))
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer torConn.Close()
+
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[HTTP Proxy] SOCKS5 handshake failed: %v", err))
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
 		return
 	}
 
-	// SOCKS5 handshake with Tor
-	torConn.Write([]byte{0x05, 0x01, 0x00})
-	torResp := make([]byte, 2)
-	torConn.Read(torResp)
-
-	// SOCKS5 CONNECT to target
-	hostBytes := []byte(host)
-	connReq := make([]byte, 0, 7+len(hostBytes))
-	connReq = append(connReq, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	connReq = append(connReq, hostBytes...)
-	connReq = append(connReq, byte(port>>8), byte(port&0xff))
-	torConn.Write(connReq)
-
-	torResp10 := make([]byte, 10)
-	torConn.Read(torResp10)
-
-	// Send 200 to client
 	clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-
-	// Relay data
 	a.relayData(clientConn, torConn)
 }
 
@@ -1593,6 +1619,7 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 
 	parsed, err := url.Parse(target)
 	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	host := parsed.Hostname()
@@ -1609,42 +1636,33 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 		path += "?" + parsed.RawQuery
 	}
 
-	// Connect to Tor SOCKS
 	torConn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(TorSOCKSPort), 10*time.Second)
 	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer torConn.Close()
+
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[HTTP Proxy] SOCKS5 handshake failed: %v", err))
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
 		return
 	}
 
-	// SOCKS5 handshake
-	torConn.Write([]byte{0x05, 0x01, 0x00})
-	torResp := make([]byte, 2)
-	torConn.Read(torResp)
-
-	// SOCKS5 CONNECT
-	hostBytes := []byte(host)
-	connReq := make([]byte, 0, 7+len(hostBytes))
-	connReq = append(connReq, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	connReq = append(connReq, hostBytes...)
-	connReq = append(connReq, byte(port>>8), byte(port&0xff))
-	torConn.Write(connReq)
-
-	torResp10 := make([]byte, 10)
-	torConn.Read(torResp10)
-
-	// Rewrite request line and forward
 	headerEnd := strings.Index(string(initialData), "\r\n\r\n")
+	headerPart := initialData
+	if headerEnd != -1 {
+		headerPart = initialData[:headerEnd]
+	}
 	body := []byte{}
 	if headerEnd != -1 {
 		body = initialData[headerEnd+4:]
 	}
-
-	lines[0] = fmt.Sprintf("%s %s HTTP/1.1", method, path)
-	newHeaders := strings.Join(lines, "\r\n") + "\r\n\r\n"
-
-	torConn.Write([]byte(newHeaders))
+	headerLines := strings.Split(string(headerPart), "\r\n")
+	headerLines[0] = fmt.Sprintf("%s %s HTTP/1.1", method, path)
+	torConn.Write([]byte(strings.Join(headerLines, "\r\n") + "\r\n\r\n"))
 	torConn.Write(body)
 
-	// Relay response
 	a.relayData(clientConn, torConn)
 }
 
@@ -1656,6 +1674,7 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 		defer wg.Done()
 		buf := make([]byte, 65536)
 		for {
+			torConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 			n, err := torConn.Read(buf)
 			if n > 0 {
 				a.trafficMu.Lock()
@@ -1673,6 +1692,7 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 		defer wg.Done()
 		buf := make([]byte, 65536)
 		for {
+			clientConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 			n, err := clientConn.Read(buf)
 			if n > 0 {
 				a.trafficMu.Lock()
@@ -1687,6 +1707,8 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 	}()
 
 	wg.Wait()
+	clientConn.Close()
+	torConn.Close()
 }
 
 func (a *App) GetTrafficStats() map[string]string {
@@ -2163,6 +2185,31 @@ func handleHTTPProxyConn(clientConn net.Conn, socksHost string, socksPort int, t
 	}
 }
 
+func socks5Handshake(conn net.Conn, host string, port int) error {
+	conn.Write([]byte{0x05, 0x01, 0x00})
+	resp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, resp); err != nil {
+		return fmt.Errorf("socks5 auth: %v", err)
+	}
+	if resp[1] != 0x00 {
+		return fmt.Errorf("socks5 auth failed: %d", resp[1])
+	}
+	hostBytes := []byte(host)
+	req := make([]byte, 0, 7+len(hostBytes))
+	req = append(req, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
+	req = append(req, hostBytes...)
+	req = append(req, byte(port>>8), byte(port&0xff))
+	conn.Write(req)
+	connResp := make([]byte, 10)
+	if _, err := io.ReadFull(conn, connResp); err != nil {
+		return fmt.Errorf("socks5 connect: %v", err)
+	}
+	if connResp[1] != 0x00 {
+		return fmt.Errorf("socks5 connect error: %d", connResp[1])
+	}
+	return nil
+}
+
 func handleHTTPConnectProxy(clientConn net.Conn, initialData []byte, target, socksHost string, socksPort int, traffic *SlotTraffic) {
 	host := target
 	port := 443
@@ -2174,23 +2221,15 @@ func handleHTTPConnectProxy(clientConn net.Conn, initialData []byte, target, soc
 
 	torConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", socksHost, socksPort), 10*time.Second)
 	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	defer torConn.Close()
 
-	torConn.Write([]byte{0x05, 0x01, 0x00})
-	torResp := make([]byte, 2)
-	torConn.Read(torResp)
-
-	hostBytes := []byte(host)
-	connReq := make([]byte, 0, 7+len(hostBytes))
-	connReq = append(connReq, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	connReq = append(connReq, hostBytes...)
-	connReq = append(connReq, byte(port>>8), byte(port&0xff))
-	torConn.Write(connReq)
-
-	torResp10 := make([]byte, 10)
-	torConn.Read(torResp10)
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
 
 	clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
 	relayHTTPData(clientConn, torConn, traffic)
@@ -2199,6 +2238,7 @@ func handleHTTPConnectProxy(clientConn net.Conn, initialData []byte, target, soc
 func handleHTTPRequestProxy(clientConn net.Conn, initialData []byte, method, target, socksHost string, socksPort int, traffic *SlotTraffic) {
 	parsed, err := url.Parse(target)
 	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	host := parsed.Hostname()
@@ -2216,35 +2256,28 @@ func handleHTTPRequestProxy(clientConn net.Conn, initialData []byte, method, tar
 
 	torConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", socksHost, socksPort), 10*time.Second)
 	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
 		return
 	}
 	defer torConn.Close()
 
-	torConn.Write([]byte{0x05, 0x01, 0x00})
-	torResp := make([]byte, 2)
-	torConn.Read(torResp)
-
-	hostBytes := []byte(host)
-	connReq := make([]byte, 0, 7+len(hostBytes))
-	connReq = append(connReq, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	connReq = append(connReq, hostBytes...)
-	connReq = append(connReq, byte(port>>8), byte(port&0xff))
-	torConn.Write(connReq)
-
-	torResp10 := make([]byte, 10)
-	torConn.Read(torResp10)
-
-	lines := strings.Split(string(initialData), "\r\n")
-	lines[0] = fmt.Sprintf("%s %s HTTP/1.1", method, path)
-	newData := strings.Join(lines, "\r\n") + "\r\n\r\n"
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
 
 	headerEnd := strings.Index(string(initialData), "\r\n\r\n")
+	headerPart := initialData
+	if headerEnd != -1 {
+		headerPart = initialData[:headerEnd]
+	}
 	body := []byte{}
 	if headerEnd != -1 {
 		body = initialData[headerEnd+4:]
 	}
-
-	torConn.Write([]byte(newData))
+	headerLines := strings.Split(string(headerPart), "\r\n")
+	headerLines[0] = fmt.Sprintf("%s %s HTTP/1.1", method, path)
+	torConn.Write([]byte(strings.Join(headerLines, "\r\n") + "\r\n\r\n"))
 	torConn.Write(body)
 
 	relayHTTPData(clientConn, torConn, traffic)
@@ -2258,6 +2291,7 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 		defer wg.Done()
 		buf := make([]byte, 65536)
 		for {
+			torConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 			n, err := torConn.Read(buf)
 			if n > 0 {
 				if traffic != nil {
@@ -2277,6 +2311,7 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 		defer wg.Done()
 		buf := make([]byte, 65536)
 		for {
+			clientConn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 			n, err := clientConn.Read(buf)
 			if n > 0 {
 				if traffic != nil {
@@ -2293,6 +2328,8 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 	}()
 
 	wg.Wait()
+	clientConn.Close()
+	torConn.Close()
 }
 
 func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCount, maxRetries int) {
@@ -3169,4 +3206,196 @@ func (a *App) showNotification(title, msg string) {
 func (a *App) ShowWindow() {
 	runtime.WindowShow(a.ctx)
 	runtime.WindowCenter(a.ctx)
+}
+
+// ===================== SETUP / VERSION CHECK =====================
+
+func (a *App) RestartApp() {
+	exe, _ := os.Executable()
+	a.StopTor()
+	systray.Quit()
+	cmd := exec.Command(exe)
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
+	cmd.Start()
+	os.Exit(0)
+}
+
+func (a *App) GetDefaultDataDir() string {
+	appdata := os.Getenv("LOCALAPPDATA")
+	if appdata == "" {
+		home, _ := os.UserHomeDir()
+		appdata = filepath.Join(home, "AppData", "Local")
+	}
+	return filepath.Join(appdata, "DeltaTor")
+}
+
+func (a *App) PickDataDir() string {
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Choose Data Directory",
+	})
+	if err != nil || dir == "" {
+		return ""
+	}
+	return filepath.Clean(dir)
+}
+
+func (a *App) RunSetup(newDataDir string) error {
+	appdata := os.Getenv("LOCALAPPDATA")
+	if appdata == "" {
+		home, _ := os.UserHomeDir()
+		appdata = filepath.Join(home, "AppData", "Local")
+	}
+
+	oldDeltaDir := filepath.Join(appdata, "DeltaTor")
+	runtime.EventsEmit(a.ctx, "setup:progress", "Clearing old data...")
+
+	// 1. Always clear the data directory contents
+	if _, err := os.Stat(newDataDir); err == nil {
+		entries, _ := os.ReadDir(newDataDir)
+		for _, e := range entries {
+			os.RemoveAll(filepath.Join(newDataDir, e.Name()))
+		}
+	}
+
+	// 2. Also remove AppData\Local\DeltaTor
+	os.RemoveAll(oldDeltaDir)
+
+	runtime.EventsEmit(a.ctx, "setup:progress", "Creating data directory...")
+
+	// 3. Create new data directory
+	os.MkdirAll(newDataDir, 0755)
+
+	// 4. Create datadir.txt
+	os.MkdirAll(oldDeltaDir, 0755)
+	ptrFile := filepath.Join(oldDeltaDir, "datadir.txt")
+	os.WriteFile(ptrFile, []byte(newDataDir), 0644)
+
+	runtime.EventsEmit(a.ctx, "setup:progress", "Copying files...")
+
+	// 5. Copy files from exe directory to newDataDir
+	filesToCopy := []string{
+		"tor-expert-bundle-windows-x86_64-15.0.14.tar.gz",
+		"bridges",
+		"tor_client_config.json",
+	}
+	for _, name := range filesToCopy {
+		src := filepath.Join(a.exeDir, name)
+		dst := filepath.Join(newDataDir, name)
+		if _, err := os.Stat(src); os.IsNotExist(err) {
+			continue
+		}
+		info, err := os.Stat(src)
+		if err != nil {
+			continue
+		}
+		if info.IsDir() {
+			copyDir(src, dst)
+		} else {
+			copyFile(src, dst)
+		}
+		runtime.EventsEmit(a.ctx, "setup:progress", fmt.Sprintf("Copied: %s", name))
+	}
+
+	runtime.EventsEmit(a.ctx, "setup:progress", "Extracting Tor bundle...")
+
+	// 6. Extract tar.gz without showing PowerShell window
+	bundlePath := filepath.Join(newDataDir, "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz")
+	if _, err := os.Stat(bundlePath); err == nil {
+		cmd := exec.Command("tar", "-xzf", bundlePath, "-C", newDataDir)
+		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
+		cmd.Run()
+		os.Remove(bundlePath)
+		runtime.EventsEmit(a.ctx, "setup:progress", "Tor bundle extracted.")
+	}
+
+	runtime.EventsEmit(a.ctx, "setup:progress", "Creating shortcut...")
+
+	// 7. Create desktop shortcut - point to current exe location
+	createDesktopShortcut(newDataDir)
+
+	// 8. Update app state
+	a.dataDir = newDataDir
+	a.configPath = filepath.Join(newDataDir, "tor_client_config.json")
+	a.bridgesDir = filepath.Join(newDataDir, "bridges")
+	os.MkdirAll(a.bridgesDir, 0755)
+	os.MkdirAll(filepath.Join(newDataDir, "data"), 0755)
+
+	// 9. Remove files/folders next to the exe
+	cleanupExeDir(a.exeDir)
+
+	runtime.EventsEmit(a.ctx, "setup:progress", "Done!")
+	return nil
+}
+
+func cleanupExeDir(exeDir string) {
+	itemsToClean := []string{
+		"tor-expert-bundle-windows-x86_64-15.0.14.tar.gz",
+		"bridges",
+		"tor",
+		"data",
+		"geoip",
+		"geoip6",
+		"tor_client_config.json",
+	}
+	for _, name := range itemsToClean {
+		path := filepath.Join(exeDir, name)
+		os.RemoveAll(path)
+	}
+}
+
+func copyDir(src, dst string) error {
+	os.MkdirAll(dst, 0755)
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if e.IsDir() {
+			copyDir(srcPath, dstPath)
+		} else {
+			copyFile(srcPath, dstPath)
+		}
+	}
+	return nil
+}
+
+func createDesktopShortcut(dataDir string) {
+	desktop, _ := os.UserHomeDir()
+	desktop = filepath.Join(desktop, "Desktop")
+	shortcutPath := filepath.Join(desktop, "Delta Tor.lnk")
+
+	exe, _ := os.Executable()
+
+	ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
+	defer ole.CoUninitialize()
+
+	clsid, err := ole.CLSIDFromProgID("WScript.Shell")
+	if err != nil {
+		return
+	}
+
+	unknown, err := ole.CreateInstance(clsid, nil)
+	if err != nil {
+		return
+	}
+	defer unknown.Release()
+
+	ws, err := unknown.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return
+	}
+	defer ws.Release()
+
+	result, err := ws.CallMethod("CreateShortcut", shortcutPath)
+	if err != nil {
+		return
+	}
+	link := result.ToIDispatch()
+	defer link.Release()
+
+	link.PutProperty("TargetPath", exe)
+	link.PutProperty("WorkingDirectory", filepath.Dir(exe))
+	link.PutProperty("Description", "Delta Tor")
 }
