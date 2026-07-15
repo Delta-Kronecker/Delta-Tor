@@ -21,7 +21,7 @@ let appState = {
 };
 
 function slotPorts(index) {
-    return { socks: 9051 + index, http: 9061 + index };
+    return { socks: 9070 + index, http: 9100 + index };
 }
 
 /* ===== NORMAL MODE ===== */
@@ -592,6 +592,48 @@ function render() {
     }
 
     if (currentMode === 'multi') { bindSlotToggles(); restoreMultiSlotState(); }
+
+    if (currentMode === 'settings') {
+        window.go.main.App.LoadConfig().then(cfg => {
+            if (!cfg) return;
+            setVal('s_auto_timeout', cfg.auto_connect_timeout);
+            setChk('s_auto_proxy', cfg.auto_proxy_on_connect);
+            setVal('s_bridges_count', cfg.bridges_in_torrc);
+            setChk('s_shuffle', cfg.shuffle_bridges);
+            setChk('s_sni_enable', cfg.sni_enabled);
+            setVal('s_sni_host', cfg.sni_host);
+            setChk('s_dns_tor', cfg.dns_over_tor);
+            setVal('s_max_circuit', cfg.max_circuit_dirtiness);
+            setVal('s_new_circuit', cfg.new_circuit_period);
+            setVal('s_entry_guards', cfg.num_entry_guards);
+            setChk('s_keepalive', cfg.keep_alive_enabled);
+            setVal('s_keepalive_interval', cfg.keep_alive_interval);
+            setChk('s_watchdog', cfg.watchdog_enabled);
+            setVal('s_watchdog_interval', cfg.watchdog_interval);
+            setChk('s_exit_enable', cfg.exit_nodes_enabled);
+            setVal('s_exit_countries', cfg.exit_nodes_countries);
+            setChk('s_strict_nodes', cfg.strict_exit_nodes);
+            setChk('s_conn_pad', cfg.exp_connection_padding);
+            setChk('s_reduced_pad', cfg.exp_reduced_connection_padding);
+            setVal('s_stream_timeout', cfg.exp_circuit_stream_timeout);
+            setVal('s_socks_timeout', cfg.exp_socks_timeout);
+            setChk('s_isolate_addr', cfg.exp_isolate_dest_addr);
+            setChk('s_isolate_port', cfg.exp_isolate_dest_port);
+            setChk('s_safe_log', cfg.exp_safe_logging);
+            setChk('s_avoid_disk', cfg.exp_avoid_disk_writes);
+            setChk('s_hw_accel', cfg.exp_hardware_accel);
+            setChk('s_dns_reject', cfg.exp_client_dns_reject_internal);
+            setChk('s_fascist', cfg.exp_fascist_firewall);
+            setVal('s_fw_ports', cfg.exp_firewall_ports);
+            setVal('s_reachable', cfg.exp_reachable_addresses);
+            setVal('s_num_cpus', cfg.exp_num_cpus);
+            setVal('s_exclude_nodes', cfg.exp_exclude_nodes);
+            setVal('s_exclude_exit', cfg.exp_exclude_exit_nodes);
+            setVal('s_reject_ports', cfg.exp_no_exit_stream_ports);
+            setChk('s_guards_dir', cfg.exp_use_entry_guards_as_dir_guards);
+            setVal('s_path_bias', cfg.exp_path_bias_circ_threshold);
+        }).catch(e => console.error('Load config failed:', e));
+    }
 }
 
 function bindSlotToggles() {
@@ -1570,16 +1612,75 @@ window.updateBridges = async function() {
     }
 };
 
-window.applySettings = function() {
-    const s = {};
-    document.querySelectorAll('.settings-input, .settings-input-text').forEach(el => { s[el.id] = el.value; });
-    document.querySelectorAll('.settings-toggle input[type=checkbox]').forEach(el => { s[el.id] = el.checked; });
-    console.log('Settings saved:', s);
-    switchToNormal();
+function setVal(id, v) { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.value = v; }
+function setChk(id, v) { const el = document.getElementById(id); if (el && v !== undefined && v !== null) el.checked = !!v; }
+
+window.applySettings = async function() {
+    try {
+        const cfg = await window.go.main.App.LoadConfig();
+
+        cfg.auto_connect_timeout = parseInt(document.getElementById('s_auto_timeout')?.value) || 180;
+        cfg.auto_proxy_on_connect = document.getElementById('s_auto_proxy')?.checked || false;
+        cfg.bridges_in_torrc = parseInt(document.getElementById('s_bridges_count')?.value) || 200;
+        cfg.shuffle_bridges = document.getElementById('s_shuffle')?.checked || false;
+        cfg.sni_enabled = document.getElementById('s_sni_enable')?.checked || false;
+        cfg.sni_host = document.getElementById('s_sni_host')?.value || 'www.google.com';
+        cfg.dns_over_tor = document.getElementById('s_dns_tor')?.checked || false;
+        cfg.max_circuit_dirtiness = parseInt(document.getElementById('s_max_circuit')?.value) || 600;
+        cfg.new_circuit_period = parseInt(document.getElementById('s_new_circuit')?.value) || 10;
+        cfg.num_entry_guards = parseInt(document.getElementById('s_entry_guards')?.value) || 15;
+        cfg.keep_alive_enabled = document.getElementById('s_keepalive')?.checked || false;
+        cfg.keep_alive_interval = parseInt(document.getElementById('s_keepalive_interval')?.value) || 30;
+        cfg.watchdog_enabled = document.getElementById('s_watchdog')?.checked || false;
+        cfg.watchdog_interval = parseInt(document.getElementById('s_watchdog_interval')?.value) || 30;
+        cfg.exit_nodes_enabled = document.getElementById('s_exit_enable')?.checked || false;
+        cfg.exit_nodes_countries = document.getElementById('s_exit_countries')?.value || '';
+        cfg.strict_exit_nodes = document.getElementById('s_strict_nodes')?.checked || false;
+
+        cfg.exp_connection_padding = document.getElementById('s_conn_pad')?.checked || false;
+        cfg.exp_reduced_connection_padding = document.getElementById('s_reduced_pad')?.checked || false;
+        cfg.exp_circuit_stream_timeout = parseInt(document.getElementById('s_stream_timeout')?.value) || 0;
+        cfg.exp_socks_timeout = parseInt(document.getElementById('s_socks_timeout')?.value) || 0;
+        cfg.exp_isolate_dest_addr = document.getElementById('s_isolate_addr')?.checked || false;
+        cfg.exp_isolate_dest_port = document.getElementById('s_isolate_port')?.checked || false;
+        cfg.exp_safe_logging = document.getElementById('s_safe_log')?.checked || false;
+        cfg.exp_avoid_disk_writes = document.getElementById('s_avoid_disk')?.checked || false;
+        cfg.exp_hardware_accel = document.getElementById('s_hw_accel')?.checked || false;
+        cfg.exp_client_dns_reject_internal = document.getElementById('s_dns_reject')?.checked || false;
+        cfg.exp_fascist_firewall = document.getElementById('s_fascist')?.checked || false;
+        cfg.exp_firewall_ports = document.getElementById('s_fw_ports')?.value || '80,443';
+        cfg.exp_reachable_addresses = document.getElementById('s_reachable')?.value || '';
+        cfg.exp_num_cpus = parseInt(document.getElementById('s_num_cpus')?.value) || 0;
+        cfg.exp_exclude_nodes = document.getElementById('s_exclude_nodes')?.value || '';
+        cfg.exp_exclude_exit_nodes = document.getElementById('s_exclude_exit')?.value || '';
+        cfg.exp_no_exit_stream_ports = document.getElementById('s_reject_ports')?.value || '';
+        cfg.exp_use_entry_guards_as_dir_guards = document.getElementById('s_guards_dir')?.checked || false;
+        cfg.exp_path_bias_circ_threshold = parseInt(document.getElementById('s_path_bias')?.value) || 0;
+
+        await window.go.main.App.SaveConfig(cfg);
+        switchToNormal();
+    } catch(e) {
+        console.error('Failed to save config:', e);
+    }
 };
 
-window.clearData = function() { if (confirm('Clear cached Tor circuits and state?')) console.log('Clear data requested'); };
-window.changeDataFolder = function() { console.log('Change data folder requested'); };
+window.clearData = async function() {
+    if (!confirm('Clear cached Tor circuits and state?')) return;
+    try {
+        await window.go.main.App.ClearTorData();
+        alert('Data cleared. Restart Tor to take effect.');
+    } catch(e) { console.error(e); }
+};
+
+window.changeDataFolder = async function() {
+    try {
+        const dir = await window.go.main.App.PickDataDir();
+        if (dir) {
+            await window.go.main.App.SetDataDir(dir);
+            alert('Data folder changed. Restart the application to apply.');
+        }
+    } catch(e) { console.error(e); }
+};
 
 /* ===== BRIDGE INFO MODE ===== */
 function renderBridgeInfoMode() {

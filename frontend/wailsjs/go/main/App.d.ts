@@ -8,6 +8,8 @@ export function CheckSlotHealthNow(arg1:string):Promise<void>;
 
 export function CheckVersion():Promise<Record<string, any>>;
 
+export function ClearTorData():Promise<void>;
+
 export function DeleteMultiSlot(arg1:string):Promise<void>;
 
 export function DownloadAllBridges():Promise<void>;
@@ -83,6 +85,8 @@ export function SaveMultiSlots(arg1:Array<main.SlotDef>):Promise<void>;
 export function ScanBridges(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<void>;
 
 export function SetProxyToSlot(arg1:string):Promise<void>;
+
+export function SetDataDir(arg1:string):Promise<void>;
 
 export function SetSystemProxy():Promise<void>;
 
