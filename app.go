@@ -1942,48 +1942,39 @@ func (a *App) TestSpeed() *SpeedResult {
 	}
 }
 
-func testDownloadSpeed(a *App) string {
-	start := time.Now()
-	totalBytes := 0
-	host := "check.torproject.org"
-
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(TorSOCKSPort), 5*time.Second)
+func dialThroughSocks(host string, port int, proxyPort int) (*tls.Conn, error) {
+	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(proxyPort), 5*time.Second)
 	if err != nil {
-		return "\u2014"
+		return nil, err
 	}
-	defer conn.Close()
-
-	conn.Write([]byte{0x05, 0x01, 0x00})
-	handshakeResp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, handshakeResp); err != nil {
-		return "\u2014"
+	if err := socks5Handshake(conn, host, port); err != nil {
+		conn.Close()
+		return nil, err
 	}
-
-	hostBytes := []byte(host)
-	req := make([]byte, 0, 7+len(hostBytes))
-	req = append(req, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	req = append(req, hostBytes...)
-	req = append(req, byte(443>>8), byte(443&0xff))
-	conn.Write(req)
-
-	connectResp := make([]byte, 10)
-	if _, err := io.ReadFull(conn, connectResp); err != nil {
-		return "\u2014"
-	}
-
 	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
 	if err := tlsConn.Handshake(); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
+}
+
+func testDownloadSpeed(a *App) string {
+	start := time.Now()
+	host := "check.torproject.org"
+
+	tlsConn, err := dialThroughSocks(host, 443, TorSOCKSPort)
+	if err != nil {
 		return "\u2014"
 	}
 	defer tlsConn.Close()
 
 	tlsConn.Write([]byte("GET /api/ip HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"))
+	totalBytes := 0
 	buf := make([]byte, 65536)
 	for {
 		n, err := tlsConn.Read(buf)
-		if n > 0 {
-			totalBytes += n
-		}
+		totalBytes += n
 		if err != nil {
 			break
 		}
@@ -1999,49 +1990,22 @@ func testDownloadSpeed(a *App) string {
 
 func testUploadSpeed(a *App) string {
 	start := time.Now()
-	totalBytes := 0
 	host := "httpbin.org"
 
-	conn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(TorSOCKSPort), 5*time.Second)
+	tlsConn, err := dialThroughSocks(host, 443, TorSOCKSPort)
 	if err != nil {
-		return "\u2014"
-	}
-	defer conn.Close()
-
-	conn.Write([]byte{0x05, 0x01, 0x00})
-	handshakeResp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, handshakeResp); err != nil {
-		return "\u2014"
-	}
-
-	hostBytes := []byte(host)
-	req := make([]byte, 0, 7+len(hostBytes))
-	req = append(req, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	req = append(req, hostBytes...)
-	req = append(req, byte(443>>8), byte(443&0xff))
-	conn.Write(req)
-
-	connectResp := make([]byte, 10)
-	if _, err := io.ReadFull(conn, connectResp); err != nil {
-		return "\u2014"
-	}
-
-	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
-	if err := tlsConn.Handshake(); err != nil {
 		return "\u2014"
 	}
 	defer tlsConn.Close()
 
-	// Upload 1MB of data
- postData := strings.Repeat("X", 1048576)
+	postData := strings.Repeat("X", 1048576)
 	tlsConn.Write([]byte("POST /post HTTP/1.1\r\nHost: " + host + "\r\nContent-Length: " + strconv.Itoa(len(postData)) + "\r\nConnection: close\r\n\r\n" + postData))
 
+	totalBytes := 0
 	buf := make([]byte, 65536)
 	for {
 		n, err := tlsConn.Read(buf)
-		if n > 0 {
-			totalBytes += n
-		}
+		totalBytes += n
 		if err != nil {
 			break
 		}
