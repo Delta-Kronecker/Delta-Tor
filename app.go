@@ -1406,17 +1406,16 @@ func socks5Request(host string, port int, path string, proxyPort int, useSSL boo
 	if err != nil {
 		return "", fmt.Errorf("dial to proxy %d: %v", proxyPort, err)
 	}
+	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 
 	// SOCKS5 handshake
 	conn.Write([]byte{0x05, 0x01, 0x00})
 	handshakeResp := make([]byte, 2)
 	if _, err := io.ReadFull(conn, handshakeResp); err != nil {
-		conn.Close()
 		return "", fmt.Errorf("socks5 handshake read: %v", err)
 	}
 	if handshakeResp[1] != 0x00 {
-		conn.Close()
 		return "", fmt.Errorf("socks5 handshake failed: %d", handshakeResp[1])
 	}
 
@@ -1430,18 +1429,15 @@ func socks5Request(host string, port int, path string, proxyPort int, useSSL boo
 
 	connectResp := make([]byte, 10)
 	if _, err := io.ReadFull(conn, connectResp); err != nil {
-		conn.Close()
 		return "", fmt.Errorf("socks5 connect read: %v", err)
 	}
 	if connectResp[1] != 0x00 {
-		conn.Close()
 		return "", fmt.Errorf("socks5 connect error: %d", connectResp[1])
 	}
 
 	if useSSL {
 		tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
 		if err := tlsConn.Handshake(); err != nil {
-			conn.Close()
 			return "", fmt.Errorf("TLS handshake: %v", err)
 		}
 		defer tlsConn.Close()
@@ -1477,7 +1473,6 @@ func socks5Request(host string, port int, path string, proxyPort int, useSSL boo
 			break
 		}
 	}
-	conn.Close()
 	full := result.String()
 	sep := strings.Index(full, "\r\n\r\n")
 	if sep != -1 {
