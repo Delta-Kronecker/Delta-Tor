@@ -1124,12 +1124,15 @@ func (a *App) StartWatchdog() {
 	if interval < 10 {
 		interval = 10 * time.Second
 	}
+	stopCh := make(chan struct{})
+	a.torMu.Lock()
 	a.watchdogTicker = time.NewTicker(interval)
-	a.watchdogStop = make(chan struct{})
+	a.watchdogStop = stopCh
+	a.torMu.Unlock()
 	go func() {
 		for {
 			select {
-			case <-a.watchdogStop:
+			case <-stopCh:
 				return
 			case <-a.watchdogTicker.C:
 				a.watchdogTick()
@@ -1250,12 +1253,15 @@ func (a *App) StartKeepAlive() {
 	if interval < 30 {
 		interval = 30 * time.Second
 	}
+	stopCh := make(chan struct{})
+	a.torMu.Lock()
 	a.keepaliveTicker = time.NewTicker(interval)
-	a.keepaliveStop = make(chan struct{})
+	a.keepaliveStop = stopCh
+	a.torMu.Unlock()
 	go func() {
 		for {
 			select {
-			case <-a.keepaliveStop:
+			case <-stopCh:
 				return
 			case <-a.keepaliveTicker.C:
 				a.keepaliveTick()
