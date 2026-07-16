@@ -53,7 +53,7 @@ func setupTray(app *App) {
 			systray.SetTooltip("Delta Tor")
 
 			showItem := systray.AddMenuItem("Show Window", "Show the application window")
-			quitItem := systray.AddMenuItem("Quit", "Quit the application")
+			quitItem := systray.AddMenuItem("Stop and Quit", "Stop all Tor processes and quit")
 
 			go func() {
 				for {
@@ -61,8 +61,7 @@ func setupTray(app *App) {
 					case <-showItem.ClickedCh:
 						app.ShowWindow()
 					case <-quitItem.ClickedCh:
-						app.StopAllSlots()
-						app.StopTor()
+						app.KillAllProcesses()
 						os.Exit(0)
 					}
 				}

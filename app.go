@@ -748,6 +748,70 @@ func (a *App) readTorOutput(stdout io.ReadCloser, cmd *exec.Cmd) {
 	}
 }
 
+func (a *App) KillAllProcesses() {
+	var procs []*os.Process
+
+	a.torMu.Lock()
+	if a.stopCh != nil {
+		close(a.stopCh)
+		a.stopCh = nil
+	}
+	if a.torProcess != nil {
+		procs = append(procs, a.torProcess)
+		a.torProcess = nil
+	}
+	a.connected = false
+	a.torMu.Unlock()
+
+	a.autoConnectMu.Lock()
+	a.autoConnectActive = false
+	if a.autoConnectStop != nil {
+		close(a.autoConnectStop)
+		a.autoConnectStop = nil
+	}
+	a.autoConnectMu.Unlock()
+
+	a.StopWatchdog()
+	a.StopKeepAlive()
+
+	a.mu()
+	a.multiRunning = false
+	states := a.multiSlotStates
+	a.multiSlotStates = make(map[string]*SlotState)
+	a.multiHealthData = make(map[string]*HealthData)
+	a.multiTraffic = make(map[int]*SlotTraffic)
+	if a.multiBalancerStop != nil {
+		select {
+		case <-a.multiBalancerStop:
+		default:
+			close(a.multiBalancerStop)
+		}
+		a.multiBalancerStop = nil
+	}
+	a.multiBalancerMode = ""
+	a.muUnlock()
+
+	for _, st := range states {
+		if st.StopCh != nil {
+			select {
+			case <-st.StopCh:
+			default:
+				close(st.StopCh)
+			}
+		}
+		if st.Process != nil {
+			procs = append(procs, st.Process)
+		}
+	}
+
+	a.StopHTTPProxy()
+	a.unsetSystemProxy()
+
+	for _, p := range procs {
+		p.Kill()
+	}
+}
+
 func (a *App) StopTor() error {
 	a.stopTor()
 	return nil
@@ -3515,8 +3579,7 @@ func (a *App) ShowWindow() {
 
 func (a *App) RestartApp() {
 	exe, _ := os.Executable()
-	a.StopAllSlots()
-	a.StopTor()
+	a.KillAllProcesses()
 	systray.Quit()
 	cmd := exec.Command(exe)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
