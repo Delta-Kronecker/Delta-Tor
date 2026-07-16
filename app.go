@@ -2718,37 +2718,14 @@ func (a *App) slotHealthLoop(label string, socksPort int, stopCh chan struct{}) 
 
 func (a *App) checkSlotHealth(socksPort int, timeout int) (bool, float64) {
 	start := time.Now()
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", socksPort), time.Duration(timeout)*time.Second)
+	host := "www.gstatic.com"
+
+	tlsConn, err := dialThroughSocks(host, 443, socksPort)
 	if err != nil {
 		return false, float64(timeout * 1000)
 	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-
-	conn.Write([]byte{0x05, 0x01, 0x00})
-	resp := make([]byte, 2)
-	if _, err := io.ReadFull(conn, resp); err != nil || resp[1] != 0x00 {
-		return false, float64(timeout * 1000)
-	}
-
-	host := "www.gstatic.com"
-	hostBytes := []byte(host)
-	req := make([]byte, 0, 7+len(hostBytes))
-	req = append(req, 0x05, 0x01, 0x00, 0x03, byte(len(hostBytes)))
-	req = append(req, hostBytes...)
-	req = append(req, byte(443>>8), byte(443&0xff))
-	conn.Write(req)
-
-	connResp := make([]byte, 10)
-	if _, err := io.ReadFull(conn, connResp); err != nil || connResp[1] != 0x00 {
-		return false, float64(timeout * 1000)
-	}
-
-	tlsConn := tls.Client(conn, &tls.Config{ServerName: host})
-	if err := tlsConn.Handshake(); err != nil {
-		return false, float64(timeout * 1000)
-	}
 	defer tlsConn.Close()
+	tlsConn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
 
 	tlsConn.Write([]byte("GET /generate_204 HTTP/1.1\r\nHost: www.gstatic.com\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n"))
 	buf := make([]byte, 512)
