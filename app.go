@@ -3590,9 +3590,6 @@ func (a *App) RunSetup(newDataDir string) error {
 	for _, name := range filesToCopy {
 		src := filepath.Join(a.exeDir, name)
 		dst := filepath.Join(newDataDir, name)
-		if _, err := os.Stat(src); os.IsNotExist(err) {
-			continue
-		}
 		info, err := os.Stat(src)
 		if err != nil {
 			continue
