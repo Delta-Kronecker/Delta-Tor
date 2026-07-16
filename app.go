@@ -154,6 +154,11 @@ type App struct {
 	multiProxyStop   chan struct{}
 	multiHealthData  map[string]*HealthData
 	multiTraffic     map[int]*SlotTraffic
+
+	// Balancer
+	multiBalancerMode    string // "" | "least_ping" | "balancer"
+	multiBalancerStop    chan struct{}
+	multiBalancerCounter int64
 }
 
 type SlotDef struct {
@@ -392,7 +397,10 @@ func (a *App) GetBridgeFiles() []map[string]string {
 	}
 	for _, e := range entries {
 		if !e.IsDir() && strings.HasSuffix(e.Name(), ".txt") {
-			info, _ := e.Info()
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
 			count := 0
 			path := filepath.Join(a.bridgesDir, e.Name())
 			if f, err := os.Open(path); err == nil {
@@ -417,11 +425,7 @@ func (a *App) GetBridgeFiles() []map[string]string {
 }
 
 func (a *App) GetSafeFilename(cat, trans, ip string) string {
-	safe := strings.ReplaceAll(cat, " ", "_")
-	safe = strings.ReplaceAll(safe, "&", "and")
-	safe = strings.ReplaceAll(safe, "(", "")
-	safe = strings.ReplaceAll(safe, ")", "")
-	return fmt.Sprintf("%s_%s_%s.txt", safe, trans, ip)
+	return a.getSafeFilename(cat, trans, ip)
 }
 
 func (a *App) GetBridgeLines(cat, trans, ip string) []string {
@@ -559,6 +563,12 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	if cfg.ExpNoExitStreamPorts != "" {
 		sb.WriteString(fmt.Sprintf("RejectPlaintextPorts %s\n", cfg.ExpNoExitStreamPorts))
 	}
+	if cfg.ExpIsolateDestAddr {
+		sb.WriteString("IsolateDestAddr 1\n")
+	}
+	if cfg.ExpIsolateDestPort {
+		sb.WriteString("IsolateDestPort 1\n")
+	}
 
 	if cfg.DNSOverTor {
 		sb.WriteString("DNSPort 127.0.0.1:9053\n")
@@ -617,9 +627,11 @@ func (a *App) StartTor(cat, trans, ip, source string) error {
 
 	torrc := a.GenerateTorrc(cat, trans, ip, source)
 
+	a.torMu.Lock()
 	a.stopCh = make(chan struct{})
 	a.connected = false
 	a.uptimeStart = time.Now()
+	a.torMu.Unlock()
 
 	runtime.LogInfo(a.ctx, fmt.Sprintf("Starting Tor with config: %s", torrc))
 
@@ -632,6 +644,7 @@ func (a *App) StartTor(cat, trans, ip, source string) error {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
+		stdout.Close()
 		return fmt.Errorf("failed to start tor: %v", err)
 	}
 
@@ -649,8 +662,12 @@ func (a *App) readTorOutput(stdout io.ReadCloser, cmd *exec.Cmd) {
 	re := regexp.MustCompile(`Bootstrapped (\d+)%`)
 
 	for scanner.Scan() {
+		a.torMu.Lock()
+		stopCh := a.stopCh
+		a.torMu.Unlock()
+
 		select {
-		case <-a.stopCh:
+		case <-stopCh:
 			return
 		default:
 		}
@@ -685,10 +702,11 @@ func (a *App) readTorOutput(stdout io.ReadCloser, cmd *exec.Cmd) {
 	cmd.Wait()
 	a.torMu.Lock()
 	a.torProcess = nil
+	wasConnected := a.connected
+	a.connected = false
 	a.torMu.Unlock()
 
-	if a.connected {
-		a.connected = false
+	if wasConnected {
 		a.StopWatchdog()
 		a.StopKeepAlive()
 		a.StopHTTPProxy()
@@ -704,14 +722,16 @@ func (a *App) StopTor() error {
 }
 
 func (a *App) stopTor() {
+	a.torMu.Lock()
 	if a.stopCh != nil {
 		close(a.stopCh)
 		a.stopCh = nil
 	}
-	a.torMu.Lock()
 	if a.torProcess != nil {
 		a.torProcess.Signal(os.Interrupt)
+		a.torMu.Unlock()
 		time.Sleep(2 * time.Second)
+		a.torMu.Lock()
 		if a.torProcess != nil {
 			a.torProcess.Kill()
 		}
@@ -894,6 +914,7 @@ func (a *App) tryBridgeConfigAuto(cat, trans, ip string, timeoutS int) bool {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
+		stdout.Close()
 		runtime.EventsEmit(a.ctx, "auto:log", fmt.Sprintf("[Auto] Launch error: %v", err))
 		return false
 	}
@@ -1033,6 +1054,8 @@ func (a *App) unsetSystemProxy() {
 }
 
 func (a *App) IsTorConnected() bool {
+	a.torMu.Lock()
+	defer a.torMu.Unlock()
 	return a.connected
 }
 
@@ -1048,10 +1071,14 @@ func (a *App) UnsetSystemProxy() {
 }
 
 func (a *App) GetUptime() string {
-	if !a.connected {
+	a.torMu.Lock()
+	conn := a.connected
+	start := a.uptimeStart
+	a.torMu.Unlock()
+	if !conn {
 		return "—"
 	}
-	d := time.Since(a.uptimeStart)
+	d := time.Since(start)
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	s := int(d.Seconds()) % 60
@@ -1085,13 +1112,18 @@ func (a *App) StartWatchdog() {
 }
 
 func (a *App) StopWatchdog() {
-	if a.watchdogTicker != nil {
-		a.watchdogTicker.Stop()
-		a.watchdogTicker = nil
+	a.torMu.Lock()
+	ticker := a.watchdogTicker
+	stop := a.watchdogStop
+	a.watchdogTicker = nil
+	a.watchdogStop = nil
+	a.torMu.Unlock()
+
+	if ticker != nil {
+		ticker.Stop()
 	}
-	if a.watchdogStop != nil {
-		close(a.watchdogStop)
-		a.watchdogStop = nil
+	if stop != nil {
+		close(stop)
 	}
 }
 
@@ -1143,9 +1175,11 @@ func (a *App) runTorInternal() {
 		return
 	}
 
+	a.torMu.Lock()
 	a.stopCh = make(chan struct{})
 	a.connected = false
 	a.uptimeStart = time.Now()
+	a.torMu.Unlock()
 
 	cmd := exec.Command(torExe, "-f", torrc)
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
@@ -1157,6 +1191,7 @@ func (a *App) runTorInternal() {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
+		stdout.Close()
 		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Watchdog] Launch error: %v\n", err))
 		return
 	}
@@ -1166,7 +1201,7 @@ func (a *App) runTorInternal() {
 	a.torMu.Unlock()
 
 	runtime.EventsEmit(a.ctx, "tor:log", "[Watchdog] Tor restarted.\n")
-	a.readTorOutput(stdout, cmd)
+	go a.readTorOutput(stdout, cmd)
 }
 
 // ===================== KEEP-ALIVE =====================
@@ -1196,13 +1231,18 @@ func (a *App) StartKeepAlive() {
 }
 
 func (a *App) StopKeepAlive() {
-	if a.keepaliveTicker != nil {
-		a.keepaliveTicker.Stop()
-		a.keepaliveTicker = nil
+	a.torMu.Lock()
+	ticker := a.keepaliveTicker
+	stop := a.keepaliveStop
+	a.keepaliveTicker = nil
+	a.keepaliveStop = nil
+	a.torMu.Unlock()
+
+	if ticker != nil {
+		ticker.Stop()
 	}
-	if a.keepaliveStop != nil {
-		close(a.keepaliveStop)
-		a.keepaliveStop = nil
+	if stop != nil {
+		close(stop)
 	}
 }
 
@@ -1421,7 +1461,7 @@ func lookupCountry(ip string) string {
 	var data struct {
 		CountryName string `json:"country_name"`
 	}
-	if json.Unmarshal([]byte(resp), &data); err != nil {
+	if err := json.Unmarshal([]byte(resp), &data); err != nil {
 		return "?"
 	}
 	if data.CountryName == "" {
@@ -1489,13 +1529,19 @@ func (a *App) getSafeFilename(cat, trans, ip string) string {
 
 func (a *App) downloadFile(url, dest string) error {
 	client := &http.Client{Timeout: 30 * time.Second}
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("User-Agent", "Mozilla/5.0")
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 	f, err := os.Create(dest)
 	if err != nil {
 		return err
@@ -1510,7 +1556,7 @@ func (a *App) DownloadAllBridges() {
 	os.MkdirAll(a.bridgesDir, 0755)
 
 	total := len(bridgeData)
-	done := 0
+	var done int64
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 3)
@@ -1535,9 +1581,9 @@ func (a *App) DownloadAllBridges() {
 				}
 			}
 
-			done++
-			pct := done * 100 / total
-			runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Bridges] Downloaded %s %s %s (%d/%d)", cat, trans, ip, done, total))
+			current := atomic.AddInt64(&done, 1)
+			pct := int(current) * 100 / total
+			runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Bridges] Downloaded %s %s %s (%d/%d)", cat, trans, ip, current, total))
 			runtime.EventsEmit(a.ctx, "bridge:progress", pct)
 		}(entry.Category, entry.Transport, entry.IP, entry.URL)
 	}
@@ -1828,7 +1874,6 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 	}()
 
 	wg.Wait()
-	clientConn.Close()
 	torConn.Close()
 }
 
@@ -1985,7 +2030,7 @@ func testUploadSpeed(a *App) string {
 	}
 	defer tlsConn.Close()
 
-	// Upload 10KB of data
+	// Upload 1MB of data
  postData := strings.Repeat("X", 1048576)
 	tlsConn.Write([]byte("POST /post HTTP/1.1\r\nHost: " + host + "\r\nContent-Length: " + strconv.Itoa(len(postData)) + "\r\nConnection: close\r\n\r\n" + postData))
 
@@ -2176,6 +2221,12 @@ func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source 
 	if cfg.ExpNoExitStreamPorts != "" {
 		sb.WriteString(fmt.Sprintf("RejectPlaintextPorts %s\n", cfg.ExpNoExitStreamPorts))
 	}
+	if cfg.ExpIsolateDestAddr {
+		sb.WriteString("IsolateDestAddr 1\n")
+	}
+	if cfg.ExpIsolateDestPort {
+		sb.WriteString("IsolateDestPort 1\n")
+	}
 
 	if cfg.DNSOverTor {
 		sb.WriteString("DNSPort 127.0.0.1:9053\n")
@@ -2209,19 +2260,6 @@ func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source 
 	torrcPath := filepath.Join(dataDir, "torrc")
 	os.WriteFile(torrcPath, []byte(sb.String()), 0644)
 	return torrcPath
-}
-
-func (a *App) shuffleStrings(s []string) []string {
-	cp := make([]string, len(s))
-	copy(cp, s)
-	for i := len(cp) - 1; i > 0; i-- {
-		j := int(time.Now().UnixNano()%int64(i+1))
-		if j < 0 {
-			j = -j
-		}
-		cp[i], cp[j] = cp[j], cp[i]
-	}
-	return cp
 }
 
 func (a *App) StartAllSlots() error {
@@ -2279,6 +2317,16 @@ func (a *App) StopAllSlots() {
 	a.mu()
 	a.multiProxyLabel = ""
 	a.multiProxyStop = nil
+	if a.multiBalancerStop != nil {
+		select {
+		case <-a.multiBalancerStop:
+		default:
+			close(a.multiBalancerStop)
+		}
+		a.multiBalancerStop = nil
+	}
+	a.multiBalancerMode = ""
+	a.multiBalancerCounter = 0
 	a.muUnlock()
 
 	a.cleanupMultiDataDirs()
@@ -2543,7 +2591,6 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 	}()
 
 	wg.Wait()
-	clientConn.Close()
 	torConn.Close()
 }
 
@@ -2625,6 +2672,7 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Start(); err != nil {
+		stdout.Close()
 		runtime.EventsEmit(a.ctx, "multi:slot:error", map[string]interface{}{
 			"label": slot.Label, "message": fmt.Sprintf("Launch error: %v", err),
 		})
@@ -2982,7 +3030,7 @@ func lookupCountryViaProxy(ip string, socksPort int) string {
 	var data struct {
 		CountryName string `json:"country_name"`
 	}
-	if json.Unmarshal([]byte(resp), &data); err != nil {
+	if err := json.Unmarshal([]byte(resp), &data); err != nil {
 		return "?"
 	}
 	if data.CountryName == "" {
@@ -3100,6 +3148,225 @@ func (a *App) SetProxyToSlot(label string) error {
 		}
 	}
 	return fmt.Errorf("slot not found: %s", label)
+}
+
+func (a *App) GetProxyStrategy() string {
+	a.mu()
+	defer a.muUnlock()
+	return a.multiBalancerMode
+}
+
+func (a *App) SetProxyStrategy(mode string) error {
+	a.mu()
+	defer a.muUnlock()
+
+	// Stop any existing proxy
+	if a.multiBalancerStop != nil {
+		select {
+		case <-a.multiBalancerStop:
+		default:
+			close(a.multiBalancerStop)
+		}
+		a.multiBalancerStop = nil
+	}
+	if a.multiProxyStop != nil {
+		select {
+		case <-a.multiProxyStop:
+		default:
+			close(a.multiProxyStop)
+		}
+		a.multiProxyStop = nil
+	}
+	a.unsetSystemProxy()
+	a.StopHTTPProxy()
+
+	a.multiBalancerMode = mode
+	a.multiProxyLabel = ""
+
+	if mode == "balancer" {
+		stopCh := make(chan struct{})
+		a.multiBalancerStop = stopCh
+		go runBalancerProxy(stopCh, a)
+		a.setSystemProxy(9099)
+
+		runtime.EventsEmit(a.ctx, "multi:proxy:balancer:on", map[string]interface{}{})
+		return nil
+	}
+
+	if mode == "least_ping" {
+		runtime.EventsEmit(a.ctx, "multi:proxy:balancer:off", map[string]interface{}{})
+		return nil
+	}
+
+	return nil
+}
+
+func runBalancerProxy(stopCh chan struct{}, app *App) {
+	ln, err := net.Listen("tcp", "127.0.0.1:9099")
+	if err != nil {
+		runtime.EventsEmit(app.ctx, "tor:log", fmt.Sprintf("[Balancer] Failed to start: %v", err))
+		return
+	}
+	defer ln.Close()
+	runtime.EventsEmit(app.ctx, "tor:log", "[Balancer] Started on 127.0.0.1:9099")
+
+	for {
+		select {
+		case <-stopCh:
+			runtime.EventsEmit(app.ctx, "tor:log", "[Balancer] Stopped")
+			return
+		default:
+		}
+		ln.(*net.TCPListener).SetDeadline(time.Now().Add(1 * time.Second))
+		conn, err := ln.Accept()
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				continue
+			}
+			return
+		}
+		go handleBalancerConn(conn, app)
+	}
+}
+
+func handleBalancerConn(clientConn net.Conn, app *App) {
+	defer clientConn.Close()
+	clientConn.SetReadDeadline(time.Now().Add(15 * time.Second))
+
+	buf := make([]byte, 65536)
+	n, err := clientConn.Read(buf)
+	if err != nil || n == 0 {
+		return
+	}
+	data := buf[:n]
+
+	firstLine := strings.SplitN(string(data), "\r\n", 2)[0]
+	parts := strings.SplitN(firstLine, " ", 3)
+	if len(parts) < 2 {
+		return
+	}
+
+	method := parts[0]
+	target := parts[1]
+
+	// Get connected slots
+	app.mu()
+	states := app.multiSlotStates
+	slots := app.GetMultiSlots()
+	app.muUnlock()
+
+	var connectedSlots []int
+	for i, s := range slots {
+		if st, ok := states[s.Label]; ok && st.Connected {
+			connectedSlots = append(connectedSlots, i)
+		}
+	}
+
+	if len(connectedSlots) == 0 {
+		clientConn.Write([]byte("HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n"))
+		return
+	}
+
+	// Round-robin pick
+	idx := atomic.AddInt64(&app.multiBalancerCounter, 1)
+	slotIdx := connectedSlots[int(idx)%len(connectedSlots)]
+	socksPort, httpPort := app.slotPorts(slotIdx)
+
+	if method == "CONNECT" {
+		handleBalancerConnect(clientConn, data, target, "127.0.0.1", socksPort, httpPort, app)
+	} else {
+		handleBalancerHTTPRequest(clientConn, data, method, target, "127.0.0.1", socksPort, httpPort, app)
+	}
+}
+
+func handleBalancerConnect(clientConn net.Conn, initialData []byte, target, socksHost string, socksPort int, httpPort int, app *App) {
+	host := target
+	port := 443
+	if strings.Contains(target, ":") {
+		h, p, _ := net.SplitHostPort(target)
+		host = h
+		port, _ = strconv.Atoi(p)
+	}
+
+	torConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", socksHost, socksPort), 10*time.Second)
+	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer torConn.Close()
+
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+
+	clientConn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+
+	app.mu()
+	traffic := app.multiTraffic[httpPort]
+	if traffic == nil {
+		traffic = &SlotTraffic{}
+		app.multiTraffic[httpPort] = traffic
+	}
+	app.muUnlock()
+
+	relayHTTPData(clientConn, torConn, traffic)
+}
+
+func handleBalancerHTTPRequest(clientConn net.Conn, initialData []byte, method, target, socksHost string, socksPort int, httpPort int, app *App) {
+	parsed, err := url.Parse(target)
+	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	host := parsed.Hostname()
+	port := 80
+	if p := parsed.Port(); p != "" {
+		port, _ = strconv.Atoi(p)
+	}
+	path := parsed.Path
+	if path == "" {
+		path = "/"
+	}
+	if parsed.RawQuery != "" {
+		path += "?" + parsed.RawQuery
+	}
+
+	torConn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", socksHost, socksPort), 10*time.Second)
+	if err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+	defer torConn.Close()
+
+	if err := socks5Handshake(torConn, host, port); err != nil {
+		clientConn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"))
+		return
+	}
+
+	headerEnd := strings.Index(string(initialData), "\r\n\r\n")
+	headerPart := initialData
+	if headerEnd != -1 {
+		headerPart = initialData[:headerEnd]
+	}
+	body := []byte{}
+	if headerEnd != -1 {
+		body = initialData[headerEnd+4:]
+	}
+	headerLines := strings.Split(string(headerPart), "\r\n")
+	headerLines[0] = fmt.Sprintf("%s %s HTTP/1.1", method, path)
+	torConn.Write([]byte(strings.Join(headerLines, "\r\n") + "\r\n\r\n"))
+	torConn.Write(body)
+
+	app.mu()
+	traffic := app.multiTraffic[httpPort]
+	if traffic == nil {
+		traffic = &SlotTraffic{}
+		app.multiTraffic[httpPort] = traffic
+	}
+	app.muUnlock()
+
+	relayHTTPData(clientConn, torConn, traffic)
 }
 
 // ===================== CUSTOM BRIDGES =====================
