@@ -757,21 +757,20 @@ func (a *App) stopTor() {
 	}
 	if a.torProcess != nil {
 		a.torProcess.Signal(os.Interrupt)
-		a.torMu.Unlock()
-		time.Sleep(2 * time.Second)
-		a.torMu.Lock()
-		if a.torProcess != nil {
-			a.torProcess.Kill()
-		}
 		a.torProcess = nil
 	}
+	wasConnected := a.connected
 	a.connected = false
 	a.torMu.Unlock()
 
-	a.StopWatchdog()
-	a.StopKeepAlive()
-	a.StopHTTPProxy()
-	a.unsetSystemProxy()
+	if wasConnected {
+		a.StopWatchdog()
+		a.StopKeepAlive()
+		a.StopHTTPProxy()
+		a.unsetSystemProxy()
+		a.NotifyDesktop("Delta Tor", "Tor has stopped.")
+		runtime.EventsEmit(a.ctx, "tor:disconnected", true)
+	}
 	runtime.EventsEmit(a.ctx, "tor:stopped", true)
 }
 
@@ -801,10 +800,6 @@ func (a *App) StopAutoConnect() {
 	a.torMu.Lock()
 	if a.torProcess != nil {
 		a.torProcess.Signal(os.Interrupt)
-		time.Sleep(1 * time.Second)
-		if a.torProcess != nil {
-			a.torProcess.Kill()
-		}
 		a.torProcess = nil
 	}
 	a.connected = false
