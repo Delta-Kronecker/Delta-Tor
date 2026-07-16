@@ -714,15 +714,19 @@ func (a *App) readTorOutput(stdout io.ReadCloser, cmd *exec.Cmd) {
 			pct, _ := strconv.Atoi(m[1])
 			runtime.EventsEmit(a.ctx, "tor:progress", pct)
 
+			a.torMu.Lock()
 			if pct == 100 && !a.connected {
 				a.connected = true
 				a.uptimeStart = time.Now()
+				a.torMu.Unlock()
 				a.ResetTrafficStats()
 				runtime.EventsEmit(a.ctx, "tor:connected", true)
 				runtime.LogInfo(a.ctx, "Tor fully connected!")
 				a.NotifyDesktop("Delta Tor", "Tor is fully connected!")
 				a.StartWatchdog()
 				a.StartKeepAlive()
+			} else {
+				a.torMu.Unlock()
 			}
 		}
 	}
