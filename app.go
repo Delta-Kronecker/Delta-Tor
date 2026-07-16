@@ -2118,6 +2118,7 @@ func (a *App) StartAllSlots() error {
 	a.multiRunning = true
 	a.multiSlotStates = make(map[string]*SlotState)
 	a.multiHealthData = make(map[string]*HealthData)
+	a.multiTraffic = make(map[int]*SlotTraffic)
 	a.muUnlock()
 
 	slots := a.GetMultiSlots()
