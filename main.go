@@ -61,6 +61,7 @@ func setupTray(app *App) {
 					case <-showItem.ClickedCh:
 						app.ShowWindow()
 					case <-quitItem.ClickedCh:
+						app.StopAllSlots()
 						app.StopTor()
 						os.Exit(0)
 					}
