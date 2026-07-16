@@ -1341,7 +1341,7 @@ type TestResult struct {
 func (a *App) TestConnection() TestResult {
 	runtime.EventsEmit(a.ctx, "tor:log", "[Test] Checking connection...")
 
-	if !a.connected {
+	if !a.IsTorConnected() {
 		runtime.EventsEmit(a.ctx, "tor:log", "[Test] Tor not connected")
 		return TestResult{IP: "—", Country: "—", IsTor: false}
 	}
@@ -1929,7 +1929,7 @@ type SpeedResult struct {
 }
 
 func (a *App) TestSpeed() *SpeedResult {
-	if !a.connected {
+	if !a.IsTorConnected() {
 		return nil
 	}
 
