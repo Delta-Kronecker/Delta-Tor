@@ -2151,10 +2151,7 @@ func (a *App) StopAllSlots() {
 		}
 		if st.Process != nil {
 			st.Process.Signal(os.Interrupt)
-			time.Sleep(1 * time.Second)
-			if st.Process != nil {
-				st.Process.Kill()
-			}
+			st.Process = nil
 		}
 	}
 
@@ -2193,10 +2190,7 @@ func (a *App) StopSlot(label string) {
 		}
 		if st.Process != nil {
 			st.Process.Signal(os.Interrupt)
-			time.Sleep(1 * time.Second)
-			if st.Process != nil {
-				st.Process.Kill()
-			}
+			st.Process = nil
 		}
 		delete(a.multiSlotStates, label)
 	}
@@ -2449,10 +2443,7 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 	if old, ok := a.multiSlotStates[slot.Label]; ok {
 		if old.Process != nil {
 			old.Process.Signal(os.Interrupt)
-			time.Sleep(500 * time.Millisecond)
-			if old.Process != nil {
-				old.Process.Kill()
-			}
+			old.Process = nil
 		}
 	}
 	a.muUnlock()
@@ -2512,10 +2503,7 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 		case <-stopCh:
 			if cmd.Process != nil {
 				cmd.Process.Signal(os.Interrupt)
-				time.Sleep(1 * time.Second)
-				if cmd.Process != nil {
-					cmd.Process.Kill()
-				}
+				cmd.Process = nil
 			}
 			return
 		default:
