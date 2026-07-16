@@ -1754,6 +1754,7 @@ func (a *App) handleHTTPConnect(clientConn net.Conn, initialData []byte) {
 
 	firstLine := strings.SplitN(lines[0], " ", 3)
 	if len(firstLine) < 3 {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
 		return
 	}
 
@@ -1792,6 +1793,7 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 
 	firstLine := strings.SplitN(lines[0], " ", 3)
 	if len(firstLine) < 3 {
+		clientConn.Write([]byte("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n"))
 		return
 	}
 
