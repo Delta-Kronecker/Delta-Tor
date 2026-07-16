@@ -1185,6 +1185,13 @@ func (a *App) watchdogTick() {
 }
 
 func (a *App) runTorInternal() {
+	a.torMu.Lock()
+	hasStopCh := a.stopCh != nil
+	a.torMu.Unlock()
+	if !hasStopCh {
+		return
+	}
+
 	if !a.IsPortFree(TorSOCKSPort) {
 		runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Watchdog] Port %d busy, skipping restart.\n", TorSOCKSPort))
 		return
