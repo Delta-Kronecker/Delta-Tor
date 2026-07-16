@@ -198,7 +198,17 @@ function renderMultiMode() {
             <button class="btn btn-start" id="multiStartBtn" onclick="multiStartAll()">&#9654; Start</button>
             <button class="btn btn-stop" onclick="multiStopAll()">&#9209; Stop</button>
         </div>
-        <button class="btn btn-auto-proxy" id="autoProxyBtn" onclick="toggleAutoProxy()">Auto Proxy : OFF</button>
+        <div class="multi-proxy-group">
+            <span class="conn-counter" id="connCounter">Connected: 0</span>
+            <div class="strategy-dropdown" id="strategyDropdown">
+                <button class="btn btn-strategy" id="strategyBtn" onclick="toggleStrategyDropdown()">Strategy: Least Ping &#9660;</button>
+                <div class="strategy-menu" id="strategyMenu">
+                    <div class="strategy-option" onclick="selectStrategy('least_ping')">Least Ping</div>
+                    <div class="strategy-option" onclick="selectStrategy('balancer')">Balancer</div>
+                </div>
+            </div>
+            <button class="btn btn-auto-proxy" id="proxyBtn" onclick="toggleMultiProxy()">Proxy : OFF</button>
+        </div>
     </div>
 </div>
 <div class="multi-separator"></div>
@@ -228,19 +238,19 @@ function restoreMultiSlotState() {
             if (pctLabel) pctLabel.textContent = 'Progress : ' + st.pct + '%';
         }
         if (st.status) {
-            const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
-            if (statusEl) {
-                statusEl.textContent = st.status;
-                if (st.connected) statusEl.style.color = 'var(--grn)';
-                else if (st.failed) statusEl.style.color = 'var(--red)';
-                else statusEl.style.color = 'var(--ylw)';
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[0]) {
+                boxes[0].textContent = st.status;
+                if (st.connected) boxes[0].style.color = 'var(--grn)';
+                else if (st.failed) boxes[0].style.color = 'var(--red)';
+                else boxes[0].style.color = 'var(--ylw)';
             }
         }
         if (st.health) {
-            const healthBoxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
-            if (healthBoxes[0]) {
-                healthBoxes[0].textContent = st.health;
-                healthBoxes[0].style.color = st.healthOnline ? 'var(--grn)' : 'var(--red)';
+            const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+            if (boxes[0]) {
+                boxes[0].textContent = st.health;
+                boxes[0].style.color = st.healthOnline ? 'var(--grn)' : 'var(--red)';
             }
         }
         if (st.exitIp) {
@@ -522,7 +532,6 @@ function render() {
     app.innerHTML = html;
 
     if (setupMode) {
-        const defaultDir = '${window.go.main.App.GetDefaultDataDir()}';
         window.go.main.App.GetDefaultDataDir().then(dir => {
             const pathInput = document.getElementById('setupPath');
             if (pathInput && dir) pathInput.value = dir;
@@ -661,6 +670,7 @@ window.switchToBridgeInfo = function() { currentMode = 'bridgeinfo'; render(); }
 let proxyOn = false;
 window.toggleProxy = async function() {
     proxyOn = !proxyOn;
+    appState.proxyOn = proxyOn;
     const btn = document.getElementById('proxyBtn');
     if (btn) btn.classList.remove('proxy-blink');
     if (proxyOn) {
@@ -747,10 +757,12 @@ window.toggleAuto = async function() {
         try { await window.go.main.App.StopTor(); } catch(e) {}
         isRunning = false;
         appState.isRunning = false;
-        document.getElementById('conn-pct').textContent = '0%';
-        document.getElementById('conn-progress').style.width = '0%';
-        document.getElementById('stat-tor').textContent = '\u2014';
-        document.getElementById('stat-tor').style.color = '';
+        const pctEl = document.getElementById('conn-pct');
+        if (pctEl) pctEl.textContent = '0%';
+        const fillEl = document.getElementById('conn-progress');
+        if (fillEl) fillEl.style.width = '0%';
+        const torStat = document.getElementById('stat-tor');
+        if (torStat) { torStat.textContent = '\u2014'; torStat.style.color = ''; }
     } else {
         // Start auto-connect
         autoConnecting = true;
@@ -758,10 +770,10 @@ window.toggleAuto = async function() {
         appState.isRunning = true;
         btn.textContent = '\u26A1 Auto (active)';
         btn.className = 'btn btn-auto-active';
-        document.getElementById('startBtn').textContent = '\u23F9 Stop';
-        document.getElementById('startBtn').className = 'btn btn-stop-lg';
-        document.getElementById('stat-tor').textContent = 'Auto-connecting...';
-        document.getElementById('stat-tor').style.color = 'var(--ylw)';
+        const startBtn = document.getElementById('startBtn');
+        if (startBtn) { startBtn.textContent = '\u23F9 Stop'; startBtn.className = 'btn btn-stop-lg'; }
+        const torStat2 = document.getElementById('stat-tor');
+        if (torStat2) { torStat2.textContent = 'Auto-connecting...'; torStat2.style.color = 'var(--ylw)'; }
         document.getElementById('conn-pct').textContent = '0%';
         document.getElementById('conn-progress').style.width = '0%';
         try {
@@ -894,8 +906,10 @@ window.runtime.EventsOn('auto:failed', (data) => {
         torEl.textContent = '\u2014';
         torEl.style.color = '';
     }
-    document.getElementById('conn-pct').textContent = '0%';
-    document.getElementById('conn-progress').style.width = '0%';
+    const pctEl = document.getElementById('conn-pct');
+    if (pctEl) pctEl.textContent = '0%';
+    const fillEl = document.getElementById('conn-progress');
+    if (fillEl) fillEl.style.width = '0%';
     const logEl = document.getElementById('logOutput');
     if (logEl) {
         const div = document.createElement('div');
@@ -929,15 +943,22 @@ window.runtime.EventsOn('tor:stopped', () => {
     appState.download = '0 B/s';
     appState.upload = '0 B/s';
     appState.logLines = [];
-    document.getElementById('stat-tor').textContent = '\u2014';
-    document.getElementById('stat-tor').style.color = '';
-    document.getElementById('stat-ip').textContent = '\u2014';
-    document.getElementById('stat-country').textContent = '\u2014';
-    document.getElementById('stat-uptime').textContent = '\u2014';
-    document.getElementById('stat-download').textContent = '\u2014';
-    document.getElementById('stat-upload').textContent = '\u2014';
-    document.getElementById('conn-pct').textContent = '0%';
-    document.getElementById('conn-progress').style.width = '0%';
+    const torEl = document.getElementById('stat-tor');
+    if (torEl) { torEl.textContent = '\u2014'; torEl.style.color = ''; }
+    const ipEl = document.getElementById('stat-ip');
+    if (ipEl) ipEl.textContent = '\u2014';
+    const countryEl = document.getElementById('stat-country');
+    if (countryEl) countryEl.textContent = '\u2014';
+    const uptimeEl = document.getElementById('stat-uptime');
+    if (uptimeEl) uptimeEl.textContent = '\u2014';
+    const dlEl = document.getElementById('stat-download');
+    if (dlEl) dlEl.textContent = '\u2014';
+    const ulEl = document.getElementById('stat-upload');
+    if (ulEl) ulEl.textContent = '\u2014';
+    const pctEl = document.getElementById('conn-pct');
+    if (pctEl) pctEl.textContent = '0%';
+    const fillEl = document.getElementById('conn-progress');
+    if (fillEl) fillEl.style.width = '0%';
     const portBadges = document.getElementById('portBadges');
     if (portBadges) portBadges.style.display = 'none';
     const autoBtn = document.getElementById('autoBtn');
@@ -1058,27 +1079,60 @@ function stopTrafficMonitor() {
 }
 
 let autoProxyInterval = null;
+let currentStrategy = 'least_ping';
+let proxyActive = false;
 
-window.toggleAutoProxy = async function() {
-    autoProxyOn = !autoProxyOn;
-    const btn = document.getElementById('autoProxyBtn');
-    if (autoProxyOn) {
-        btn.textContent = 'Auto Proxy : ON';
+window.toggleStrategyDropdown = function() {
+    const menu = document.getElementById('strategyMenu');
+    if (menu) menu.classList.toggle('strategy-menu-open');
+};
+
+window.selectStrategy = function(mode) {
+    currentStrategy = mode;
+    const btn = document.getElementById('strategyBtn');
+    const menu = document.getElementById('strategyMenu');
+    if (menu) menu.classList.remove('strategy-menu-open');
+    if (btn) {
+        const label = mode === 'balancer' ? 'Balancer' : 'Least Ping';
+        btn.innerHTML = 'Strategy: ' + label + ' &#9660;';
+    }
+};
+
+window.toggleMultiProxy = async function() {
+    proxyActive = !proxyActive;
+    const btn = document.getElementById('proxyBtn');
+
+    if (proxyActive) {
+        btn.textContent = 'Proxy : ON';
         btn.classList.add('auto-proxy-on');
-        autoProxyCheck();
-        autoProxyInterval = setInterval(autoProxyCheck, 15000);
+
+        if (currentStrategy === 'balancer') {
+            try { await window.go.main.App.SetProxyStrategy('balancer'); } catch(e) {}
+            appendLog('[Proxy] Balancer mode activated', 'ok');
+        } else {
+            autoProxyOn = true;
+            autoProxyCheck();
+            autoProxyInterval = setInterval(autoProxyCheck, 15000);
+            appendLog('[Proxy] Least Ping mode activated', 'ok');
+        }
     } else {
-        btn.textContent = 'Auto Proxy : OFF';
+        btn.textContent = 'Proxy : OFF';
         btn.classList.remove('auto-proxy-on');
+
+        autoProxyOn = false;
         if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
+
+        try { await window.go.main.App.SetProxyStrategy(''); } catch(e) {}
+
         if (activeProxyLabel) {
             try { await window.go.main.App.SetProxyToSlot(activeProxyLabel); } catch(e) {}
             activeProxyLabel = null;
-            document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
-                b.classList.remove('slot-btn-proxy-active');
-                b.textContent = 'Set Proxy';
-            });
         }
+        document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
+            b.classList.remove('slot-btn-proxy-active');
+            b.textContent = 'Set Proxy';
+        });
+        appendLog('[Proxy] Disabled', 'auto');
     }
 };
 
@@ -1216,7 +1270,11 @@ window.closeMultiLog = function() {
 let multiLogActiveLabel = null;
 
 window.multiDeleteSlot = async function(label) {
-    try { await window.go.main.App.DeleteMultiSlot(label); } catch(e) { console.error(e); }
+    try {
+        await window.go.main.App.DeleteMultiSlot(label);
+        await loadMultiSlots();
+        render();
+    } catch(e) { console.error(e); }
 };
 
 window.addConnectionMode = function() {
@@ -1315,14 +1373,6 @@ window.addConnectionMode = function() {
     });
 };
 
-window.multiDeleteSlot = async function(label) {
-    try {
-        await window.go.main.App.DeleteMultiSlot(label);
-        await loadMultiSlots();
-        render();
-    } catch(e) { console.error(e); }
-};
-
 // Multi-connect events
 window.runtime.EventsOn('multi:slot:progress', (data) => {
     if (!multiSlotState[data.label]) multiSlotState[data.label] = {};
@@ -1338,21 +1388,22 @@ window.runtime.EventsOn('multi:slot:progress', (data) => {
 
     const fill = cardEl.querySelector('.slot-progress-fill');
     const pctLabel = cardEl.querySelector('.slot-progress-pct-inline');
-    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+    const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
 
     if (fill) fill.style.width = (data.pct || 0) + '%';
     if (pctLabel) pctLabel.textContent = 'Progress : ' + (data.pct || 0) + '%';
-    if (statusEl) {
-        statusEl.textContent = data.status || '—';
-        if (data.connected) statusEl.style.color = 'var(--grn)';
-        else if (data.failed) statusEl.style.color = 'var(--red)';
-        else statusEl.style.color = 'var(--ylw)';
+    if (boxes[0]) {
+        boxes[0].textContent = data.status || '—';
+        if (data.connected) boxes[0].style.color = 'var(--grn)';
+        else if (data.failed) boxes[0].style.color = 'var(--red)';
+        else boxes[0].style.color = 'var(--ylw)';
     }
 
     if (data.connected) {
         startSlotTestLoop(data.label);
         startSlotTrafficLoop(data.label);
         startSlotUptime(data.label);
+        updateConnectionsCount();
     }
 });
 
@@ -1365,10 +1416,10 @@ window.runtime.EventsOn('multi:slot:health', (data) => {
     if (!card) return;
     const cardEl = card.closest('.slot-card-full');
     if (!cardEl) return;
-    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
-    if (statusEl) {
-        statusEl.textContent = data.text || '—';
-        statusEl.style.color = data.online ? 'var(--grn)' : 'var(--red)';
+    const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
+    if (boxes[0]) {
+        boxes[0].textContent = data.text || '—';
+        boxes[0].style.color = data.online ? 'var(--grn)' : 'var(--red)';
     }
 });
 
@@ -1382,12 +1433,13 @@ window.runtime.EventsOn('multi:slot:stopped', (data) => {
     if (!card) return;
     const cardEl = card.closest('.slot-card-full');
     if (!cardEl) return;
-    const statusEl = cardEl.querySelector('.slot-stat-box:first-child .slot-stat-val');
+    const boxes = cardEl.querySelectorAll('.slot-stat-box .slot-stat-val');
     const fill = cardEl.querySelector('.slot-progress-fill');
     const pctLabel = cardEl.querySelector('.slot-progress-pct-inline');
-    if (statusEl) { statusEl.textContent = 'Stopped'; statusEl.style.color = ''; }
+    if (boxes[0]) { boxes[0].textContent = 'Stopped'; boxes[0].style.color = ''; }
     if (fill) fill.style.width = '0%';
     if (pctLabel) pctLabel.textContent = 'Progress : 0%';
+    updateConnectionsCount();
 });
 
 window.runtime.EventsOn('multi:stopped', () => {
@@ -1395,12 +1447,16 @@ window.runtime.EventsOn('multi:stopped', () => {
     multiSlotState = {};
     activeProxyLabel = null;
     autoProxyOn = false;
+    proxyActive = false;
+    currentStrategy = 'least_ping';
     if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
     stopAllSlotTimers();
     const btn = document.getElementById('multiStartBtn');
     if (btn) { btn.textContent = '\u25B6 Start'; btn.disabled = false; }
-    const proxyBtn = document.getElementById('autoProxyBtn');
-    if (proxyBtn) { proxyBtn.textContent = 'Auto Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    const proxyBtn = document.getElementById('proxyBtn');
+    if (proxyBtn) { proxyBtn.textContent = 'Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    const stratBtn = document.getElementById('strategyBtn');
+    if (stratBtn) { stratBtn.innerHTML = 'Strategy: Least Ping &#9660;'; }
     document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
     document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
     document.querySelectorAll('.slot-stat-box .slot-stat-val').forEach(el => { el.textContent = '\u2014'; el.style.color = ''; });
@@ -1416,6 +1472,14 @@ window.runtime.EventsOn('multi:proxy:on', (data) => {
 
 window.runtime.EventsOn('multi:proxy:off', (data) => {
     appendLog('[Multi] Proxy disabled for ' + data.label, 'auto');
+});
+
+window.runtime.EventsOn('multi:proxy:balancer:on', (data) => {
+    appendLog('[Balancer] Active on 127.0.0.1:9099', 'ok');
+});
+
+window.runtime.EventsOn('multi:proxy:balancer:off', (data) => {
+    appendLog('[Balancer] Stopped', 'auto');
 });
 
 window.runtime.EventsOn('multi:slot:log', (data) => {
@@ -1521,6 +1585,15 @@ function updateSlotStat(label, index, value) {
     if (boxes[index]) boxes[index].textContent = value;
 }
 
+function updateConnectionsCount() {
+    let count = 0;
+    for (const [label, st] of Object.entries(multiSlotState)) {
+        if (st.connected) count++;
+    }
+    const el = document.getElementById('connCounter');
+    if (el) el.textContent = 'Connected: ' + count;
+}
+
 let logPanelOpen = false;
 window.toggleLogPanel = function() {
     logPanelOpen = !logPanelOpen;
@@ -1538,10 +1611,12 @@ window.saveLog = function() {
     const el = document.getElementById('logOutput');
     if (!el) return;
     const blob = new Blob([el.innerText], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = 'tor_log_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.txt';
     a.click();
+    URL.revokeObjectURL(url);
 };
 
 window.appendLog = function(msg, type) {
@@ -1553,14 +1628,6 @@ window.appendLog = function(msg, type) {
     line.textContent = msg;
     el.appendChild(line);
     el.scrollTop = el.scrollHeight;
-};
-
-window.updateBridges = async function() {
-    try {
-        await window.go.main.App.DownloadAllBridges();
-    } catch(e) {
-        console.error(e);
-    }
 };
 
 window.showBridgeInfo = function() {
@@ -1878,10 +1945,12 @@ window.exportScan = async function() {
             return;
         }
         const blob = new Blob([text], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
+        a.href = url;
         a.download = 'working_bridges_' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.txt';
         a.click();
+        URL.revokeObjectURL(url);
     } catch(e) { console.error(e); }
 };
 
@@ -1999,3 +2068,11 @@ window.runtime.EventsOn('setup:progress', (msg) => {
 
 render();
 checkVersion();
+
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('strategyDropdown');
+    const menu = document.getElementById('strategyMenu');
+    if (dropdown && menu && !dropdown.contains(e.target)) {
+        menu.classList.remove('strategy-menu-open');
+    }
+});
