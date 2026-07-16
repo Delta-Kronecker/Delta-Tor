@@ -1835,6 +1835,19 @@ func (a *App) handleHTTPRequest(clientConn net.Conn, initialData []byte) {
 	a.relayData(clientConn, torConn)
 }
 
+type countingReader struct {
+	net.Conn
+	counter *int64
+}
+
+func (r *countingReader) Read(b []byte) (int, error) {
+	n, err := r.Conn.Read(b)
+	if n > 0 {
+		atomic.AddInt64(r.counter, int64(n))
+	}
+	return n, err
+}
+
 func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 	if tc, ok := clientConn.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
@@ -1850,50 +1863,16 @@ func (a *App) relayData(clientConn net.Conn, torConn net.Conn) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	buf := make([]byte, 262144)
+
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 262144)
-		for {
-			nr, er := torConn.Read(buf)
-			if nr > 0 {
-				atomic.AddInt64(&a.dlBytes, int64(nr))
-				nw, ew := clientConn.Write(buf[:nr])
-				for nw < nr && ew == nil {
-					n, e := clientConn.Write(buf[nw:nr])
-					nw += n
-					ew = e
-				}
-				if ew != nil {
-					return
-				}
-			}
-			if er != nil {
-				return
-			}
-		}
+		io.CopyBuffer(clientConn, &countingReader{torConn, &a.dlBytes}, buf)
 	}()
 
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, 262144)
-		for {
-			nr, er := clientConn.Read(buf)
-			if nr > 0 {
-				atomic.AddInt64(&a.ulBytes, int64(nr))
-				nw, ew := torConn.Write(buf[:nr])
-				for nw < nr && ew == nil {
-					n, e := torConn.Write(buf[nw:nr])
-					nw += n
-					ew = e
-				}
-				if ew != nil {
-					return
-				}
-			}
-			if er != nil {
-				return
-			}
-		}
+		io.CopyBuffer(torConn, &countingReader{clientConn, &a.ulBytes}, buf)
 	}()
 
 	wg.Wait()
@@ -2425,56 +2404,27 @@ func relayHTTPData(clientConn net.Conn, torConn net.Conn, traffic *SlotTraffic) 
 
 	var wg sync.WaitGroup
 	wg.Add(2)
+	buf := make([]byte, 262144)
 
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, 262144)
-		for {
-			nr, er := torConn.Read(buf)
-			if nr > 0 {
-				if traffic != nil {
-					atomic.AddInt64(&traffic.DlBytes, int64(nr))
-				}
-				nw, ew := clientConn.Write(buf[:nr])
-				for nw < nr && ew == nil {
-					n, e := clientConn.Write(buf[nw:nr])
-					nw += n
-					ew = e
-				}
-				if ew != nil {
-					return
-				}
-			}
-			if er != nil {
-				return
-			}
-		}
-	}()
-
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, 262144)
-		for {
-			nr, er := clientConn.Read(buf)
-			if nr > 0 {
-				if traffic != nil {
-					atomic.AddInt64(&traffic.UlBytes, int64(nr))
-				}
-				nw, ew := torConn.Write(buf[:nr])
-				for nw < nr && ew == nil {
-					n, e := torConn.Write(buf[nw:nr])
-					nw += n
-					ew = e
-				}
-				if ew != nil {
-					return
-				}
-			}
-			if er != nil {
-				return
-			}
-		}
-	}()
+	if traffic != nil {
+		go func() {
+			defer wg.Done()
+			io.CopyBuffer(clientConn, &countingReader{torConn, &traffic.DlBytes}, buf)
+		}()
+		go func() {
+			defer wg.Done()
+			io.CopyBuffer(torConn, &countingReader{clientConn, &traffic.UlBytes}, buf)
+		}()
+	} else {
+		go func() {
+			defer wg.Done()
+			io.CopyBuffer(clientConn, torConn, buf)
+		}()
+		go func() {
+			defer wg.Done()
+			io.CopyBuffer(torConn, clientConn, buf)
+		}()
+	}
 
 	wg.Wait()
 	torConn.Close()
