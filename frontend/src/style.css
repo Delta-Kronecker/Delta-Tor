@@ -920,6 +920,83 @@ body {
     box-shadow: 0 0 12px rgba(58,114,176,0.3);
 }
 
+.btn-strategy {
+    background: var(--btn2);
+    color: var(--fg);
+    font-size: 13px;
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+
+.btn-strategy:hover {
+    border-color: var(--cyan);
+    box-shadow: 0 0 8px rgba(58,168,192,0.2);
+}
+
+.multi-proxy-group {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.conn-counter {
+    font-size: 13px;
+    font-weight: bold;
+    color: var(--grn);
+    padding: 6px 12px;
+    background: var(--btn);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.strategy-dropdown {
+    position: relative;
+}
+
+.strategy-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    min-width: 140px;
+    z-index: 300;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+}
+
+.strategy-menu-open {
+    display: block;
+}
+
+.strategy-option {
+    padding: 8px 14px;
+    font-size: 13px;
+    color: var(--fg);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.strategy-option:hover {
+    background: var(--btn2);
+    color: var(--fg);
+}
+
+.strategy-option:first-child {
+    border-radius: 4px 4px 0 0;
+}
+
+.strategy-option:last-child {
+    border-radius: 0 0 4px 4px;
+}
+
 .multi-separator {
     height: 1px;
     background: var(--border);
@@ -1021,68 +1098,12 @@ body {
     margin-left: 8px;
 }
 
-.slot-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    margin-bottom: 4px;
-    width: 100%;
-}
-
 .slot-progress-label {
     font-size: 12px;
     color: var(--fg2);
     white-space: nowrap;
     flex-shrink: 0;
-    margin-right: 0;
-}
-
-.slot-progress-pct {
-    font-size: 12px;
-    font-weight: bold;
-    color: var(--fg2);
-    min-width: 36px;
-    text-align: right;
-    flex-shrink: 0;
-    margin-right: 6px;
-}
-
-.slot-progress-row {
-    display: flex;
-    align-items: center;
-    gap: 0;
-    margin-bottom: 4px;
-    width: 100%;
-}
-
-.slot-progress-label {
-    font-size: 12px;
-    color: var(--fg2);
-    white-space: nowrap;
-    flex-shrink: 0;
-    margin-right: 4;
-	margin-right: 35;
-	
-}
-
-.slot-progress-pct {
-    font-size: 12px;
-    font-weight: bold;
-    color: var(--fg2);
-    min-width: 36px;
-    text-align: right;
-    flex-shrink: 0;
-    margin-right: 6px;
-}
-
-.slot-progress-pct {
-    font-size: 12px;
-    font-weight: bold;
-    color: var(--fg2);
-    min-width: 30px;
-    text-align: right;
-    flex-shrink: 0;
-    margin-right: 0;
+    margin-right: 35px;
 }
 
 .slot-progress-bar {
