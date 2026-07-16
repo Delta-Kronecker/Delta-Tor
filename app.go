@@ -759,13 +759,19 @@ func (a *App) stopTor() {
 		close(a.stopCh)
 		a.stopCh = nil
 	}
-	if a.torProcess != nil {
-		a.torProcess.Signal(os.Interrupt)
-		a.torProcess = nil
-	}
+	proc := a.torProcess
+	a.torProcess = nil
 	wasConnected := a.connected
 	a.connected = false
 	a.torMu.Unlock()
+
+	if proc != nil {
+		proc.Signal(os.Interrupt)
+		go func() {
+			time.Sleep(2 * time.Second)
+			proc.Kill()
+		}()
+	}
 
 	if wasConnected {
 		a.StopWatchdog()
@@ -802,12 +808,18 @@ func (a *App) StopAutoConnect() {
 	a.autoConnectMu.Unlock()
 
 	a.torMu.Lock()
-	if a.torProcess != nil {
-		a.torProcess.Signal(os.Interrupt)
-		a.torProcess = nil
-	}
+	proc := a.torProcess
+	a.torProcess = nil
 	a.connected = false
 	a.torMu.Unlock()
+
+	if proc != nil {
+		proc.Signal(os.Interrupt)
+		go func() {
+			time.Sleep(2 * time.Second)
+			proc.Kill()
+		}()
+	}
 }
 
 func (a *App) isAutoConnectActive() bool {
@@ -962,10 +974,10 @@ func (a *App) tryBridgeConfigAuto(cat, trans, ip string, timeoutS int) bool {
 		select {
 		case <-stopCh:
 			cmd.Process.Signal(os.Interrupt)
-			time.Sleep(1 * time.Second)
-			if cmd.Process != nil {
+			go func() {
+				time.Sleep(2 * time.Second)
 				cmd.Process.Kill()
-			}
+			}()
 			return false
 		default:
 		}
@@ -976,10 +988,10 @@ func (a *App) tryBridgeConfigAuto(cat, trans, ip string, timeoutS int) bool {
 		if strings.Contains(line, "Reading config failed") || strings.Contains(line, "Failed to parse/validate config") {
 			runtime.EventsEmit(a.ctx, "auto:log", "[Auto] Config error.")
 			cmd.Process.Signal(os.Interrupt)
-			time.Sleep(1 * time.Second)
-			if cmd.Process != nil {
+			go func() {
+				time.Sleep(2 * time.Second)
 				cmd.Process.Kill()
-			}
+			}()
 			return false
 		}
 
@@ -1016,10 +1028,10 @@ func (a *App) tryBridgeConfigAuto(cat, trans, ip string, timeoutS int) bool {
 		if lastPct >= 0 && time.Now().Sub(lastMove).Seconds() > float64(timeoutS) {
 			runtime.EventsEmit(a.ctx, "auto:log", fmt.Sprintf("[Auto] Stuck at %d%% for %ds → next", lastPct, timeoutS))
 			cmd.Process.Signal(os.Interrupt)
-			time.Sleep(1 * time.Second)
-			if cmd.Process != nil {
+			go func() {
+				time.Sleep(2 * time.Second)
 				cmd.Process.Kill()
-			}
+			}()
 			a.torMu.Lock()
 			a.torProcess = nil
 			a.connected = false
@@ -2152,7 +2164,11 @@ func (a *App) StopAllSlots() {
 		}
 		if st.Process != nil {
 			st.Process.Signal(os.Interrupt)
-			st.Process = nil
+			p := st.Process
+			go func() {
+				time.Sleep(2 * time.Second)
+				p.Kill()
+			}()
 		}
 	}
 
@@ -2191,7 +2207,11 @@ func (a *App) StopSlot(label string) {
 		}
 		if st.Process != nil {
 			st.Process.Signal(os.Interrupt)
-			st.Process = nil
+			p := st.Process
+			go func() {
+				time.Sleep(2 * time.Second)
+				p.Kill()
+			}()
 		}
 		delete(a.multiSlotStates, label)
 	}
@@ -2444,6 +2464,11 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 	if old, ok := a.multiSlotStates[slot.Label]; ok {
 		if old.Process != nil {
 			old.Process.Signal(os.Interrupt)
+			p := old.Process
+			go func() {
+				time.Sleep(2 * time.Second)
+				p.Kill()
+			}()
 			old.Process = nil
 		}
 	}
@@ -2504,7 +2529,11 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 		case <-stopCh:
 			if cmd.Process != nil {
 				cmd.Process.Signal(os.Interrupt)
-				cmd.Process = nil
+				p := cmd.Process
+				go func() {
+					time.Sleep(2 * time.Second)
+					p.Kill()
+				}()
 			}
 			return
 		default:
@@ -3486,6 +3515,7 @@ func (a *App) ShowWindow() {
 
 func (a *App) RestartApp() {
 	exe, _ := os.Executable()
+	a.StopAllSlots()
 	a.StopTor()
 	systray.Quit()
 	cmd := exec.Command(exe)
