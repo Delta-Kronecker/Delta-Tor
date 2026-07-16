@@ -1761,10 +1761,9 @@ func (a *App) handleHTTPConnect(clientConn net.Conn, initialData []byte) {
 	target := firstLine[1]
 	host := target
 	port := 443
-	if strings.Contains(target, ":") {
-		parts := strings.SplitN(target, ":", 2)
-		host = parts[0]
-		port, _ = strconv.Atoi(parts[1])
+	if h, p, err := net.SplitHostPort(target); err == nil {
+		host = h
+		port, _ = strconv.Atoi(p)
 	}
 
 	torConn, err := net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(TorSOCKSPort), 10*time.Second)
@@ -2298,8 +2297,7 @@ func socks5Handshake(conn net.Conn, host string, port int) error {
 func handleHTTPConnectProxy(clientConn net.Conn, initialData []byte, target, socksHost string, socksPort int, traffic *SlotTraffic) {
 	host := target
 	port := 443
-	if strings.Contains(target, ":") {
-		h, p, _ := net.SplitHostPort(target)
+	if h, p, err := net.SplitHostPort(target); err == nil {
 		host = h
 		port, _ = strconv.Atoi(p)
 	}
@@ -3073,8 +3071,7 @@ func handleBalancerConn(clientConn net.Conn, app *App) {
 func handleBalancerConnect(clientConn net.Conn, initialData []byte, target, socksHost string, socksPort int, httpPort int, app *App) {
 	host := target
 	port := 443
-	if strings.Contains(target, ":") {
-		h, p, _ := net.SplitHostPort(target)
+	if h, p, err := net.SplitHostPort(target); err == nil {
 		host = h
 		port, _ = strconv.Atoi(p)
 	}
