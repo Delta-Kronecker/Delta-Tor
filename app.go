@@ -451,48 +451,36 @@ func (a *App) GetBridgeLines(cat, trans, ip string) []string {
 	return lines
 }
 
-func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
-	dataDir := filepath.Join(a.dataDir, "data")
-	os.MkdirAll(dataDir, 0755)
+type torrcParams struct {
+	dataDir    string
+	socksPort  int
+	ctrlPort   int
+	useBridges bool
+	bridgeLines []string
+	writePT    bool
+}
 
-	geoipFile := filepath.Join(dataDir, "geoip")
-	geoip6File := filepath.Join(dataDir, "geoip6")
-	if _, err := os.Stat(geoipFile); os.IsNotExist(err) {
-		srcGeoip := filepath.Join(a.dataDir, "geoip")
-		if _, err := os.Stat(srcGeoip); err == nil {
-			copyFile(srcGeoip, geoipFile)
-		}
-	}
-	if _, err := os.Stat(geoip6File); os.IsNotExist(err) {
-		srcGeoip6 := filepath.Join(a.dataDir, "geoip6")
-		if _, err := os.Stat(srcGeoip6); err == nil {
-			copyFile(srcGeoip6, geoip6File)
-		}
-	}
-
+func (a *App) writeTorrcContent(sb *strings.Builder, p torrcParams) {
 	cfg := a.LoadConfig()
 
-	var bridgeLines []string
-	useBridges := "0"
-	if source != "direct" {
-		bridgeLines = a.GetBridgeLines(cat, trans, ip)
-		if len(bridgeLines) > 0 {
-			useBridges = "1"
-		}
-	}
-
-	var sb strings.Builder
 	sb.WriteString("Log notice stdout\n")
-	sb.WriteString(fmt.Sprintf("DataDirectory %s\n", dataDir))
+	sb.WriteString(fmt.Sprintf("DataDirectory %s\n", p.dataDir))
+	geoipFile := filepath.Join(p.dataDir, "geoip")
+	geoip6File := filepath.Join(p.dataDir, "geoip6")
 	sb.WriteString(fmt.Sprintf("GeoIPFile %s\n", geoipFile))
 	sb.WriteString(fmt.Sprintf("GeoIPv6File %s\n", geoip6File))
-	sb.WriteString(fmt.Sprintf("SOCKSPort 127.0.0.1:%d\n", TorSOCKSPort))
-	sb.WriteString(fmt.Sprintf("ControlPort 127.0.0.1:%d\n", TorCtrlPort))
+	sb.WriteString(fmt.Sprintf("SOCKSPort 127.0.0.1:%d\n", p.socksPort))
+	sb.WriteString(fmt.Sprintf("ControlPort 127.0.0.1:%d\n", p.ctrlPort))
 	sb.WriteString("CookieAuthentication 1\n")
 	sb.WriteString("DormantClientTimeout 30 minutes\n")
 	sb.WriteString("DormantOnFirstStartup 0\n")
 	sb.WriteString("DormantCanceledByStartup 1\n")
-	sb.WriteString(fmt.Sprintf("UseBridges %s\n", useBridges))
+
+	ub := "0"
+	if p.useBridges {
+		ub = "1"
+	}
+	sb.WriteString(fmt.Sprintf("UseBridges %s\n", ub))
 	sb.WriteString(fmt.Sprintf("MaxCircuitDirtiness %d\n", cfg.MaxCircuitDirtiness))
 	sb.WriteString(fmt.Sprintf("NewCircuitPeriod %d\n", cfg.NewCircuitPeriod))
 	sb.WriteString(fmt.Sprintf("NumEntryGuards %d\n", cfg.NumEntryGuards))
@@ -505,6 +493,7 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	sb.WriteString("NumDirectoryGuards 4\n")
 	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
 	sb.WriteString("OptimisticData 1\n")
+
 	if cfg.ExpConnectionPadding {
 		sb.WriteString("ConnectionPadding 1\n")
 		if cfg.ExpReducedConnectionPadding {
@@ -519,7 +508,6 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 	if cfg.HardwareAccel || cfg.ExpHardwareAccel {
 		sb.WriteString("HardwareAccel 1\n")
 	}
-
 	if cfg.ExpCircuitStreamTimeout > 0 {
 		sb.WriteString(fmt.Sprintf("CircuitStreamTimeout %d\n", cfg.ExpCircuitStreamTimeout))
 	}
@@ -586,24 +574,64 @@ func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
 		sb.WriteString(fmt.Sprintf("# SNI override active: %s\n", cfg.SNIHost))
 	}
 
-	torDir := filepath.Join(a.dataDir, "tor")
-	ptDir := filepath.Join(torDir, "pluggable_transports")
-	lyrebird := filepath.Join(ptDir, "lyrebird.exe")
-	conjure := filepath.Join(ptDir, "conjure-client.exe")
-
-	sb.WriteString(fmt.Sprintf("ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,scramblesuit,webtunnel exec %s\n", lyrebird))
-	sb.WriteString(fmt.Sprintf("ClientTransportPlugin snowflake exec %s\n", lyrebird))
-	sb.WriteString(fmt.Sprintf("ClientTransportPlugin conjure exec %s -registerURL \"https://registration.refraction.network/api\"\n", conjure))
-
-	sb.WriteString("\n")
-
-	if useBridges == "1" {
-		for _, line := range bridgeLines {
-			sb.WriteString(fmt.Sprintf("Bridge %s\n", line))
-		}
+	if p.writePT {
+		torDir := filepath.Join(a.dataDir, "tor")
+		ptDir := filepath.Join(torDir, "pluggable_transports")
+		lyrebird := filepath.Join(ptDir, "lyrebird.exe")
+		conjure := filepath.Join(ptDir, "conjure-client.exe")
+		sb.WriteString(fmt.Sprintf("ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,scramblesuit,webtunnel exec %s\n", lyrebird))
+		sb.WriteString(fmt.Sprintf("ClientTransportPlugin snowflake exec %s\n", lyrebird))
+		sb.WriteString(fmt.Sprintf("ClientTransportPlugin conjure exec %s -registerURL \"https://registration.refraction.network/api\"\n", conjure))
 	}
 
-	torrcPath := filepath.Join(torDir, "torrc")
+	sb.WriteString("\n")
+	for _, line := range p.bridgeLines {
+		sb.WriteString(fmt.Sprintf("Bridge %s\n", line))
+	}
+}
+
+func (a *App) copyGeoIPFiles(dataDir string) {
+	os.MkdirAll(dataDir, 0755)
+	geoipFile := filepath.Join(dataDir, "geoip")
+	geoip6File := filepath.Join(dataDir, "geoip6")
+	if _, err := os.Stat(geoipFile); os.IsNotExist(err) {
+		if src, err := os.Stat(filepath.Join(a.dataDir, "geoip")); err == nil {
+			_ = src
+			copyFile(filepath.Join(a.dataDir, "geoip"), geoipFile)
+		}
+	}
+	if _, err := os.Stat(geoip6File); os.IsNotExist(err) {
+		if src, err := os.Stat(filepath.Join(a.dataDir, "geoip6")); err == nil {
+			_ = src
+			copyFile(filepath.Join(a.dataDir, "geoip6"), geoip6File)
+		}
+	}
+}
+
+func (a *App) loadBridgeLines(cat, trans, ip, source string, noBridge bool) []string {
+	if noBridge || source == "direct" {
+		return nil
+	}
+	return a.GetBridgeLines(cat, trans, ip)
+}
+
+func (a *App) GenerateTorrc(cat, trans, ip, source string) string {
+	dataDir := filepath.Join(a.dataDir, "data")
+	a.copyGeoIPFiles(dataDir)
+
+	bridgeLines := a.loadBridgeLines(cat, trans, ip, source, false)
+
+	var sb strings.Builder
+	a.writeTorrcContent(&sb, torrcParams{
+		dataDir:     dataDir,
+		socksPort:   TorSOCKSPort,
+		ctrlPort:    TorCtrlPort,
+		useBridges:  len(bridgeLines) > 0,
+		bridgeLines: bridgeLines,
+		writePT:     true,
+	})
+
+	torrcPath := filepath.Join(filepath.Join(a.dataDir, "tor"), "torrc")
 	os.WriteFile(torrcPath, []byte(sb.String()), 0644)
 	return torrcPath
 }
@@ -2105,157 +2133,20 @@ func (a *App) DeleteMultiSlot(label string) error {
 func (a *App) GenerateSlotTorrc(socksPort, ctrlPort int, cat, trans, ip, source string, noBridge bool) string {
 	dataDir := filepath.Join(a.dataDir, fmt.Sprintf("data_par_%d", socksPort))
 	ptStateDir := filepath.Join(dataDir, "pt_state")
-	os.MkdirAll(dataDir, 0755)
 	os.MkdirAll(ptStateDir, 0755)
+	a.copyGeoIPFiles(dataDir)
 
-	geoipFile := filepath.Join(dataDir, "geoip")
-	geoip6File := filepath.Join(dataDir, "geoip6")
-	if _, err := os.Stat(geoipFile); os.IsNotExist(err) {
-		srcGeoip := filepath.Join(a.dataDir, "geoip")
-		if _, err := os.Stat(srcGeoip); err == nil {
-			copyFile(srcGeoip, geoipFile)
-		}
-	}
-	if _, err := os.Stat(geoip6File); os.IsNotExist(err) {
-		srcGeoip6 := filepath.Join(a.dataDir, "geoip6")
-		if _, err := os.Stat(srcGeoip6); err == nil {
-			copyFile(srcGeoip6, geoip6File)
-		}
-	}
-
-	cfg := a.LoadConfig()
-
-	var bridgeLines []string
-	useBridges := "0"
-	if !noBridge && source != "direct" {
-		bridgeLines = a.GetBridgeLines(cat, trans, ip)
-		if len(bridgeLines) > 0 {
-			useBridges = "1"
-		}
-	}
-
-	torDir := filepath.Join(a.dataDir, "tor")
-	ptDir := filepath.Join(torDir, "pluggable_transports")
-	lyrebird := filepath.Join(ptDir, "lyrebird.exe")
-	conjure := filepath.Join(ptDir, "conjure-client.exe")
+	bridgeLines := a.loadBridgeLines(cat, trans, ip, source, noBridge)
 
 	var sb strings.Builder
-	sb.WriteString("Log notice stdout\n")
-	sb.WriteString(fmt.Sprintf("DataDirectory %s\n", dataDir))
-	sb.WriteString(fmt.Sprintf("GeoIPFile %s\n", geoipFile))
-	sb.WriteString(fmt.Sprintf("GeoIPv6File %s\n", geoip6File))
-	sb.WriteString(fmt.Sprintf("SOCKSPort 127.0.0.1:%d\n", socksPort))
-	sb.WriteString(fmt.Sprintf("ControlPort 127.0.0.1:%d\n", ctrlPort))
-	sb.WriteString("CookieAuthentication 1\n")
-	sb.WriteString("DormantClientTimeout 30 minutes\n")
-	sb.WriteString("DormantOnFirstStartup 0\n")
-	sb.WriteString("DormantCanceledByStartup 1\n")
-	sb.WriteString(fmt.Sprintf("UseBridges %s\n", useBridges))
-	sb.WriteString(fmt.Sprintf("MaxCircuitDirtiness %d\n", cfg.MaxCircuitDirtiness))
-	sb.WriteString(fmt.Sprintf("NewCircuitPeriod %d\n", cfg.NewCircuitPeriod))
-	sb.WriteString(fmt.Sprintf("NumEntryGuards %d\n", cfg.NumEntryGuards))
-	sb.WriteString("AllowNonRFC953Hostnames 1\n")
-	sb.WriteString("EnforceDistinctSubnets 0\n")
-	sb.WriteString("MaxClientCircuitsPending 128\n")
-	sb.WriteString(fmt.Sprintf("CircuitBuildTimeout %d\n", cfg.CircuitBuildTimeout))
-	sb.WriteString("LearnCircuitBuildTimeout 1\n")
-	sb.WriteString("GuardLifetime 30 days\n")
-	sb.WriteString("NumDirectoryGuards 4\n")
-	sb.WriteString("TokenBucketRefillInterval 10 msec\n")
-	sb.WriteString("OptimisticData 1\n")
-	if cfg.ExpConnectionPadding {
-		sb.WriteString("ConnectionPadding 1\n")
-		if cfg.ExpReducedConnectionPadding {
-			sb.WriteString("ReducedConnectionPadding 1\n")
-		} else {
-			sb.WriteString("ReducedConnectionPadding 0\n")
-		}
-	} else if cfg.ConnectionPadding {
-		sb.WriteString("ConnectionPadding 1\n")
-		sb.WriteString("ReducedConnectionPadding 0\n")
-	}
-	if cfg.HardwareAccel || cfg.ExpHardwareAccel {
-		sb.WriteString("HardwareAccel 1\n")
-	}
-
-	if cfg.ExpCircuitStreamTimeout > 0 {
-		sb.WriteString(fmt.Sprintf("CircuitStreamTimeout %d\n", cfg.ExpCircuitStreamTimeout))
-	}
-	if cfg.ExpSocksTimeout > 0 {
-		sb.WriteString(fmt.Sprintf("SocksTimeout %d\n", cfg.ExpSocksTimeout))
-	}
-	if cfg.ExpAvoidDiskWrites {
-		sb.WriteString("AvoidDiskWrites 1\n")
-	}
-	if cfg.ExpNumCPUs > 0 {
-		sb.WriteString(fmt.Sprintf("NumCPUs %d\n", cfg.ExpNumCPUs))
-	}
-	if cfg.ExpSafeLogging {
-		sb.WriteString("SafeLogging 1\n")
-	}
-	if cfg.ExpClientDNSRejectInternal {
-		sb.WriteString("ClientDNSRejectInternalAddresses 1\n")
-	}
-	if cfg.ExpFascistFirewall {
-		sb.WriteString("FascistFirewall 1\n")
-		if cfg.ExpFirewallPorts != "" {
-			sb.WriteString(fmt.Sprintf("ReachableDirPorts %s\n", cfg.ExpFirewallPorts))
-			sb.WriteString(fmt.Sprintf("ReachableORPorts %s\n", cfg.ExpFirewallPorts))
-		}
-	}
-	if cfg.ExpReachableAddresses != "" {
-		sb.WriteString(fmt.Sprintf("ReachableAddresses %s\n", cfg.ExpReachableAddresses))
-	}
-	if cfg.ExpExcludeNodes != "" {
-		sb.WriteString(fmt.Sprintf("ExcludeNodes %s\n", cfg.ExpExcludeNodes))
-	}
-	if cfg.ExpExcludeExitNodes != "" {
-		sb.WriteString(fmt.Sprintf("ExcludeExitNodes %s\n", cfg.ExpExcludeExitNodes))
-	}
-	if cfg.ExpUseEntryGuardsAsDirGuards {
-		sb.WriteString("UseEntryGuardsAsDirGuards 1\n")
-	}
-	if cfg.ExpPathBiasCircThreshold > 0 {
-		sb.WriteString(fmt.Sprintf("PathBiasCircThreshold %d\n", cfg.ExpPathBiasCircThreshold))
-	}
-	if cfg.ExpNoExitStreamPorts != "" {
-		sb.WriteString(fmt.Sprintf("RejectPlaintextPorts %s\n", cfg.ExpNoExitStreamPorts))
-	}
-	if cfg.ExpIsolateDestAddr {
-		sb.WriteString("IsolateDestAddr 1\n")
-	}
-	if cfg.ExpIsolateDestPort {
-		sb.WriteString("IsolateDestPort 1\n")
-	}
-
-	if cfg.DNSOverTor {
-		sb.WriteString("DNSPort 127.0.0.1:9053\n")
-		sb.WriteString("CacheDNS 1\n")
-	}
-	if cfg.ExitNodesEnabled && cfg.ExitNodesCountries != "" {
-		sb.WriteString(fmt.Sprintf("ExitNodes %s\n", cfg.ExitNodesCountries))
-		if cfg.StrictExitNodes {
-			sb.WriteString("StrictNodes 1\n")
-		} else {
-			sb.WriteString("StrictNodes 0\n")
-		}
-	}
-	if cfg.SNIEnabled && cfg.SNIHost != "" {
-		sb.WriteString(fmt.Sprintf("# SNI override active: %s\n", cfg.SNIHost))
-	}
-
-	if useBridges == "1" {
-		sb.WriteString(fmt.Sprintf("ClientTransportPlugin meek_lite,obfs2,obfs3,obfs4,scramblesuit,webtunnel exec %s\n", lyrebird))
-		sb.WriteString(fmt.Sprintf("ClientTransportPlugin snowflake exec %s\n", lyrebird))
-		sb.WriteString(fmt.Sprintf("ClientTransportPlugin conjure exec %s -registerURL \"https://registration.refraction.network/api\"\n", conjure))
-	}
-
-	sb.WriteString("\n")
-	if useBridges == "1" {
-		for _, line := range bridgeLines {
-			sb.WriteString(fmt.Sprintf("Bridge %s\n", line))
-		}
-	}
+	a.writeTorrcContent(&sb, torrcParams{
+		dataDir:     dataDir,
+		socksPort:   socksPort,
+		ctrlPort:    ctrlPort,
+		useBridges:  len(bridgeLines) > 0,
+		bridgeLines: bridgeLines,
+		writePT:     len(bridgeLines) > 0,
+	})
 
 	torrcPath := filepath.Join(dataDir, "torrc")
 	os.WriteFile(torrcPath, []byte(sb.String()), 0644)
