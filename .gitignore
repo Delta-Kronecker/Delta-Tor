@@ -1,0 +1,45 @@
+# Build output
+build/bin/
+*.exe
+
+# Tor runtime data (downloaded at runtime)
+bridges/
+build/bridges/
+tor_client_config.json
+build/tor_client_config.json
+tor-expert-bundle-*.tar.gz
+build/tor-expert-bundle-*.tar.gz
+
+# Go build
+*.test
+*.out
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/wailsjs/
+frontend/package.json.md5
+frontend/src/app.css
+
+# Wails generated
+build/windows/installer/tmp/
+
+# Mimocode
+.mimocode/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp
+*.tmp
+*.log
