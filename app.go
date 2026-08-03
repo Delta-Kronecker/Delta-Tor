@@ -2623,14 +2623,10 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 				// Auto-assign system proxy the moment this slot connects
 				go func() {
 					a.mu()
-					balancerMode := a.multiBalancerMode
 					proxyLabel := a.multiProxyLabel
 					a.muUnlock()
 
-					if balancerMode == "balancer" {
-						a.setSystemProxy(9099)
-						runtime.EventsEmit(a.ctx, "tor:log", "[Multi] Balancer proxy ensured on 127.0.0.1:9099")
-					} else if proxyLabel == "" {
+					if proxyLabel == "" {
 						a.SetProxyToSlot(slot.Label)
 						runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Multi] System proxy set to %s on connect", slot.Label))
 					}
