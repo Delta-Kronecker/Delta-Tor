@@ -2620,6 +2620,22 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 					"label": slot.Label, "pct": 100, "status": "✔ Connected!", "connected": true,
 				})
 
+				// Auto-assign system proxy the moment this slot connects
+				go func() {
+					a.mu()
+					balancerMode := a.multiBalancerMode
+					proxyLabel := a.multiProxyLabel
+					a.muUnlock()
+
+					if balancerMode == "balancer" {
+						a.setSystemProxy(9099)
+						runtime.EventsEmit(a.ctx, "tor:log", "[Multi] Balancer proxy ensured on 127.0.0.1:9099")
+					} else if proxyLabel == "" {
+						a.SetProxyToSlot(slot.Label)
+						runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Multi] System proxy set to %s on connect", slot.Label))
+					}
+				}()
+
 				healthStop := make(chan struct{})
 				a.mu()
 				if st, ok := a.multiSlotStates[slot.Label]; ok {
@@ -2761,12 +2777,7 @@ func (a *App) slotHealthLoop(label string, socksPort int, stopCh chan struct{}) 
 			a.muUnlock()
 
 			if ok != lastOnline || lat != lastLat || avgLat != lastAvg {
-				txt := ""
-				if ok {
-					txt = fmt.Sprintf("⬤ Online  %d ms  (avg %d ms)", int(lat), int(avgLat))
-				} else {
-					txt = fmt.Sprintf("⬤ Offline  (avg %d ms)", int(avgLat))
-				}
+				txt := fmt.Sprintf("avg %d ms", int(avgLat))
 				runtime.EventsEmit(a.ctx, "multi:slot:health", map[string]interface{}{
 					"label": label, "online": ok, "latency": int(lat), "avgLat": int(avgLat), "text": txt,
 				})

@@ -199,13 +199,13 @@ function renderMultiMode() {
         </div>
         <div class="multi-proxy-group">
             <div class="strategy-dropdown" id="strategyDropdown">
-                <button class="btn btn-strategy" id="strategyBtn" onclick="toggleStrategyDropdown()">Strategy: Least Ping &#9660;</button>
+                <button class="btn btn-strategy" id="strategyBtn" onclick="toggleStrategyDropdown()">Strategy: Balancer &#9660;</button>
                 <div class="strategy-menu" id="strategyMenu">
                     <div class="strategy-option" onclick="selectStrategy('least_ping')">Least Ping</div>
                     <div class="strategy-option" onclick="selectStrategy('balancer')">Balancer</div>
                 </div>
             </div>
-            <button class="btn btn-auto-proxy" id="proxyBtn" onclick="toggleMultiProxy()">Proxy : OFF</button>
+            <button class="btn btn-auto-proxy auto-proxy-on" id="proxyBtn" onclick="toggleMultiProxy()">Proxy : ON</button>
         </div>
     </div>
 </div>
@@ -734,16 +734,15 @@ window.toggleStart = async function() {
         }
 
         if (src === 'custom') {
-            try {
-                const custom = await window.go.main.App.GetCustomBridges();
-                if (!custom || !custom.text || !custom.text.trim()) {
-                    showCustomBridges(() => doStart());
-                    return;
-                }
-            } catch(e) {
-                showCustomBridges(() => doStart());
-                return;
-            }
+            showCustomBridges(() => doStart(), () => {
+                isRunning = false;
+                appState.isRunning = false;
+                btn.textContent = '\u25B6 Start';
+                btn.className = 'btn btn-start-lg';
+                const torStat = document.getElementById('stat-tor');
+                if (torStat) { torStat.textContent = '\u2014'; torStat.style.color = ''; }
+            });
+            return;
         }
         doStart();
     }
@@ -1083,8 +1082,8 @@ function stopTrafficMonitor() {
 }
 
 let autoProxyInterval = null;
-let currentStrategy = 'least_ping';
-let proxyActive = false;
+let currentStrategy = 'balancer';
+let proxyActive = true;
 
 window.toggleStrategyDropdown = function() {
     const menu = document.getElementById('strategyMenu');
@@ -1461,16 +1460,17 @@ window.runtime.EventsOn('multi:stopped', () => {
     multiSlotState = {};
     activeProxyLabel = null;
     autoProxyOn = false;
-    proxyActive = false;
-    currentStrategy = 'least_ping';
+    proxyActive = true;
+    currentStrategy = 'balancer';
     if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
     stopAllSlotTimers();
     const btn = document.getElementById('multiStartBtn');
     if (btn) { btn.textContent = '\u25B6 Start'; btn.className = 'btn btn-start'; btn.disabled = false; }
     const proxyBtn = document.getElementById('proxyBtn');
-    if (proxyBtn) { proxyBtn.textContent = 'Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    if (proxyBtn) { proxyBtn.textContent = 'Proxy : ON'; proxyBtn.classList.add('auto-proxy-on'); }
     const stratBtn = document.getElementById('strategyBtn');
-    if (stratBtn) { stratBtn.innerHTML = 'Strategy: Least Ping &#9660;'; }
+    if (stratBtn) { stratBtn.innerHTML = 'Strategy: Balancer &#9660;'; }
+    try { window.go.main.App.SetProxyStrategy('balancer'); } catch(e) {}
     document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
     document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
     document.querySelectorAll('.slot-stat-box .slot-stat-val').forEach(el => { el.textContent = '\u2014'; el.style.color = ''; });
@@ -1773,7 +1773,7 @@ function renderBridgeInfoMode() {
 }
 
 /* ===== CUSTOM BRIDGES MODAL ===== */
-window.showCustomBridges = function(onSaved) {
+window.showCustomBridges = function(onSaved, onCancel) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
@@ -1806,8 +1806,16 @@ window.showCustomBridges = function(onSaved) {
         }
     });
 
-    overlay.querySelector('#cb-cancel').addEventListener('click', () => overlay.remove());
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+    overlay.querySelector('#cb-cancel').addEventListener('click', () => {
+        overlay.remove();
+        if (onCancel) onCancel();
+    });
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) {
+            overlay.remove();
+            if (onCancel) onCancel();
+        }
+    });
 
     overlay.querySelector('#cb-ping').addEventListener('click', async () => {
         const text = overlay.querySelector('#cb-text').value;
@@ -1962,6 +1970,9 @@ window.exportScan = async function() {
 };
 
 render();
+
+// Default: Balancer strategy + Proxy ON
+window.go.main.App.SetProxyStrategy('balancer').catch(() => {});
 
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('strategyDropdown');
