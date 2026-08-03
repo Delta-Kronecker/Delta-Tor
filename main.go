@@ -39,7 +39,7 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-		Menu: menu.New(),
+		Menu: menu.NewMenu(),
 	})
 
 	if err != nil {
