@@ -195,11 +195,9 @@ function renderMultiMode() {
     <div class="multi-toolbar-inner">
         <div class="multi-toolbar-left">
             <button class="btn btn-primary" onclick="switchToNormal()">&#9664; Normal</button>
-            <button class="btn btn-start" id="multiStartBtn" onclick="multiStartAll()">&#9654; Start</button>
-            <button class="btn btn-stop" onclick="multiStopAll()">&#9209; Stop</button>
+            <button class="btn btn-start" id="multiStartBtn" onclick="multiToggle()">&#9654; Start</button>
         </div>
         <div class="multi-proxy-group">
-            <span class="conn-counter" id="connCounter">Connected: 0</span>
             <div class="strategy-dropdown" id="strategyDropdown">
                 <button class="btn btn-strategy" id="strategyBtn" onclick="toggleStrategyDropdown()">Strategy: Least Ping &#9660;</button>
                 <div class="strategy-menu" id="strategyMenu">
@@ -1171,6 +1169,14 @@ async function autoProxyCheck() {
 
 let activeProxyLabel = null;
 
+window.multiToggle = function() {
+    if (multiRunning) {
+        multiStopAll();
+    } else {
+        multiStartAll();
+    }
+};
+
 window.multiStartAll = async function() {
     if (multiRunning) return;
     multiRunning = true;
@@ -1180,7 +1186,7 @@ window.multiStartAll = async function() {
     document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
     document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
     try { await window.go.main.App.StartAllSlots(); } catch(e) { console.error(e); }
-    if (btn) { btn.textContent = '\u23F9 Stop'; btn.disabled = false; }
+    if (btn) { btn.textContent = '\u23F9 Stop'; btn.className = 'btn btn-stop'; btn.disabled = false; }
 };
 
 window.multiStopAll = async function() {
@@ -1190,6 +1196,8 @@ window.multiStopAll = async function() {
     if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
     const proxyBtn = document.getElementById('autoProxyBtn');
     if (proxyBtn) { proxyBtn.textContent = 'Auto Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
+    const btn = document.getElementById('multiStartBtn');
+    if (btn) { btn.textContent = '\u25B6 Start'; btn.className = 'btn btn-start'; btn.disabled = false; }
     try { await window.go.main.App.StopAllSlots(); } catch(e) { console.error(e); }
     document.querySelectorAll('.slot-btn-proxy-active').forEach(b => {
         b.classList.remove('slot-btn-proxy-active');
@@ -1458,7 +1466,7 @@ window.runtime.EventsOn('multi:stopped', () => {
     if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
     stopAllSlotTimers();
     const btn = document.getElementById('multiStartBtn');
-    if (btn) { btn.textContent = '\u25B6 Start'; btn.disabled = false; }
+    if (btn) { btn.textContent = '\u25B6 Start'; btn.className = 'btn btn-start'; btn.disabled = false; }
     const proxyBtn = document.getElementById('proxyBtn');
     if (proxyBtn) { proxyBtn.textContent = 'Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
     const stratBtn = document.getElementById('strategyBtn');
@@ -1596,8 +1604,6 @@ function updateConnectionsCount() {
     for (const [label, st] of Object.entries(multiSlotState)) {
         if (st.connected) count++;
     }
-    const el = document.getElementById('connCounter');
-    if (el) el.textContent = 'Connected: ' + count;
 }
 
 let logPanelOpen = false;
