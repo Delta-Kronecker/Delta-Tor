@@ -542,6 +542,16 @@ function render() {
             proxyBtn.classList.add('proxy-on');
         }
 
+        // Open custom bridges window when user selects "Custom Bridges" source
+        const sourceSelect = document.getElementById('source');
+        if (sourceSelect) {
+            sourceSelect.onchange = () => {
+                if (sourceSelect.value === 'Custom Bridges') {
+                    showCustomBridges();
+                }
+            };
+        }
+
         // Restore progress
         const pctEl = document.getElementById('conn-pct');
         const fillEl = document.getElementById('conn-progress');
@@ -1793,7 +1803,7 @@ window.showCustomBridges = function(onSaved, onCancel) {
         </div>
         <div class="modal-btns">
             <button class="modal-btn modal-btn-cancel" id="cb-cancel">Cancel</button>
-            <button class="modal-btn modal-btn-add" id="cb-save">Save &amp; Start</button>
+            <button class="modal-btn modal-btn-add" id="cb-save">${onSaved ? 'Save &amp; Start' : 'Save'}</button>
         </div>
     </div>`;
     document.body.appendChild(overlay);
