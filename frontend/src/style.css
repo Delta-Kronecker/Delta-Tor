@@ -1188,6 +1188,7 @@ body {
 }
 
 .slot-stat-lbl {
+    display: none;
     font-size: 9px;
     color: var(--fg2);
     text-transform: uppercase;
@@ -1440,6 +1441,7 @@ body {
     min-height: 22px;
 }
 .stat-box-lbl {
+    display: none;
     font-size: 11px;
     color: var(--fg2);
     text-transform: uppercase;
