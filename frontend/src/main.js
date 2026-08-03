@@ -399,9 +399,8 @@ function renderSettingsMode() {
     <div class="settings-hint">If ON, Tor will ONLY use nodes in the specified countries. If OFF, it prefers them but may use others.</div>
 
     <div class="settings-section">Maintenance</div>
-    <div class="settings-hint">Manage cached Tor data and application data directory.</div>
+    <div class="settings-hint">Manage cached Tor data.</div>
     <div class="settings-row"><button class="btn-clear-data" onclick="clearData()">Clear Data Directory</button></div>
-    <div class="settings-row"><button class="btn-data-folder" onclick="changeDataFolder()">Change Data Folder</button></div>
 
     <div class="settings-section settings-section-exp">Experimental (Advanced torrc)</div>
     <div class="settings-warning">All options below are OFF by default. Wrong settings can break connectivity. Use with caution.</div>
@@ -521,8 +520,7 @@ function renderHelpMode() {
 /* ===== RENDER ===== */
 function render() {
     let html = '';
-    if (setupMode) { html = renderSetupMode(); }
-    else if (currentMode === 'multi') { html = renderMultiMode(); }
+    if (currentMode === 'multi') { html = renderMultiMode(); }
     else if (currentMode === 'settings') { html = renderSettingsMode(); }
     else if (currentMode === 'help') { html = renderHelpMode(); }
     else if (currentMode === 'scanner') { html = renderScannerMode(); }
@@ -530,14 +528,6 @@ function render() {
     else { html = renderNormalMode(); }
 
     app.innerHTML = html;
-
-    if (setupMode) {
-        window.go.main.App.GetDefaultDataDir().then(dir => {
-            const pathInput = document.getElementById('setupPath');
-            if (pathInput && dir) pathInput.value = dir;
-        });
-        return;
-    }
 
     // Restore state
     if (currentMode === 'normal') {
@@ -1739,16 +1729,6 @@ window.clearData = async function() {
     } catch(e) { console.error(e); }
 };
 
-window.changeDataFolder = async function() {
-    try {
-        const dir = await window.go.main.App.PickDataDir();
-        if (dir) {
-            await window.go.main.App.SetDataDir(dir);
-            alert('Data folder changed. Restart the application to apply.');
-        }
-    } catch(e) { console.error(e); }
-};
-
 /* ===== BRIDGE INFO MODE ===== */
 function renderBridgeInfoMode() {
     return `
@@ -1954,120 +1934,7 @@ window.exportScan = async function() {
     } catch(e) { console.error(e); }
 };
 
-/* ===== SETUP / VERSION CHECK ===== */
-let setupMode = false;
-
-async function checkVersion() {
-    try {
-        const result = await window.go.main.App.CheckVersion();
-        if (result && result.needsSetup) {
-            setupMode = true;
-            render();
-        }
-    } catch(e) {
-        console.error('Version check failed:', e);
-    }
-}
-
-function renderSetupMode() {
-    return `
-<div class="setup-page">
-    <div class="accent-strip"></div>
-    <div class="setup-header">
-        <span class="setup-title">Upgrade Required</span>
-    </div>
-    <div class="setup-body">
-        <div class="setup-card">
-            <div class="setup-card-accent"></div>
-            <div class="setup-card-inner">
-                <div class="setup-info">
-                    <div class="setup-info-icon">&#9888;</div>
-                    <div class="setup-info-text">
-                        <div class="setup-info-title">Configuration Update Needed</div>
-                        <div class="setup-info-desc">Your existing data directory needs to be reset for the new version. You can keep the same folder or choose a new one.</div>
-                    </div>
-                </div>
-
-                <div class="setup-field">
-                    <label class="setup-label">Data Directory</label>
-                    <div class="setup-path-row">
-                        <input type="text" class="setup-path-input" id="setupPath" readonly />
-                        <button class="setup-browse-btn" onclick="browseSetupDir()">Browse</button>
-                    </div>
-                    <div class="setup-hint">Default: AppData\\Local\\DeltaTor</div>
-                </div>
-
-                <div class="setup-log" id="setupLog" style="display:none">
-                    <div class="setup-log-title">Progress</div>
-                    <div class="setup-log-content" id="setupLogContent"></div>
-                </div>
-
-                <div class="setup-success" id="setupSuccess" style="display:none">
-                    <div class="setup-success-icon">&#10003;</div>
-                    <div class="setup-success-text">Setup complete!</div>
-                    <div class="setup-success-desc">Please restart Delta Tor to continue.</div>
-                    <button class="setup-restart-btn" onclick="restartApp()">Restart Now</button>
-                </div>
-
-                <div class="setup-btns" id="setupBtns">
-                    <button class="setup-btn-cancel" onclick="cancelSetup()">Cancel</button>
-                    <button class="setup-btn-start" onclick="startSetup()">Start Setup</button>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>`;
-}
-
-window.browseSetupDir = async function() {
-    try {
-        const dir = await window.go.main.App.PickDataDir();
-        if (dir) {
-            document.getElementById('setupPath').value = dir;
-        }
-    } catch(e) {}
-};
-
-window.cancelSetup = function() {
-    setupMode = false;
-    render();
-};
-
-window.startSetup = async function() {
-    const pathInput = document.getElementById('setupPath');
-    const dir = pathInput.value;
-    if (!dir) return;
-
-    document.getElementById('setupBtns').style.display = 'none';
-    document.getElementById('setupLog').style.display = 'block';
-
-    try {
-        await window.go.main.App.RunSetup(dir);
-        document.getElementById('setupLog').style.display = 'none';
-        document.getElementById('setupSuccess').style.display = 'flex';
-    } catch(e) {
-        appendLog('[Setup] Error: ' + e + '\n', 'err');
-        document.getElementById('setupBtns').style.display = 'flex';
-    }
-};
-
-window.restartApp = function() {
-    window.go.main.App.RestartApp();
-};
-
-window.runtime.EventsOn('setup:progress', (msg) => {
-    const el = document.getElementById('setupLogContent');
-    if (el) {
-        const div = document.createElement('div');
-        div.className = 'setup-log-line';
-        div.textContent = msg;
-        el.appendChild(div);
-        el.scrollTop = el.scrollHeight;
-    }
-});
-
 render();
-checkVersion();
 
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('strategyDropdown');

@@ -1,4 +1,6 @@
-```
 # CI/CD
 .github/
-```
+frontend/dist/
+frontend/node_modules/
+DeltaTor.exe
+build/bin/
