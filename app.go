@@ -2620,18 +2620,6 @@ func (a *App) runSlot(slot SlotDef, socksPort, ctrlPort, httpPort int, retryCoun
 					"label": slot.Label, "pct": 100, "status": "✔ Connected!", "connected": true,
 				})
 
-				// Auto-assign system proxy the moment this slot connects
-				go func() {
-					a.mu()
-					proxyLabel := a.multiProxyLabel
-					a.muUnlock()
-
-					if proxyLabel == "" {
-						a.SetProxyToSlot(slot.Label)
-						runtime.EventsEmit(a.ctx, "tor:log", fmt.Sprintf("[Multi] System proxy set to %s on connect", slot.Label))
-					}
-				}()
-
 				healthStop := make(chan struct{})
 				a.mu()
 				if st, ok := a.multiSlotStates[slot.Label]; ok {
