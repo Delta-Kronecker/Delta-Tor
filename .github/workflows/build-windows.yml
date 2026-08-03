@@ -1,0 +1,82 @@
+name: Build and Release Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g., v1.0.0)'
+        required: true
+        type: string
+      is_beta:
+        description: 'Is this a beta release?'
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm install
+
+      - name: Build Windows Application
+        run: wails build -platform windows/amd64 -o DeltaTor.exe
+
+      - name: Prepare release artifacts
+        shell: pwsh
+        run: |
+          # Create release directory
+          New-Item -ItemType Directory -Force -Path release
+      
+          # Copy the built executable
+          Copy-Item -Path "build\bin\DeltaTor.exe" -Destination "release\DeltaTor.exe"
+      
+          # Copy the data folder
+          Copy-Item -Path "data" -Destination "release\data" -Recurse
+      
+          # Create a zip file
+          $zipName = "DeltaTor-Windows-${{ inputs.tag_name }}.zip"
+          Compress-Archive -Path "release\*" -DestinationPath "$zipName" -Force
+      
+          echo "ZIP_FILE=$zipName" >> $env:GITHUB_ENV
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          name: Delta Tor ${{ inputs.tag_name }}
+          draft: false
+          prerelease: ${{ inputs.is_beta }}
+          files: ${{ env.ZIP_FILE }}
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        if: steps.create_release.outcome == 'success'
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: ${{ env.ZIP_FILE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
