@@ -718,20 +718,36 @@ window.toggleStart = async function() {
         if (source === 'Default (Built-in)') src = 'builtin';
         else if (source === 'Custom Bridges') src = 'custom';
 
-        try {
-            const err = await window.go.main.App.StartTor(cat, transport, ip, src);
-            if (err) {
-                console.error('Start error:', err);
+        async function doStart() {
+            try {
+                const err = await window.go.main.App.StartTor(cat, transport, ip, src);
+                if (err) {
+                    console.error('Start error:', err);
+                    isRunning = false;
+                    btn.textContent = '\u25B6 Start';
+                    btn.className = 'btn btn-start-lg';
+                }
+            } catch(e) {
+                console.error(e);
                 isRunning = false;
                 btn.textContent = '\u25B6 Start';
                 btn.className = 'btn btn-start-lg';
             }
-        } catch(e) {
-            console.error(e);
-            isRunning = false;
-            btn.textContent = '\u25B6 Start';
-            btn.className = 'btn btn-start-lg';
         }
+
+        if (src === 'custom') {
+            try {
+                const custom = await window.go.main.App.GetCustomBridges();
+                if (!custom || !custom.text || !custom.text.trim()) {
+                    showCustomBridges(() => doStart());
+                    return;
+                }
+            } catch(e) {
+                showCustomBridges(() => doStart());
+                return;
+            }
+        }
+        doStart();
     }
 };
 
@@ -1751,7 +1767,7 @@ function renderBridgeInfoMode() {
 }
 
 /* ===== CUSTOM BRIDGES MODAL ===== */
-window.showCustomBridges = function() {
+window.showCustomBridges = function(onSaved) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
@@ -1772,7 +1788,7 @@ window.showCustomBridges = function() {
         </div>
         <div class="modal-btns">
             <button class="modal-btn modal-btn-cancel" id="cb-cancel">Cancel</button>
-            <button class="modal-btn modal-btn-add" id="cb-save">Save</button>
+            <button class="modal-btn modal-btn-add" id="cb-save">Save &amp; Start</button>
         </div>
     </div>`;
     document.body.appendChild(overlay);
@@ -1824,10 +1840,15 @@ window.showCustomBridges = function() {
     overlay.querySelector('#cb-save').addEventListener('click', async () => {
         const text = overlay.querySelector('#cb-text').value.trim();
         const useCustom = overlay.querySelector('#cb-use').checked;
+        if (onSaved && !text) {
+            alert('Please paste at least one bridge line.');
+            return;
+        }
         try {
             await window.go.main.App.SaveCustomBridges(text, useCustom);
         } catch(e) { console.error(e); }
         overlay.remove();
+        if (onSaved) onSaved();
     });
 };
 
