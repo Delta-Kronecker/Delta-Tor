@@ -1,0 +1,121 @@
+name: Build and Release Windows Version
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+      release_name:
+        description: 'Release Name'
+        required: true
+        default: 'Delta Tor Release'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21' # یا نسخه‌ای که پروژه نیاز دارد
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@latest
+
+      - name: Build Wails App
+        run: wails build -platform windows/amd64 -o DeltaTor.exe
+
+      - name: Download Tor Expert Bundle
+        id: download_tor
+        run: |
+          $url = "https://archive.torproject.org/tor-package-archive/torbrowser/15.0.19/tor-expert-bundle-windows-x86_64-15.0.19.tar.gz"
+          $output = "tor-bundle.tar.gz"
+          Invoke-WebRequest -Uri $url -OutFile $output
+          
+          # Extract tar.gz
+          tar -xzf $output
+          
+          # Find the extracted folder (usually starts with tor-browser)
+          $extractedFolder = Get-ChildItem -Directory -Filter "tor-browser*" | Select-Object -First 1
+          if ($extractedFolder) {
+            echo "TOR_FOLDER=$($extractedFolder.Name)" >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Error "Tor bundle folder not found after extraction."
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Prepare Release Assets
+        run: |
+          # Create distribution directory
+          New-Item -ItemType Directory -Force -Path "dist-release"
+          
+          # Copy main executable
+          Copy-Item "build/bin/DeltaTor.exe" "dist-release/"
+          
+          # Copy Tor binaries from the expert bundle
+          $torFolder = "${{ steps.download_tor.outputs.TOR_FOLDER }}"
+          Copy-Item "$torFolder/Tor/tor.exe" "dist-release/"
+          Copy-Item "$torFolder/Tor/obfs4proxy.exe" "dist-release/"
+          
+          # Copy bridges directory if it exists in the repo root or build output
+          if (Test-Path "bridges") {
+            Copy-Item -Recurse "bridges" "dist-release/"
+          } elseif (Test-Path "build/bin/bridges") {
+            Copy-Item -Recurse "build/bin/bridges" "dist-release/"
+          }
+          
+          # Copy assets directory (frontend files) if required by Wails runtime in some configurations
+          # Usually Wails bundles assets, but if your app loads external files, include them.
+          # Assuming standard Wails build, assets are embedded. 
+          # However, if you have external config or data folders, copy them here.
+          if (Test-Path "assets") {
+             Copy-Item -Recurse "assets" "dist-release/"
+          }
+
+          # Create a simple README
+          @"
+          Delta Tor - Portable Version
+          
+          Requirements:
+          - No external installation needed (Tor included).
+          
+          Usage:
+          1. Run DeltaTor.exe
+          2. Configure bridges if necessary.
+          3. Connect.
+          
+          Included Components:
+          - Delta Tor Application
+          - Tor Expert Bundle (tor.exe, obfs4proxy.exe)
+          "@ | Out-File -FilePath "dist-release/README.txt" -Encoding UTF8
+        shell: pwsh
+
+      - name: Create Release Zip
+        run: |
+          Compress-Archive -Path "dist-release/*" -DestinationPath "DeltaTor-Windows-${{ github.event.inputs.tag_name }}.zip" -Force
+        shell: pwsh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.tag_name }}
+          name: ${{ github.event.inputs.release_name }}
+          files: |
+            DeltaTor-Windows-${{ github.event.inputs.tag_name }}.zip
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
