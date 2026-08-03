@@ -205,7 +205,7 @@ function renderMultiMode() {
                     <div class="strategy-option" onclick="selectStrategy('balancer')">Balancer</div>
                 </div>
             </div>
-            <button class="btn btn-auto-proxy auto-proxy-on" id="proxyBtn" onclick="toggleMultiProxy()">Proxy : ON</button>
+            <button class="btn btn-auto-proxy" id="proxyBtn" onclick="toggleMultiProxy()">Proxy : OFF</button>
         </div>
     </div>
 </div>
@@ -1083,7 +1083,7 @@ function stopTrafficMonitor() {
 
 let autoProxyInterval = null;
 let currentStrategy = 'balancer';
-let proxyActive = true;
+let proxyActive = false;
 
 window.toggleStrategyDropdown = function() {
     const menu = document.getElementById('strategyMenu');
@@ -1460,17 +1460,16 @@ window.runtime.EventsOn('multi:stopped', () => {
     multiSlotState = {};
     activeProxyLabel = null;
     autoProxyOn = false;
-    proxyActive = true;
+    proxyActive = false;
     currentStrategy = 'balancer';
     if (autoProxyInterval) { clearInterval(autoProxyInterval); autoProxyInterval = null; }
     stopAllSlotTimers();
     const btn = document.getElementById('multiStartBtn');
     if (btn) { btn.textContent = '\u25B6 Start'; btn.className = 'btn btn-start'; btn.disabled = false; }
     const proxyBtn = document.getElementById('proxyBtn');
-    if (proxyBtn) { proxyBtn.textContent = 'Proxy : ON'; proxyBtn.classList.add('auto-proxy-on'); }
+    if (proxyBtn) { proxyBtn.textContent = 'Proxy : OFF'; proxyBtn.classList.remove('auto-proxy-on'); }
     const stratBtn = document.getElementById('strategyBtn');
     if (stratBtn) { stratBtn.innerHTML = 'Strategy: Balancer &#9660;'; }
-    try { window.go.main.App.SetProxyStrategy('balancer'); } catch(e) {}
     document.querySelectorAll('.slot-progress-fill').forEach(el => el.style.width = '0%');
     document.querySelectorAll('.slot-progress-pct-inline').forEach(el => el.textContent = 'Progress : 0%');
     document.querySelectorAll('.slot-stat-box .slot-stat-val').forEach(el => { el.textContent = '\u2014'; el.style.color = ''; });
@@ -1970,9 +1969,6 @@ window.exportScan = async function() {
 };
 
 render();
-
-// Default: Balancer strategy + Proxy ON
-window.go.main.App.SetProxyStrategy('balancer').catch(() => {});
 
 document.addEventListener('click', (e) => {
     const dropdown = document.getElementById('strategyDropdown');
