@@ -1070,7 +1070,7 @@ function startTrafficMonitor() {
                 document.getElementById('stat-upload').textContent = stats.upload;
             }
         } catch(e) {}
-    }, 2000);
+    }, 5000);
 }
 
 function stopTrafficMonitor() {
@@ -1112,7 +1112,7 @@ window.toggleMultiProxy = async function() {
         } else {
             autoProxyOn = true;
             autoProxyCheck();
-            autoProxyInterval = setInterval(autoProxyCheck, 15000);
+            autoProxyInterval = setInterval(autoProxyCheck, 30000);
             appendLog('[Proxy] Least Ping mode activated', 'ok');
         }
     } else {
@@ -1507,7 +1507,7 @@ const slotUptimeIntervals = {};
 function startSlotTestLoop(label) {
     if (slotTestIntervals[label]) return;
     runSlotTest(label);
-    slotTestIntervals[label] = setInterval(() => runSlotTest(label), 30000);
+    slotTestIntervals[label] = setInterval(() => runSlotTest(label), 60000);
 }
 
 function stopSlotTestLoop(label) {
@@ -1554,7 +1554,7 @@ function startSlotTrafficLoop(label) {
                 }
             }
         } catch(e) {}
-    }, 2000);
+    }, 5000);
 }
 
 function stopSlotTrafficLoop(label) {
