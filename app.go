@@ -23,7 +23,6 @@ import (
 	"unsafe"
 
 	"fyne.io/systray"
-	"github.com/go-ole/go-ole"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -272,34 +271,12 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.exeDir = getExeDir()
-	a.dataDir = a.resolveDataDir()
+	a.dataDir = filepath.Join(a.exeDir, "data")
 	a.configPath = filepath.Join(a.dataDir, "tor_client_config.json")
 	a.bridgesDir = filepath.Join(a.dataDir, "bridges")
 	os.MkdirAll(a.bridgesDir, 0755)
 	os.MkdirAll(filepath.Join(a.dataDir, "data"), 0755)
 	runtime.LogInfo(ctx, fmt.Sprintf("Data directory: %s", a.dataDir))
-}
-
-func (a *App) CheckVersion() map[string]interface{} {
-	dataCfg := a.LoadConfig()
-
-	// Read config from exe directory (reference config)
-	exeCfgPath := filepath.Join(a.exeDir, "tor_client_config.json")
-	var exeCfg Config
-	if data, err := os.ReadFile(exeCfgPath); err == nil {
-		json.Unmarshal(data, &exeCfg)
-	}
-
-	exeVersion := exeCfg.Version
-	dataVersion := dataCfg.Version
-
-	needsSetup := dataVersion < exeVersion
-
-	return map[string]interface{}{
-		"needsSetup": needsSetup,
-		"oldVersion": dataVersion,
-		"newVersion": exeVersion,
-	}
 }
 
 func getExeDir() string {
@@ -308,26 +285,6 @@ func getExeDir() string {
 		return "."
 	}
 	return filepath.Dir(exe)
-}
-
-func (a *App) resolveDataDir() string {
-	appdata := os.Getenv("LOCALAPPDATA")
-	if appdata == "" {
-		home, _ := os.UserHomeDir()
-		appdata = filepath.Join(home, "AppData", "Local")
-	}
-	ptrFile := filepath.Join(appdata, "DeltaTor", "datadir.txt")
-	if data, err := os.ReadFile(ptrFile); err == nil {
-		path := strings.TrimSpace(string(data))
-		if path != "" {
-			os.MkdirAll(path, 0755)
-			return path
-		}
-	}
-	defaultDir := filepath.Join(appdata, "DeltaTor")
-	os.MkdirAll(defaultDir, 0755)
-	os.WriteFile(ptrFile, []byte(defaultDir), 0644)
-	return defaultDir
 }
 
 func (a *App) GetDataDir() string {
@@ -359,16 +316,6 @@ func (a *App) SaveConfig(cfg Config) error {
 func (a *App) ClearTorData() error {
 	dataDir := filepath.Join(a.dataDir, "data")
 	return os.RemoveAll(dataDir)
-}
-
-func (a *App) SetDataDir(dir string) error {
-	appdata := os.Getenv("LOCALAPPDATA")
-	if appdata == "" {
-		home, _ := os.UserHomeDir()
-		appdata = filepath.Join(home, "AppData", "Local")
-	}
-	ptrFile := filepath.Join(appdata, "DeltaTor", "datadir.txt")
-	return os.WriteFile(ptrFile, []byte(dir), 0644)
 }
 
 func (a *App) GetTorExePath() string {
@@ -3585,8 +3532,6 @@ func (a *App) ShowWindow() {
 	runtime.WindowCenter(a.ctx)
 }
 
-// ===================== SETUP / VERSION CHECK =====================
-
 func (a *App) RestartApp() {
 	exe, _ := os.Executable()
 	a.KillAllProcesses()
@@ -3595,181 +3540,4 @@ func (a *App) RestartApp() {
 	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x00000008}
 	cmd.Start()
 	os.Exit(0)
-}
-
-func (a *App) GetDefaultDataDir() string {
-	appdata := os.Getenv("LOCALAPPDATA")
-	if appdata == "" {
-		home, _ := os.UserHomeDir()
-		appdata = filepath.Join(home, "AppData", "Local")
-	}
-	return filepath.Join(appdata, "DeltaTor")
-}
-
-func (a *App) PickDataDir() string {
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Choose Data Directory",
-	})
-	if err != nil || dir == "" {
-		return ""
-	}
-	return filepath.Clean(dir)
-}
-
-func (a *App) RunSetup(newDataDir string) error {
-	appdata := os.Getenv("LOCALAPPDATA")
-	if appdata == "" {
-		home, _ := os.UserHomeDir()
-		appdata = filepath.Join(home, "AppData", "Local")
-	}
-
-	oldDeltaDir := filepath.Join(appdata, "DeltaTor")
-	runtime.EventsEmit(a.ctx, "setup:progress", "Clearing old data...")
-
-	// 1. Always clear the data directory contents
-	if _, err := os.Stat(newDataDir); err == nil {
-		entries, _ := os.ReadDir(newDataDir)
-		for _, e := range entries {
-			os.RemoveAll(filepath.Join(newDataDir, e.Name()))
-		}
-	}
-
-	// 2. Also remove AppData\Local\DeltaTor
-	os.RemoveAll(oldDeltaDir)
-
-	runtime.EventsEmit(a.ctx, "setup:progress", "Creating data directory...")
-
-	// 3. Create new data directory
-	os.MkdirAll(newDataDir, 0755)
-
-	// 4. Create datadir.txt
-	os.MkdirAll(oldDeltaDir, 0755)
-	ptrFile := filepath.Join(oldDeltaDir, "datadir.txt")
-	os.WriteFile(ptrFile, []byte(newDataDir), 0644)
-
-	runtime.EventsEmit(a.ctx, "setup:progress", "Copying files...")
-
-	// 5. Copy files from exe directory to newDataDir
-	filesToCopy := []string{
-		"tor-expert-bundle-windows-x86_64-15.0.14.tar.gz",
-		"bridges",
-		"tor_client_config.json",
-	}
-	for _, name := range filesToCopy {
-		src := filepath.Join(a.exeDir, name)
-		dst := filepath.Join(newDataDir, name)
-		info, err := os.Stat(src)
-		if err != nil {
-			continue
-		}
-		if info.IsDir() {
-			copyDir(src, dst)
-		} else {
-			copyFile(src, dst)
-		}
-		runtime.EventsEmit(a.ctx, "setup:progress", fmt.Sprintf("Copied: %s", name))
-	}
-
-	runtime.EventsEmit(a.ctx, "setup:progress", "Extracting Tor bundle...")
-
-	// 6. Extract tar.gz without showing PowerShell window
-	bundlePath := filepath.Join(newDataDir, "tor-expert-bundle-windows-x86_64-15.0.14.tar.gz")
-	if _, err := os.Stat(bundlePath); err == nil {
-		cmd := exec.Command("tar", "-xzf", bundlePath, "-C", newDataDir)
-		cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: 0x08000000}
-		cmd.Run()
-		os.Remove(bundlePath)
-		runtime.EventsEmit(a.ctx, "setup:progress", "Tor bundle extracted.")
-	}
-
-	runtime.EventsEmit(a.ctx, "setup:progress", "Creating shortcut...")
-
-	// 7. Create desktop shortcut - point to current exe location
-	createDesktopShortcut(newDataDir)
-
-	// 8. Update app state
-	a.dataDir = newDataDir
-	a.configPath = filepath.Join(newDataDir, "tor_client_config.json")
-	a.bridgesDir = filepath.Join(newDataDir, "bridges")
-	os.MkdirAll(a.bridgesDir, 0755)
-	os.MkdirAll(filepath.Join(newDataDir, "data"), 0755)
-
-	// 9. Remove files/folders next to the exe
-	cleanupExeDir(a.exeDir)
-
-	runtime.EventsEmit(a.ctx, "setup:progress", "Done!")
-	return nil
-}
-
-func cleanupExeDir(exeDir string) {
-	itemsToClean := []string{
-		"tor-expert-bundle-windows-x86_64-15.0.14.tar.gz",
-		"bridges",
-		"tor",
-		"data",
-		"geoip",
-		"geoip6",
-		"tor_client_config.json",
-	}
-	for _, name := range itemsToClean {
-		path := filepath.Join(exeDir, name)
-		os.RemoveAll(path)
-	}
-}
-
-func copyDir(src, dst string) error {
-	os.MkdirAll(dst, 0755)
-	entries, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		srcPath := filepath.Join(src, e.Name())
-		dstPath := filepath.Join(dst, e.Name())
-		if e.IsDir() {
-			copyDir(srcPath, dstPath)
-		} else {
-			copyFile(srcPath, dstPath)
-		}
-	}
-	return nil
-}
-
-func createDesktopShortcut(dataDir string) {
-	desktop, _ := os.UserHomeDir()
-	desktop = filepath.Join(desktop, "Desktop")
-	shortcutPath := filepath.Join(desktop, "Delta Tor.lnk")
-
-	exe, _ := os.Executable()
-
-	ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
-	defer ole.CoUninitialize()
-
-	clsid, err := ole.CLSIDFromProgID("WScript.Shell")
-	if err != nil {
-		return
-	}
-
-	unknown, err := ole.CreateInstance(clsid, nil)
-	if err != nil {
-		return
-	}
-	defer unknown.Release()
-
-	ws, err := unknown.QueryInterface(ole.IID_IDispatch)
-	if err != nil {
-		return
-	}
-	defer ws.Release()
-
-	result, err := ws.CallMethod("CreateShortcut", shortcutPath)
-	if err != nil {
-		return
-	}
-	link := result.ToIDispatch()
-	defer link.Release()
-
-	link.PutProperty("TargetPath", exe)
-	link.PutProperty("WorkingDirectory", filepath.Dir(exe))
-	link.PutProperty("Description", "Delta Tor")
 }
