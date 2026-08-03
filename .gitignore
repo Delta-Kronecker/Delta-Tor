@@ -1,45 +1,101 @@
-# Build output
-build/bin/
-*.exe
+```
+# Dependencies
+node_modules/
 
-# Tor runtime data (downloaded at runtime)
-bridges/
-build/bridges/
-tor_client_config.json
-build/tor_client_config.json
-tor-expert-bundle-*.tar.gz
-build/tor-expert-bundle-*.tar.gz
+# Build artifacts
+dist/
+build/
+target/
 
-# Go build
-*.test
-*.out
+# Environment
+.env
+.env.local
+.env.*
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/wailsjs/
-frontend/package.json.md5
-frontend/src/app.css
-
-# Wails generated
-build/windows/installer/tmp/
-
-# Mimocode
-.mimocode/
-
-# OS
-Thumbs.db
-Desktop.ini
-.DS_Store
-._*
-
-# IDE
+# Editors
 .vscode/
 .idea/
+
+# Logs
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.hprof
+
+# C/C++
+*.o
+*.obj
+*.so
+*.a
+*.lib
+*.dll
+*.dylib
+*.exe
+*.out
+
+# Go
+*.exe
+*.test
+*.prof
+
+# Rust
+Cargo.lock
+
+# Temporary files
+*.tmp
 *.swp
 *.swo
-*~
 
-# Temp
-*.tmp
-*.log
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# MyPy
+.mypy_cache/
+
+# PyTest
+.pytest_cache/
+
+# Gradle
+.gradle/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```
