@@ -254,9 +254,9 @@ var defaultConfig = Config{
 	NewCircuitPeriod:    5,
 	NumEntryGuards:      5,
 	KeepAliveEnabled:    true,
-	KeepAliveInterval:   30,
+	KeepAliveInterval:   60,
 	WatchdogEnabled:     true,
-	WatchdogInterval:    30,
+	WatchdogInterval:    60,
 	ExitNodesCountries:  "{nl},{de},{fr},{ch},{at},{se},{no},{fi},{is}",
 	SNIHost:             "www.google.com",
 	CircuitBuildTimeout: 60,
@@ -2757,8 +2757,12 @@ func (a *App) RetrySlot(label string) {
 }
 
 func (a *App) slotHealthLoop(label string, socksPort int, stopCh chan struct{}) {
-	ticker := time.NewTicker(15 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+
+	lastOnline := false
+	lastLat := 0.0
+	lastAvg := 0.0
 
 	for {
 		select {
@@ -2778,9 +2782,10 @@ func (a *App) slotHealthLoop(label string, socksPort int, stopCh chan struct{}) 
 			}
 			hd.Online = ok
 			hd.Latency = lat
-			hd.History = append(hd.History, lat)
-			if len(hd.History) > 20 {
-				hd.History = hd.History[len(hd.History)-20:]
+			if len(hd.History) < 10 {
+				hd.History = append(hd.History, lat)
+			} else {
+				hd.History = append(hd.History[1:], lat)
 			}
 			total := 0.0
 			for _, v := range hd.History {
@@ -2790,15 +2795,20 @@ func (a *App) slotHealthLoop(label string, socksPort int, stopCh chan struct{}) 
 			avgLat := hd.AvgLat
 			a.muUnlock()
 
-			txt := ""
-			if ok {
-				txt = fmt.Sprintf("⬤ Online  %d ms  (avg %d ms)", int(lat), int(avgLat))
-			} else {
-				txt = fmt.Sprintf("⬤ Offline  (avg %d ms)", int(avgLat))
+			if ok != lastOnline || lat != lastLat || avgLat != lastAvg {
+				txt := ""
+				if ok {
+					txt = fmt.Sprintf("⬤ Online  %d ms  (avg %d ms)", int(lat), int(avgLat))
+				} else {
+					txt = fmt.Sprintf("⬤ Offline  (avg %d ms)", int(avgLat))
+				}
+				runtime.EventsEmit(a.ctx, "multi:slot:health", map[string]interface{}{
+					"label": label, "online": ok, "latency": int(lat), "avgLat": int(avgLat), "text": txt,
+				})
+				lastOnline = ok
+				lastLat = lat
+				lastAvg = avgLat
 			}
-			runtime.EventsEmit(a.ctx, "multi:slot:health", map[string]interface{}{
-				"label": label, "online": ok, "latency": int(lat), "avgLat": int(avgLat), "text": txt,
-			})
 		}
 	}
 }
