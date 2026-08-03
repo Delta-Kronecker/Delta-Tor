@@ -559,6 +559,17 @@ func (a *App) loadBridgeLines(cat, trans, ip, source string, noBridge bool) []st
 	if noBridge || source == "direct" {
 		return nil
 	}
+	if source == "custom" {
+		cfg := a.LoadConfig()
+		var lines []string
+		for _, line := range strings.Split(cfg.CustomBridges, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" && !strings.HasPrefix(line, "#") {
+				lines = append(lines, line)
+			}
+		}
+		return lines
+	}
 	return a.GetBridgeLines(cat, trans, ip)
 }
 
@@ -1525,7 +1536,14 @@ func lookupCountry(ip string) string {
 	if data.CountryName == "" {
 		return "?"
 	}
-	return data.CountryName
+	return cleanCountryName(data.CountryName)
+}
+
+func cleanCountryName(name string) string {
+	if i := strings.Index(name, " ("); i != -1 {
+		return strings.TrimSpace(name[:i])
+	}
+	return name
 }
 
 func copyFile(src, dst string) error {
@@ -2869,7 +2887,7 @@ func lookupCountryViaProxy(ip string, socksPort int) string {
 	if data.CountryName == "" {
 		return "?"
 	}
-	return data.CountryName
+	return cleanCountryName(data.CountryName)
 }
 
 type SlotTrafficResult struct {
