@@ -14,18 +14,6 @@ Download the latest release archive directly:
 
 and run `DeltaTor_Setup.exe`.
 
-### Running from Source
-
-Download the repository ZIP and run with Python:
-
-**[⬇️ Source Code (ZIP)](https://github.com/Delta-Kronecker/Delta-Tor/archive/refs/heads/main.zip)**
-
-```bash
-python DeltaTor.py
-```
-
-No third-party packages — Python 3.8+ and standard library only.
-
 ---
 
 
