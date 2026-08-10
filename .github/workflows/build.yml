@@ -1,0 +1,257 @@
+name: Build Tor for Windows
+
+on:
+  push:
+    branches: [TorBoost, main, master]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0). Leave empty for a build-only run.'
+        required: false
+        default: ''
+      beta:
+        description: 'Publish this release as a beta (pre-release) instead of latest'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  transports:
+    name: pluggable-transports (Windows x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+
+      - name: Build pluggable transports
+        run: |
+          set -e
+          mkdir -p out
+          GOPATH_BIN="$(go env GOPATH)/bin/windows_amd64"
+
+          echo "=== obfs4 ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.com/yawning/obfs4.git/obfs4proxy@v0.0.0-20231012084234-c3e2d44b1033
+          cp "$GOPATH_BIN/obfs4proxy.exe" out/obfs4proxy.exe
+
+          echo "=== snowflake client ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake/v2/client@v2.14.1
+          cp "$GOPATH_BIN/client.exe" out/snowflake-client.exe
+
+          echo "=== webtunnel client ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/webtunnel/main/client@v0.0.6
+          cp "$GOPATH_BIN/client.exe" out/webtunnel.exe
+
+          echo "=== tun2socks (TUN mode) ==="
+          GOOS=windows GOARCH=amd64 \
+            go install github.com/xjasonlyu/tun2socks/v2@v2.6.0
+          cp "$GOPATH_BIN/tun2socks.exe" out/tun2socks.exe
+
+          echo "=== wintun driver ==="
+          curl -fsSL -o wintun.zip https://www.wintun.net/builds/wintun-0.14.1.zip
+          unzip -o wintun.zip wintun/bin/amd64/wintun.dll
+          cp wintun/bin/amd64/wintun.dll out/wintun.dll
+
+          ls -la out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transports-win64
+          path: out/
+
+  tor-win64:
+    name: torboost-win64 (single release artifact)
+    runs-on: windows-latest
+    needs: [transports]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            make
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-libevent
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib
+            mingw-w64-x86_64-zstd
+            mingw-w64-x86_64-gettext
+            perl
+            autoconf
+            automake
+            libtool
+            m4
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          chmod +x configure
+          ./configure --host=x86_64-w64-mingw32 \
+            --disable-asciidoc --disable-man --disable-html-docs
+
+      - name: Upload configure log (on failure)
+        if: failure() && hashFiles('tor-src/config.log') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: config-log
+          path: tor-src/config.log
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          make -j$(nproc) 2>&1 | tee build-win.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Smoke test
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          ./src/app/tor.exe --version
+
+      - name: Stage tor + runtime DLLs + geoip
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          mkdir -p ../dist/data/bridges
+          cp src/app/tor.exe ../dist/data/
+
+          # Copy every DLL that tor.exe (and the DLLs it loads) imports from the
+          # MSYS2 runtime dir, transitively, so the bundle is self-contained on
+          # machines without MSYS2 installed. tor.exe imports libzstd.dll and
+          # the libevent DLLs import libwinpthread-1.dll; both used to be
+          # omitted, so clean devices failed with "libzstd.dll was not found".
+          BIN="$MINGW_PREFIX/bin"
+          NEED="src/app/tor.exe"
+          added=1
+          while [ "$added" = "1" ]; do
+            added=0
+            for f in $NEED; do
+              for d in $(objdump -p "$f" | awk '/DLL Name:/{print $3}'); do
+                if [ -f "$BIN/$d" ] && [ ! -f "../dist/data/$d" ]; then
+                  cp "$BIN/$d" ../dist/data/
+                  NEED="$NEED ../dist/data/$d"
+                  added=1
+                fi
+              done
+            done
+          done
+          cp src/config/geoip src/config/geoip6 ../dist/data/
+          ls ../dist/data/
+
+      - name: Download transports
+        uses: actions/download-artifact@v4
+        with:
+          name: transports-win64
+          path: transports/
+
+      - name: Merge transports into dist/data
+        shell: pwsh
+        run: |
+          Copy-Item "transports\*.exe" -Destination "dist\data\" -Force
+          Copy-Item "transports\*.dll" -Destination "dist\data\" -Force
+          Get-ChildItem "dist" -Recurse -File | Select-Object FullName, Length
+
+      - name: Copy config template, bridges, README
+        shell: pwsh
+        run: |
+          Copy-Item "configs\torrc.boost" "dist\data\torrc.template" -Force
+          Copy-Item "bridges\*.txt" "dist\data\bridges\" -Force
+          Copy-Item "README.md" "dist\data\README.md" -Force
+
+      - name: Compile start-tor.exe + tun-helper.exe
+        shell: pwsh
+        run: |
+          & "scripts\build-start-tor.ps1" -OutFile "dist\start-tor.exe"
+
+      - name: Upload single release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: torboost-win64
+          path: dist/
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-win
+          path: tor-src/build-win.log
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [tor-win64]
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '') ||
+      startsWith(github.ref, 'refs/tags/')
+    env:
+      BETA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.beta || 'false' }}
+    steps:
+      - name: Resolve tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing release tag: $TAG"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: torboost-win64
+          path: release
+
+      - name: Package portable folder into zip
+        shell: bash
+        run: |
+          cd release
+          zip -r "../torboost-win64-${{ steps.tag.outputs.TAG }}.zip" start-tor.exe data
+          ls -la ../
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.tag.outputs.TAG }}"
+          ZIP="torboost-win64-$TAG.zip"
+          if [ "$BETA" = "true" ]; then
+            PRERELEASE="--prerelease"
+            echo "Publishing as BETA (pre-release)"
+          else
+            PRERELEASE=""
+            echo "Publishing as full release (latest)"
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --repo "${{ github.repository }}" --clobber
+            if [ "$BETA" = "true" ]; then
+              gh release edit "$TAG" --repo "${{ github.repository }}" --prerelease
+            else
+              gh release edit "$TAG" --repo "${{ github.repository }}" --prerelease=false
+            fi
+          else
+            gh release create "$TAG" "$ZIP" \
+              --repo "${{ github.repository }}" \
+              --title "TorBoost $TAG" \
+              --notes "TorBoost (official tor 0.4.9.11), tuned for maximum
+              download/upload throughput.
+              Unzip and run start-tor.exe - pick a mode (direct / webtunnel / obfs4 / vanilla).
+              - SocksPort 127.0.0.1:9050, HTTP proxy 127.0.0.1:8118, DNS 127.0.0.1:53530" \
+              $PRERELEASE
+          fi
