@@ -243,16 +243,20 @@ class TorVpnService : VpnService() {
         }
     }
 
-    private fun formatBytes(bytes: Float): String {
+    private fun formatBytes(bytes: Long): String {
         if (bytes < 1) return "0 B"
         val units = arrayOf("B", "KB", "MB", "GB", "TB")
-        var v = bytes
+        var v = bytes.toFloat()
         var idx = 0
         while (v >= 1024 && idx < units.size - 1) {
             v /= 1024f
             idx++
         }
         return if (idx == 0) "${v.toInt()} ${units[idx]}" else String.format("%.1f %s", v, units[idx])
+    }
+
+    private fun formatBytes(bytes: Float): String {
+        return formatBytes(bytes.toLong())
     }
 
     private fun fail(message: String) {

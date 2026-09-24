@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -193,7 +194,7 @@ fun StatusCard(state: AppState.VpnState, onDisconnect: () -> Unit) {
                     state.connecting -> MaterialTheme.colorScheme.primary
                     else -> MaterialTheme.colorScheme.outline
                 }
-                Surface(color = dotColor, shape = MaterialTheme.shapes.circle, modifier = Modifier.padding(2.dp)) {
+                Surface(color = dotColor, shape = CircleShape, modifier = Modifier.padding(2.dp)) {
                     Text(" ", modifier = Modifier.width(16.dp))
                 }
                 Spacer(Modifier.width(8.dp))
