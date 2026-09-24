@@ -13,7 +13,7 @@ object AppState {
     data class VpnState(
         val connecting: Boolean = false,
         val connected: Boolean = false,
-        val bootstrapProgress: Int = 0,
+        val transports: Map<String, Int> = emptyMap(),
         val transport: String = "",
         val error: String? = null,
         val txBytes: Long = 0,

@@ -9,9 +9,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -29,19 +27,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -49,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.deltator.tunnel.ParallelTorManager
 import io.deltator.ui.DeltaTorTheme
 
 class MainActivity : ComponentActivity() {
@@ -152,7 +142,6 @@ fun DeltaTorScreen(
             Spacer(Modifier.height(24.dp))
 
             if (!AppState.vpnStarted) {
-                TransportSection()
                 Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = onConnect,
@@ -171,8 +160,8 @@ fun DeltaTorScreen(
 @Composable
 fun StatusCard(state: AppState.VpnState, onDisconnect: () -> Unit) {
     val statusText = when {
-        state.connected -> "Connected \u00b7 Tor Network"
-        state.connecting -> "Connecting via ${state.transport} \u2026"
+        state.connected -> "Connected \u00b7 Tor Network (${state.transport})"
+        state.connecting -> "Connecting \u2014 racing vanilla / obfs4 / webtunnel \u2026"
         else -> "Disconnected"
     }
     val statusColor = when {
@@ -205,33 +194,65 @@ fun StatusCard(state: AppState.VpnState, onDisconnect: () -> Unit) {
                 )
             }
 
-            if (state.connecting || state.connected) {
+            if (state.connecting) {
                 Spacer(Modifier.height(12.dp))
-                if (state.connecting) {
-                    LinearProgressIndicator(
-                        progress = { state.bootstrapProgress / 100f },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "Tor bootstrap: ${state.bootstrapProgress}%",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                val transports = listOf(
+                    ParallelTorManager.TRANSPORT_VANILLA,
+                    ParallelTorManager.TRANSPORT_OBFS4,
+                    ParallelTorManager.TRANSPORT_WEBTUNNEL
+                )
+                transports.forEach { name ->
+                    val value = state.transports[name]
+                    val failed = value == -1
+                    val started = value != null && !failed
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (failed) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.width(90.dp)
+                        )
+                        if (started) {
+                            LinearProgressIndicator(
+                                progress = { (value ?: 0) / 100f },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                "$value%",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else if (failed) {
+                            Text(
+                                "FAIL",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        } else {
+                            Text(
+                                "starting\u2026",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
                 }
+                Spacer(Modifier.height(4.dp))
+            }
 
+            if (state.connected) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "Traffic \u2191 ${formatBytes(state.txBytes)}  \u2193 ${formatBytes(state.rxBytes)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-
-                if (state.connected) {
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
-                        Text("Disconnect")
-                    }
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = onDisconnect, modifier = Modifier.fillMaxWidth()) {
+                    Text("Disconnect")
                 }
             }
 
@@ -241,95 +262,6 @@ fun StatusCard(state: AppState.VpnState, onDisconnect: () -> Unit) {
                     state.error,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun TransportSection() {
-    val bridgeOptions = listOf(
-        Config.BRIDGE_SNOWFLAKE to "Snowflake",
-        Config.BRIDGE_SNOWFLAKE_AMP to "Snowflake (AMP)",
-        Config.BRIDGE_OBFS4 to "obfs4",
-        Config.BRIDGE_MEEK to "Meek (Azure)",
-        Config.BRIDGE_DIRECT to "Direct",
-        Config.BRIDGE_CUSTOM to "Custom"
-    )
-
-    var selected by remember { mutableStateOf(Config.bridgeType) }
-    var customLines by remember { mutableStateOf(Config.customBridgeLines) }
-    var port by remember { mutableStateOf(Config.proxyPort.toString()) }
-    var debug by remember { mutableStateOf(Config.debugMode) }
-
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp)
-        ) {
-            Text("Transport", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-
-            Spacer(Modifier.height(8.dp))
-            bridgeOptions.forEach { (id, label) ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    RadioButton(
-                        selected = selected == id,
-                        onClick = {
-                            selected = id
-                            Config.bridgeType = id
-                        }
-                    )
-                    Text(label, style = MaterialTheme.typography.bodyLarge)
-                }
-            }
-
-            if (selected == Config.BRIDGE_CUSTOM) {
-                Spacer(Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = customLines,
-                    onValueChange = {
-                        customLines = it
-                        Config.customBridgeLines = it
-                    },
-                    label = { Text("Bridge lines") },
-                    placeholder = { Text("obfs4 1.2.3.4:443 ...") },
-                    minLines = 3,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    "One bridge per line. Supports obfs4, webtunnel, meek_lite and snowflake bridge lines.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
-            Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = port,
-                onValueChange = {
-                    port = it.filter { c -> c.isDigit() }
-                    Config.proxyPort = port.toIntOrNull() ?: Config.DEFAULT_PROXY_PORT
-                },
-                label = { Text("Local SOCKS5 port") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Spacer(Modifier.height(8.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Debug logging", style = MaterialTheme.typography.bodyLarge)
-                Spacer(Modifier.weight(1f))
-                Switch(
-                    checked = debug,
-                    onCheckedChange = {
-                        debug = it
-                        Config.debugMode = it
-                    }
                 )
             }
         }
