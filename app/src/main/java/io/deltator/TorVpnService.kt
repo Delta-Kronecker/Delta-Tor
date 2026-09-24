@@ -6,12 +6,11 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.net.VpnService
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.HevSocks5Tunnel
-import io.deltator.tunnel.SnowflakeBridge
+import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.TorSocksBridge
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
@@ -39,8 +38,6 @@ class TorVpnService : VpnService() {
         private const val VPN_ADDRESS = "10.255.255.1"
         private const val VPN_ROUTE = "0.0.0.0"
         private const val DEFAULT_DNS = "8.8.8.8"
-        private const val BOOTSTRAP_TIMEOUT_MS = 300_000L
-        private const val BOOTSTRAP_POLL_MS = 1_000L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -70,7 +67,7 @@ class TorVpnService : VpnService() {
             return
         }
         AppState.markStarted()
-        AppState.update { it.copy(connecting = true, connected = false, error = null, bootstrapProgress = 0, transport = Config.transportLabel()) }
+        AppState.update { it.copy(connecting = true, connected = false, error = null, transports = emptyMap(), transport = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
@@ -94,52 +91,39 @@ class TorVpnService : VpnService() {
     private suspend fun runConnectFlow() {
         val proxyPort = Config.proxyPort
         val proxyHost = "127.0.0.1"
-        val torSocksPort = proxyPort + 1
-        val snowflakePtPort = proxyPort + 2
 
         TorSocksBridge.debugLogging = Config.debugMode
         TorSocksBridge.domainRouter = io.deltator.tunnel.DomainRouter.DISABLED
 
-        // Step 1: Start Snowflake PT / lyrebird + Tor process
-        Log.i(TAG, "Starting Tor with transport: ${Config.transportLabel()}")
-        updateNotification("Connecting via ${Config.transportLabel()} \u2026", progress = true, progressValue = 0)
-        val sfResult = SnowflakeBridge.startClient(
-            context = this@TorVpnService,
-            snowflakePort = snowflakePtPort,
-            torSocksPort = torSocksPort,
-            listenHost = proxyHost,
-            bridgeLines = Config.bridgeLines()
-        )
-        if (sfResult.isFailure) {
-            fail(sfResult.exceptionOrNull()?.message ?: "Failed to start Tor")
-            return
-        }
+        // Step 1: Fetch bridge lists and race vanilla / obfs4 / webtunnel.
+        // Monitor each transport's bootstrap progress; the first to reach 100%
+        // wins and the losing transports are stopped by the manager.
+        Log.i(TAG, "Racing vanilla / obfs4 / webtunnel transports")
+        updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
 
-        // Step 2: Wait for Tor bootstrap
-        val startTime = System.currentTimeMillis()
-        while (System.currentTimeMillis() - startTime < BOOTSTRAP_TIMEOUT_MS) {
-            if (SnowflakeBridge.isTorReady) break
-            if (!SnowflakeBridge.isRunning()) {
-                fail("Tor process died during bootstrap")
-                return
+        val winner = try {
+            ParallelTorManager.race(applicationContext, basePort = proxyPort) { snapshot ->
+                val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
+                AppState.update { it.copy(transports = progress) }
+                val maxProg = (progress.values.maxOrNull() ?: 0).coerceAtLeast(0)
+                val detail = progress.entries.joinToString("  ") { (n, p) ->
+                    "$n=${if (p < 0) "FAIL" else "$p%"}"
+                }
+                updateNotification(detail, progress = true, progressValue = maxProg)
             }
-            AppState.update { it.copy(bootstrapProgress = SnowflakeBridge.torBootstrapProgress) }
-            updateNotification(
-                "Bootstrapping Tor (${SnowflakeBridge.torBootstrapProgress}%)",
-                progress = true,
-                progressValue = SnowflakeBridge.torBootstrapProgress
-            )
-            delay(BOOTSTRAP_POLL_MS)
-        }
-        if (!SnowflakeBridge.isTorReady) {
-            fail("Tor failed to bootstrap (${SnowflakeBridge.torBootstrapProgress}%)")
+        } catch (e: Exception) {
+            fail(e.message ?: "All transports failed to bootstrap")
             return
         }
-        AppState.update { it.copy(bootstrapProgress = 100) }
 
-        // Step 3: Start the SOCKS5 bridge between TUN and Tor
+        AppState.update {
+            it.copy(transports = mapOf(winner.name to 100), transport = winner.name)
+        }
+        Log.i(TAG, "Winner transport: ${winner.name} (SOCKS5 $proxyHost:${winner.torSocksPort})")
+
+        // Step 2: Start the SOCKS5 bridge between TUN and the winning Tor instance
         val bridgeResult = TorSocksBridge.start(
-            torSocksPort = torSocksPort,
+            torSocksPort = winner.torSocksPort,
             torHost = "127.0.0.1",
             listenPort = proxyPort,
             listenHost = proxyHost
@@ -149,7 +133,7 @@ class TorVpnService : VpnService() {
             return
         }
 
-        // Step 4: Establish TUN interface
+        // Step 3: Establish TUN interface
         vpnInterface = establishVpnInterface()
         if (vpnInterface == null) {
             fail("Failed to establish VPN interface")
@@ -158,7 +142,7 @@ class TorVpnService : VpnService() {
 
         delay(200)
 
-        // Step 5: Run tun2socks (hev-socks5-tunnel) pointing at the bridge
+        // Step 4: Run tun2socks (hev-socks5-tunnel) pointing at the bridge
         val tunResult = HevSocks5Tunnel.start(
             tunFd = vpnInterface!!,
             socksAddress = proxyHost,
@@ -173,10 +157,12 @@ class TorVpnService : VpnService() {
         }
 
         // Connected!
-        AppState.update { it.copy(connecting = false, connected = true, error = null, bootstrapProgress = 100) }
-        startForeground(NOTIFICATION_ID, buildNotification("Connected \u00b7 Tor Network", progress = false))
+        AppState.update {
+            it.copy(connecting = false, connected = true, error = null, transports = mapOf(winner.name to 100))
+        }
+        startForeground(NOTIFICATION_ID, buildNotification("Connected via ${winner.name} \u00b7 Tor Network", progress = false))
         startStatsPolling()
-        Log.i(TAG, "DeltaTor connected. SOCKS5 at $proxyHost:$proxyPort")
+        Log.i(TAG, "DeltaTor connected. Winner: ${winner.name}, SOCKS5 at $proxyHost:$proxyPort")
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
@@ -285,7 +271,7 @@ class TorVpnService : VpnService() {
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
         try { TorSocksBridge.stop() } catch (_: Exception) {}
-        try { SnowflakeBridge.stopClient() } catch (_: Exception) {}
+        try { ParallelTorManager.stopAll() } catch (_: Exception) {}
         try { wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null
         if (AppState.vpnStarted) {
