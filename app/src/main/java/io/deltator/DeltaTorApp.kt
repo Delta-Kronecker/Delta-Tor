@@ -35,7 +35,7 @@ class DeltaTorApp : Application() {
  */
 object Config {
     private lateinit var appContext: Context
-    private val prefs get() = appContext.getSharedPreferences("deltator", Context.MODE_PRIVATE)
+    private val prefs get() = appContext.getSharedPreferences("torjet", Context.MODE_PRIVATE)
 
     const val DEFAULT_PROXY_PORT = 10880
 

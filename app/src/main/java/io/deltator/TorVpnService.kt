@@ -73,7 +73,7 @@ class TorVpnService : VpnService() {
 
         // Keep CPU alive during bootstrap on some OEM ROMs
         val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeltaTor:vpn").apply {
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "TorJet:vpn").apply {
             setReferenceCounted(false)
             acquire(10 * 60 * 1000L)
         }
@@ -162,13 +162,13 @@ class TorVpnService : VpnService() {
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${winner.name} \u00b7 Tor Network", progress = false))
         startStatsPolling()
-        Log.i(TAG, "DeltaTor connected. Winner: ${winner.name}, SOCKS5 at $proxyHost:$proxyPort")
+        Log.i(TAG, "TorJet connected. Winner: ${winner.name}, SOCKS5 at $proxyHost:$proxyPort")
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
         return try {
             val builder = Builder()
-                .setSession("DeltaTor")
+                .setSession("TorJet")
                 .setMtu(VPN_MTU)
                 .addAddress(VPN_ADDRESS, 32)
                 .addDnsServer(DEFAULT_DNS)
@@ -209,7 +209,7 @@ class TorVpnService : VpnService() {
                     }
                     val notif = NotificationCompat.Builder(this@TorVpnService, CHANNEL_VPN_STATUS)
                         .setSmallIcon(R.drawable.ic_tor)
-                        .setContentTitle("DeltaTor \u2014 Connected")
+                        .setContentTitle("TorJet \u2014 Connected")
                         .setContentText(
                             "\u2191 ${formatBytes(upSpeed)}/s  \u2193 ${formatBytes(downSpeed)}/s\n" +
                                 "Total: \u2191 ${formatBytes(stats.txBytes)}  \u2193 ${formatBytes(stats.rxBytes)}"
@@ -282,7 +282,7 @@ class TorVpnService : VpnService() {
     private fun buildNotification(text: String, progress: Boolean, progressValue: Int = 0): Notification {
         return NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
             .setSmallIcon(R.drawable.ic_tor)
-            .setContentTitle("DeltaTor")
+            .setContentTitle("TorJet")
             .setContentText(text)
             .setContentIntent(mainPendingIntent())
             .setOngoing(true)

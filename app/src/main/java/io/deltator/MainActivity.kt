@@ -124,7 +124,7 @@ fun DeltaTorScreen(
         ) {
             Spacer(Modifier.height(32.dp))
             Text(
-                "DeltaTor",
+                "TorJet",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.primary

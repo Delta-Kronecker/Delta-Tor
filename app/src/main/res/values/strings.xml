@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">DeltaTor</string>
+    <string name="app_name">TorJet</string>
     <string name="channel_vpn_status">VPN Status</string>
-    <string name="channel_vpn_status_desc">Shows current Tor connection status</string>
+    <string name="channel_vpn_status_desc">Shows current TorJet connection status</string>
 </resources>
