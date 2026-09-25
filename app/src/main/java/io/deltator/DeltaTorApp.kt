@@ -37,7 +37,7 @@ object Config {
     private lateinit var appContext: Context
     private val prefs get() = appContext.getSharedPreferences("deltator", Context.MODE_PRIVATE)
 
-    const val DEFAULT_PROXY_PORT = 10880
+    const val DEFAULT_PROXY_PORT = 9050
 
     fun init(context: Context) {
         appContext = context.applicationContext

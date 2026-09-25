@@ -12,6 +12,7 @@ object AppState {
 
     data class VpnState(
         val connecting: Boolean = false,
+        val torRunning: Boolean = false,
         val connected: Boolean = false,
         val transports: Map<String, Int> = emptyMap(),
         val transport: String = "",

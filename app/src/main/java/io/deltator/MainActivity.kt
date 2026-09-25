@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,7 +57,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.deltator.tunnel.ParallelTorManager
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.ui.DeltaTor
 
@@ -82,7 +80,15 @@ class MainActivity : ComponentActivity() {
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
-                    onConnect = { requestVpnPermissionAndConnect() },
+                    onPrimary = {
+                        val s = AppState.state.value
+                        when {
+                            s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
+                            s.torRunning -> sendAction(TorVpnService.ACTION_START_VPN)
+                            else -> requestVpnPermissionAndConnect()
+                        }
+                    },
+                    onStopVpn = { sendAction(TorVpnService.ACTION_STOP_VPN) },
                     onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) }
                 )
             }
@@ -100,6 +106,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestVpnPermissionAndConnect() {
+        if (AppState.state.value.torRunning) {
+            sendAction(TorVpnService.ACTION_START_VPN)
+            return
+        }
         if (AppState.vpnStarted) {
             sendAction(TorVpnService.ACTION_DISCONNECT)
             return
@@ -133,7 +143,8 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun DeltaTorScreen(
-    onConnect: () -> Unit,
+    onPrimary: () -> Unit,
+    onStopVpn: () -> Unit,
     onDisconnect: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
@@ -156,7 +167,9 @@ fun DeltaTorScreen(
         )
         MainPage(
             state = state,
-            onPrimary = { if (state.connecting || state.connected) onDisconnect() else onConnect() }
+            onPrimary = onPrimary,
+            onStopVpn = onStopVpn,
+            onDisconnect = onDisconnect
         )
     }
 }
@@ -164,6 +177,7 @@ fun DeltaTorScreen(
 private fun stateColor(state: AppState.VpnState): Color = when {
     state.connecting -> DeltaTor.Amber
     state.connected -> DeltaTor.Green
+    state.torRunning -> DeltaTor.Amber
     else -> DeltaTor.Muted
 }
 
@@ -235,15 +249,20 @@ private fun StatusDot(color: Color) {
 @Composable
 private fun MainPage(
     state: AppState.VpnState,
-    onPrimary: () -> Unit
+    onPrimary: () -> Unit,
+    onStopVpn: () -> Unit,
+    onDisconnect: () -> Unit
 ) {
     val connecting = state.connecting
     val connected = state.connected
+    val torRunning = state.torRunning
     val sc = stateColor(state)
 
     val big = when {
+        connecting && torRunning -> "RECONNECTING"
         connecting -> "RACING"
         connected -> "CONNECTED"
+        torRunning -> "READY"
         else -> "OFFLINE"
     }
 
@@ -258,12 +277,13 @@ private fun MainPage(
     if (connecting) {
         peak = maxOf(peak, state.transports.values.filter { it >= 0 }.maxOrNull() ?: 0)
     }
-    val raceText = if (connecting) "RACE $peak%" else ""
+    val raceText = if (connecting && !torRunning) "RACE $peak%" else ""
 
-    val ringProgress = if (connecting && peak > 0) peak / 100f else null
+    val ringProgress = if (connecting && !torRunning && peak > 0) peak / 100f else null
     val ringColor = when {
         connecting -> DeltaTor.Accent
         connected -> DeltaTor.Green
+        torRunning -> DeltaTor.Amber
         else -> DeltaTor.BorderLight
     }
     val ringGlow = when {
@@ -279,8 +299,9 @@ private fun MainPage(
 
     val labelText = when {
         state.error != null -> state.error
-        connected -> "DISCONNECT"
         connecting -> "CANCEL"
+        connected -> "DISCONNECT"
+        torRunning -> "START VPN"
         else -> "CONNECT"
     }
     val labelColor = if (state.error != null) DeltaTor.Red else DeltaTor.Muted
@@ -293,7 +314,7 @@ private fun MainPage(
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                text = if (connecting) raceText else big,
+                text = if (connecting && !torRunning) raceText else big,
                 style = TextStyle(
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
@@ -336,75 +357,37 @@ private fun MainPage(
                     style = MaterialTheme.typography.bodySmall,
                     color = DeltaTor.Muted
                 )
-            }
-            if (connecting) {
-                Spacer(Modifier.height(24.dp))
-                RaceRows(state)
+                Spacer(Modifier.height(20.dp))
+                ActionPill(label = "STOP VPN", onClick = onStopVpn)
+            } else if (torRunning) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Tor on SOCKS 127.0.0.1:${Config.proxyPort} \u00b7 VPN stopped",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DeltaTor.Muted
+                )
+                Spacer(Modifier.height(20.dp))
+                ActionPill(label = "DISCONNECT", onClick = onDisconnect)
             }
         }
     }
 }
 
 @Composable
-private fun RaceRows(state: AppState.VpnState) {
-    Column(Modifier.fillMaxWidth()) {
-        listOf(
-            Pair("Vanilla", ParallelTorManager.TRANSPORT_VANILLA),
-            Pair("Obfs4", ParallelTorManager.TRANSPORT_OBFS4),
-            Pair("WebTunnel", ParallelTorManager.TRANSPORT_WEBTUNNEL)
-        ).forEach { (label, name) ->
-            val value = state.transports[name]
-            val failed = value == -1
-            val started = value != null && value >= 0
-            PillSurface(height = 40.dp) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(40.dp)
-                        .padding(horizontal = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = if (failed) MaterialTheme.colorScheme.error else DeltaTor.Text
-                    )
-                    Spacer(Modifier.weight(1f))
-                    if (started) {
-                        LinearProgressIndicator(
-                            progress = { (value) / 100f },
-                            modifier = Modifier
-                                .width(100.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp)),
-                            color = DeltaTor.Accent,
-                            trackColor = DeltaTor.SurfaceLight,
-                            strokeCap = StrokeCap.Round
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            "$value%",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = DeltaTor.Muted,
-                            textAlign = TextAlign.End,
-                            modifier = Modifier.width(38.dp)
-                        )
-                    } else if (failed) {
-                        Text(
-                            "FAIL",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    } else {
-                        Text(
-                            "starting\u2026",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = DeltaTor.Muted
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(8.dp))
+private fun ActionPill(label: String, onClick: () -> Unit) {
+    PillSurface(height = 44.dp) {
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.titleMedium,
+                color = DeltaTor.Text
+            )
         }
     }
 }
