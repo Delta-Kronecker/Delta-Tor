@@ -26,6 +26,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -558,13 +559,15 @@ private fun RingButton(
         modifier = modifier
             .size(176.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clickable { onClick() },
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
         contentAlignment = Alignment.Center
     ) {
         Canvas(Modifier.fillMaxSize()) {
             val c = center
             val r = size.minDimension / 2f
-            val stroke = 9.dp.toPx()
             val halo = 150.dp.toPx()
 
             // ambient halo (pulse when active)
@@ -601,102 +604,56 @@ private fun RingButton(
                     startAngle = rotation,
                     sweepAngle = 360f,
                     useCenter = true,
-                    style = Stroke(stroke * 1.6f, cap = StrokeCap.Round)
+                    style = Stroke(10.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // soft drop shadow of the track
+            // thin, flat track ring
             drawArc(
-                color = Color.Black.copy(alpha = 0.35f),
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(4.dp.toPx(), 6.dp.toPx()),
-                size = Size(r * 2, r * 2),
-                style = Stroke(stroke, cap = StrokeCap.Round)
-            )
-
-            // outer track ring
-            drawArc(
-                brush = Brush.verticalGradient(
-                    listOf(DeltaTor.SurfaceLight, DeltaTor.Surface),
-                    startY = 0f,
-                    endY = r * 2
-                ),
-                startAngle = 0f,
+                color = DeltaTor.BorderLight.copy(alpha = 0.35f),
+                startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
                 size = Size(r * 2, r * 2),
-                style = Stroke(stroke, cap = StrokeCap.Round)
-            )
-            // thin rim to lift the track off the background
-            drawArc(
-                color = DeltaTor.BorderLight.copy(alpha = 0.55f),
-                startAngle = 0f,
-                sweepAngle = 360f,
-                useCenter = false,
-                topLeft = Offset(stroke * 0.3f, stroke * 0.3f),
-                size = Size(r * 2 - stroke * 0.6f, r * 2 - stroke * 0.6f),
-                style = Stroke(1.dp.toPx(), cap = StrokeCap.Round)
+                style = Stroke(2.dp.toPx(), cap = StrokeCap.Round)
             )
 
-            // progress arc with a glowing head
+            // progress arc — one solid state color, always starts at the top
             val prog = (progress ?: 0f).coerceIn(0f, 1f)
             if (prog > 0f) {
                 drawArc(
-                    brush = Brush.sweepGradient(
-                        listOf(ringColor, DeltaTor.Green),
-                        center = c
-                    ),
+                    color = ringColor,
                     startAngle = -90f,
                     sweepAngle = 360f * prog,
                     useCenter = false,
                     size = Size(r * 2, r * 2),
-                    style = Stroke(stroke, cap = StrokeCap.Round)
-                )
-                drawArc(
-                    color = ringColor,
-                    startAngle = -90f + 360f * prog - 10f,
-                    sweepAngle = 20f,
-                    useCenter = false,
-                    size = Size(r * 2, r * 2),
-                    style = Stroke(stroke * 1.3f, cap = StrokeCap.Round)
+                    style = Stroke(6.dp.toPx(), cap = StrokeCap.Round)
                 )
             }
 
-            // inner face: a glossy disc
-            val inner = r - stroke - 6.dp.toPx()
+            // flat matte disc
+            val inner = r - 9.dp.toPx()
             drawCircle(
                 brush = Brush.radialGradient(
-                    listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface, Color(0xFF10121A)),
-                    center = Offset(c.x, c.y - inner * 0.35f),
+                    listOf(DeltaTor.Surface, Color(0xFF0F1119)),
+                    center = c,
                     radius = inner
                 ),
                 radius = inner,
                 center = c
             )
             drawCircle(
-                color = DeltaTor.BorderLight.copy(alpha = 0.65f),
+                color = DeltaTor.Border.copy(alpha = 0.9f),
                 radius = inner,
                 center = c,
                 style = Stroke(1.dp.toPx())
             )
-            // top gloss
-            drawArc(
-                brush = Brush.horizontalGradient(listOf(Color.White.copy(alpha = 0.07f), Color.Transparent)),
-                startAngle = 180f,
-                sweepAngle = 180f,
-                useCenter = false,
-                topLeft = Offset(c.x - inner, c.y - inner),
-                size = Size(inner * 2, inner * 2),
-                style = Stroke(inner * 0.28f, cap = StrokeCap.Round)
-            )
 
-            // the power glyph
-            val rg = inner * 0.52f
-            val gp = 10.dp.toPx()
+            // the power glyph — crisp single color
+            val rg = inner * 0.46f
+            val gp = 9.dp.toPx()
             drawArc(
-                brush = Brush.linearGradient(listOf(DeltaTor.AccentLight, glyphColor)),
+                color = glyphColor,
                 startAngle = 310f,
                 sweepAngle = 280f,
                 useCenter = false,
@@ -705,8 +662,8 @@ private fun RingButton(
                 style = Stroke(gp, cap = StrokeCap.Round)
             )
             drawLine(
-                Brush.linearGradient(listOf(DeltaTor.AccentLight, glyphColor)),
-                Offset(c.x, c.y - rg - gp * 0.15f),
+                glyphColor,
+                Offset(c.x, c.y - rg),
                 Offset(c.x, c.y + rg * 0.5f),
                 gp,
                 StrokeCap.Round
