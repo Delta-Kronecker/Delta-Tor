@@ -1,10 +1,24 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     id("com.android.application")
     kotlin("android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// --- Release signing ----------------------------------------------------------
+// CI passes the keystore path as ANDROID_KEYSTORE_FILE and the credentials as
+// env vars (GitHub secrets). For local builds, drop a keystore.properties file
+// next to this module (storeFile/storePassword/keyAlias/keyPassword/storeType),
+// which is ignored by git. Never commit secrets.
+val keystoreProperties = Properties()
+rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
+    f.inputStream().use(keystoreProperties::load)
+}
+
+val releaseKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
+    ?: keystoreProperties.getProperty("storeFile")
 
 android {
     namespace = "io.deltator"
@@ -15,8 +29,24 @@ android {
         applicationId = "io.deltator"
         minSdk = 24
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "2.0.0"
+    }
+
+    signingConfigs {
+        if (!releaseKeystoreFile.isNullOrBlank()) {
+            create("release") {
+                storeFile = file(releaseKeystoreFile)
+                storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                    ?: keystoreProperties.getProperty("storePassword")
+                keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+                    ?: keystoreProperties.getProperty("keyAlias")
+                keyPassword = System.getenv("ANDROID_KEY_PASSWORD")
+                    ?: keystoreProperties.getProperty("keyPassword")
+                storeType = System.getenv("ANDROID_KEYSTORE_STORE_TYPE")
+                    ?: keystoreProperties.getProperty("storeType") ?: "PKCS12"
+            }
+        }
     }
 
     buildTypes {
@@ -24,6 +54,7 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
         }
         debug {
             isMinifyEnabled = false
