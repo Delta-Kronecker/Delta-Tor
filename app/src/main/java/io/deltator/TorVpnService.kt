@@ -11,6 +11,7 @@ import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
+import io.deltator.tunnel.TorRunner
 import io.deltator.tunnel.TorSocksBridge
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +31,8 @@ class TorVpnService : VpnService() {
     companion object {
         const val ACTION_CONNECT = "io.deltator.CONNECT"
         const val ACTION_DISCONNECT = "io.deltator.DISCONNECT"
+        const val ACTION_START_VPN = "io.deltator.START_VPN"
+        const val ACTION_STOP_VPN = "io.deltator.STOP_VPN"
         const val CHANNEL_VPN_STATUS = "vpn_status"
         const val NOTIFICATION_ID = 1
 
@@ -42,6 +45,7 @@ class TorVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var vpnInterface: ParcelFileDescriptor? = null
+    private var activeRunner: TorRunner? = null
     private var statsJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -52,6 +56,8 @@ class TorVpnService : VpnService() {
         when (intent?.action) {
             ACTION_CONNECT -> connect()
             ACTION_DISCONNECT -> disconnect()
+            ACTION_START_VPN -> startVpn()
+            ACTION_STOP_VPN -> stopVpn()
         }
         return START_STICKY
     }
@@ -67,7 +73,7 @@ class TorVpnService : VpnService() {
             return
         }
         AppState.markStarted()
-        AppState.update { it.copy(connecting = true, connected = false, error = null, transports = emptyMap(), transport = "") }
+        AppState.update { it.copy(connecting = true, connected = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
@@ -101,7 +107,7 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Racing vanilla / obfs4 / webtunnel transports")
         updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
 
-        val winner = try {
+        val w = try {
             ParallelTorManager.race(applicationContext, basePort = proxyPort) { snapshot ->
                 val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
                 AppState.update { it.copy(transports = progress) }
@@ -115,15 +121,17 @@ class TorVpnService : VpnService() {
             fail(e.message ?: "All transports failed to bootstrap")
             return
         }
+        activeRunner = w
 
         AppState.update {
-            it.copy(transports = mapOf(winner.name to 100), transport = winner.name)
+            it.copy(transports = mapOf(w.name to 100), transport = w.name)
         }
-        Log.i(TAG, "Winner transport: ${winner.name} (SOCKS5 $proxyHost:${winner.torSocksPort})")
+        Log.i(TAG, "Winner transport: ${w.name} (SOCKS5 $proxyHost:${w.torSocksPort})")
 
-        // Step 2: Start the SOCKS5 bridge between TUN and the winning Tor instance
+        // Step 2: Start the SOCKS5 bridge between TUN and the winning Tor instance.
+        // The bridge and Tor stay alive across VPN stop/start.
         val bridgeResult = TorSocksBridge.start(
-            torSocksPort = winner.torSocksPort,
+            torSocksPort = w.torSocksPort,
             torHost = "127.0.0.1",
             listenPort = proxyPort,
             listenHost = proxyHost
@@ -132,8 +140,16 @@ class TorVpnService : VpnService() {
             fail(bridgeResult.exceptionOrNull()?.message ?: "Failed to start bridge")
             return
         }
+        AppState.update { it.copy(torRunning = true) }
 
-        // Step 3: Establish TUN interface
+        // Step 3+4: TUN interface + tun2socks
+        establishTunnel(w, proxyHost, proxyPort)
+    }
+
+    /** Establish the TUN interface and tun2socks on top of the running Tor engine. */
+    private suspend fun establishTunnel(w: TorRunner, proxyHost: String, proxyPort: Int) {
+        updateNotification("Establishing VPN \u2026", progress = true, progressValue = 0)
+
         vpnInterface = establishVpnInterface()
         if (vpnInterface == null) {
             fail("Failed to establish VPN interface")
@@ -142,7 +158,6 @@ class TorVpnService : VpnService() {
 
         delay(200)
 
-        // Step 4: Run tun2socks (hev-socks5-tunnel) pointing at the bridge
         val tunResult = HevSocks5Tunnel.start(
             tunFd = vpnInterface!!,
             socksAddress = proxyHost,
@@ -156,13 +171,55 @@ class TorVpnService : VpnService() {
             return
         }
 
-        // Connected!
         AppState.update {
-            it.copy(connecting = false, connected = true, error = null, transports = mapOf(winner.name to 100))
+            it.copy(connecting = false, connected = true, error = null, transports = mapOf(w.name to 100))
         }
-        startForeground(NOTIFICATION_ID, buildNotification("Connected via ${winner.name} \u00b7 Tor Network", progress = false))
+        startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         startStatsPolling()
-        Log.i(TAG, "DeltaTor connected. Winner: ${winner.name}, SOCKS5 at $proxyHost:$proxyPort")
+        Log.i(TAG, "DeltaTor connected. Winner: ${w.name}, SOCKS5 at $proxyHost:$proxyPort")
+    }
+
+    /** Re-establish the VPN on top of an already-running Tor engine. */
+    private fun startVpn() {
+        if (AppState.state.value.connected) {
+            Log.i(TAG, "VPN already active")
+            return
+        }
+        val w = activeRunner
+        if (w == null || !w.isReady() || !TorSocksBridge.isRunning()) {
+            Log.e(TAG, "Tor not running; full reconnect required")
+            fail("Tor is not running. Reconnect.")
+            return
+        }
+        serviceScope.launch {
+            try {
+                AppState.update { it.copy(connecting = true, connected = false, error = null) }
+                establishTunnel(w, "127.0.0.1", Config.proxyPort)
+            } catch (e: Exception) {
+                Log.e(TAG, "Start VPN failed", e)
+                fail("Start VPN failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Tear down only the VPN (TUN + tunnel); the Tor engine and bridge keep running. */
+    private fun stopVpn() {
+        if (!AppState.state.value.connected) {
+            Log.i(TAG, "No VPN to stop")
+            return
+        }
+        Log.i(TAG, "Stopping VPN; keeping Tor alive")
+        statsJob?.cancel()
+        statsJob = null
+        try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
+        try { vpnInterface?.close() } catch (_: Exception) {}
+        vpnInterface = null
+        AppState.update { it.copy(connecting = false, connected = false, error = null) }
+        startForeground(
+            NOTIFICATION_ID,
+            buildNotification("Tor ready \u00b7 VPN stopped \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}")
+        )
+        Log.i(TAG, "VPN stopped, Tor still running")
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
@@ -220,6 +277,7 @@ class TorVpnService : VpnService() {
                         .setOnlyAlertOnce(true)
                         .setCategory(NotificationCompat.CATEGORY_SERVICE)
                         .setPriority(NotificationCompat.PRIORITY_LOW)
+                        .addAction(0, "Stop VPN", stopVpnPendingIntent())
                         .addAction(0, "Disconnect", disconnectPendingIntent())
                         .build()
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notif)
@@ -247,7 +305,7 @@ class TorVpnService : VpnService() {
 
     private fun fail(message: String) {
         Log.e(TAG, message)
-        AppState.update { it.copy(connecting = false, connected = false, error = message) }
+        AppState.update { it.copy(connecting = false, connected = false, torRunning = false, error = message) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -272,6 +330,7 @@ class TorVpnService : VpnService() {
         vpnInterface = null
         try { TorSocksBridge.stop() } catch (_: Exception) {}
         try { ParallelTorManager.stopAll() } catch (_: Exception) {}
+        activeRunner = null
         try { wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null
         if (AppState.vpnStarted) {
@@ -318,6 +377,18 @@ class TorVpnService : VpnService() {
         return PendingIntent.getService(
             this,
             2,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun stopVpnPendingIntent(): PendingIntent {
+        val intent = Intent(this, TorVpnService::class.java).apply {
+            action = ACTION_STOP_VPN
+        }
+        return PendingIntent.getService(
+            this,
+            3,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
