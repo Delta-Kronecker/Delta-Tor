@@ -62,7 +62,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.ui.DeltaTorTheme
-import io.deltator.ui.TorJet
+import io.deltator.ui.DeltaTor
 
 class MainActivity : ComponentActivity() {
 
@@ -83,7 +83,7 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         setContent {
             DeltaTorTheme {
-                TorJetScreen(
+                DeltaTorScreen(
                     onConnect = { requestVpnPermissionAndConnect() },
                     onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) }
                 )
@@ -128,13 +128,13 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------------------------------------------------------------------------
-// The TorJet look (mirrors scripts/TorJetUi.cs MainForm): gradient titlebar,
+// The DeltaTor look (mirrors scripts/DeltaTorUi.cs MainForm): gradient titlebar,
 // big state text with a drop shadow, a glowing power ring, pill rows, and a
 // zebra-striped settings page.
 // ---------------------------------------------------------------------------
 
 @Composable
-fun TorJetScreen(
+fun DeltaTorScreen(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit
 ) {
@@ -150,7 +150,7 @@ fun TorJetScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(TorJet.Bg)
+            .background(DeltaTor.Bg)
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
         TitleBar(
@@ -170,9 +170,9 @@ fun TorJetScreen(
 }
 
 private fun stateColor(state: AppState.VpnState): Color = when {
-    state.connecting -> TorJet.Amber
-    state.connected -> TorJet.Green
-    else -> TorJet.Muted
+    state.connecting -> DeltaTor.Amber
+    state.connected -> DeltaTor.Green
+    else -> DeltaTor.Muted
 }
 
 // ---- titlebar ---------------------------------------------------------------
@@ -183,10 +183,10 @@ private fun TitleBar(dotColor: Color, version: String) {
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
-            .background(Brush.verticalGradient(listOf(TorJet.SurfaceAlt, TorJet.Surface)))
+            .background(Brush.verticalGradient(listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface)))
             .drawBehind {
                 drawLine(
-                    TorJet.Border,
+                    DeltaTor.Border,
                     Offset(0f, size.height - 1.dp.toPx()),
                     Offset(size.width, size.height - 1.dp.toPx()),
                     1.dp.toPx()
@@ -198,15 +198,15 @@ private fun TitleBar(dotColor: Color, version: String) {
             StatusDot(dotColor)
             Spacer(Modifier.width(8.dp))
             Text(
-                "TorJet",
+                "DeltaTor",
                 style = MaterialTheme.typography.titleLarge,
-                color = TorJet.Text
+                color = DeltaTor.Text
             )
             Spacer(Modifier.weight(1f))
             Text(
                 "v$version",
                 style = MaterialTheme.typography.bodySmall,
-                color = TorJet.Muted
+                color = DeltaTor.Muted
             )
         }
     }
@@ -271,19 +271,19 @@ private fun MainPage(
 
     val ringProgress = if (connecting && peak > 0) peak / 100f else null
     val ringColor = when {
-        connecting -> TorJet.Accent
-        connected -> TorJet.Green
-        else -> TorJet.BorderLight
+        connecting -> DeltaTor.Accent
+        connected -> DeltaTor.Green
+        else -> DeltaTor.BorderLight
     }
     val ringGlow = when {
-        connecting -> TorJet.Accent
-        connected -> TorJet.Green
+        connecting -> DeltaTor.Accent
+        connected -> DeltaTor.Green
         else -> null
     }
     val glyphColor = when {
-        connecting -> TorJet.Amber
-        connected -> TorJet.Green
-        else -> TorJet.Text
+        connecting -> DeltaTor.Amber
+        connected -> DeltaTor.Green
+        else -> DeltaTor.Text
     }
 
     val labelText = when {
@@ -292,7 +292,7 @@ private fun MainPage(
         connecting -> "CANCEL"
         else -> "CONNECT"
     }
-    val labelColor = if (state.error != null) TorJet.Red else TorJet.Muted
+    val labelColor = if (state.error != null) DeltaTor.Red else DeltaTor.Muted
 
     Column(
         modifier = Modifier
@@ -318,7 +318,7 @@ private fun MainPage(
             Text(
                 "race: first to 100% wins",
                 style = MaterialTheme.typography.bodySmall,
-                color = TorJet.Text
+                color = DeltaTor.Text
             )
             Spacer(Modifier.height(8.dp))
         }
@@ -348,13 +348,13 @@ private fun MainPage(
             Text(
                 "${state.transport.uppercase()} \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}",
                 style = MaterialTheme.typography.bodySmall,
-                color = TorJet.Muted
+                color = DeltaTor.Muted
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 "\u25b2 ${formatBytes(state.txBytes)}   \u25bc ${formatBytes(state.rxBytes)}",
                 style = MaterialTheme.typography.bodySmall,
-                color = TorJet.Muted
+                color = DeltaTor.Muted
             )
         }
         Spacer(Modifier.height(20.dp))
@@ -406,7 +406,7 @@ private fun RaceRows(state: AppState.VpnState) {
                     Text(
                         label,
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (failed) MaterialTheme.colorScheme.error else TorJet.Text
+                        color = if (failed) MaterialTheme.colorScheme.error else DeltaTor.Text
                     )
                     Spacer(Modifier.weight(1f))
                     if (started) {
@@ -416,15 +416,15 @@ private fun RaceRows(state: AppState.VpnState) {
                                 .width(100.dp)
                                 .height(6.dp)
                                 .clip(RoundedCornerShape(3.dp)),
-                            color = TorJet.Accent,
-                            trackColor = TorJet.SurfaceLight,
+                            color = DeltaTor.Accent,
+                            trackColor = DeltaTor.SurfaceLight,
                             strokeCap = StrokeCap.Round
                         )
                         Spacer(Modifier.width(10.dp))
                         Text(
                             "$value%",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TorJet.Muted,
+                            color = DeltaTor.Muted,
                             textAlign = TextAlign.End,
                             modifier = Modifier.width(38.dp)
                         )
@@ -438,7 +438,7 @@ private fun RaceRows(state: AppState.VpnState) {
                         Text(
                             "starting\u2026",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TorJet.Muted
+                            color = DeltaTor.Muted
                         )
                     }
                 }
@@ -487,7 +487,7 @@ private fun PowerRing(
 
         if (progress != null && progress > 0f) {
             drawArc(
-                color = TorJet.Border,
+                color = DeltaTor.Border,
                 startAngle = -90f,
                 sweepAngle = 360f,
                 useCenter = false,
@@ -495,7 +495,7 @@ private fun PowerRing(
                 style = Stroke(stroke, cap = StrokeCap.Round)
             )
             drawArc(
-                color = TorJet.Accent,
+                color = DeltaTor.Accent,
                 startAngle = -90f,
                 sweepAngle = 360f * progress.coerceIn(0f, 1f),
                 useCenter = false,
@@ -548,12 +548,12 @@ private fun PillSurface(
             .height(height)
             .clip(RoundedCornerShape(height / 2))
             .background(
-                Brush.verticalGradient(listOf(TorJet.SurfaceAlt, TorJet.Surface)),
+                Brush.verticalGradient(listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface)),
                 RoundedCornerShape(height / 2)
             )
             .border(
                 width = 1.dp,
-                color = TorJet.Border,
+                color = DeltaTor.Border,
                 shape = RoundedCornerShape(height / 2)
             )
     ) {
@@ -574,7 +574,7 @@ private fun PillToggleRow(label: String, on: Boolean, enabled: Boolean) {
             Text(
                 label,
                 style = MaterialTheme.typography.titleMedium,
-                color = if (on) TorJet.Text else TorJet.Muted
+                color = if (on) DeltaTor.Text else DeltaTor.Muted
             )
             Spacer(Modifier.weight(1f))
             PillSwitch(on = on, enabled = enabled)
@@ -596,17 +596,17 @@ private fun SettingsPillRow(onClick: () -> Unit) {
             Text(
                 "SETTINGS",
                 style = MaterialTheme.typography.titleMedium,
-                color = TorJet.Text
+                color = DeltaTor.Text
             )
             Spacer(Modifier.weight(1f))
-            ChevronRight(color = TorJet.Muted)
+            ChevronRight(color = DeltaTor.Muted)
         }
     }
 }
 
 @Composable
 fun PillSwitch(on: Boolean, enabled: Boolean) {
-    val bg = if (on) TorJet.Green else TorJet.SurfaceLight
+    val bg = if (on) DeltaTor.Green else DeltaTor.SurfaceLight
     Box(
         Modifier
             .width(44.dp)
@@ -616,7 +616,7 @@ fun PillSwitch(on: Boolean, enabled: Boolean) {
                 if (on) {
                     drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(TorJet.Green.copy(alpha = 0.55f), TorJet.Green.copy(alpha = 0f)),
+                            listOf(DeltaTor.Green.copy(alpha = 0.55f), DeltaTor.Green.copy(alpha = 0f)),
                             center = center,
                             radius = size.maxDimension
                         ),
@@ -630,8 +630,8 @@ fun PillSwitch(on: Boolean, enabled: Boolean) {
             Modifier
                 .padding(3.dp)
                 .size(16.dp)
-                .background(if (on) Color.White else TorJet.BorderLight, CircleShape)
-                .border(if (on) Dp.Hairline else 1.dp, TorJet.Border, CircleShape)
+                .background(if (on) Color.White else DeltaTor.BorderLight, CircleShape)
+                .border(if (on) Dp.Hairline else 1.dp, DeltaTor.Border, CircleShape)
         )
     }
 }
@@ -666,7 +666,7 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
             Text(
                 "\u2039  Back",
                 style = MaterialTheme.typography.bodyLarge,
-                color = TorJet.Muted,
+                color = DeltaTor.Muted,
                 modifier = Modifier.clickable(onClick = onBack)
             )
             Spacer(Modifier.weight(1f))
@@ -674,7 +674,7 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
         Text(
             "SETTINGS",
             style = MaterialTheme.typography.titleMedium,
-            color = TorJet.Text,
+            color = DeltaTor.Text,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
@@ -689,14 +689,14 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                if (zebra) TorJet.Surface else TorJet.SurfaceAlt,
-                                if (zebra) TorJet.SurfaceAlt else TorJet.Surface
+                                if (zebra) DeltaTor.Surface else DeltaTor.SurfaceAlt,
+                                if (zebra) DeltaTor.SurfaceAlt else DeltaTor.Surface
                             )
                         )
                     )
                     .drawBehind {
                         drawLine(
-                            TorJet.Border,
+                            DeltaTor.Border,
                             Offset(0f, size.height - 1.dp.toPx()),
                             Offset(size.width, size.height - 1.dp.toPx()),
                             1.dp.toPx()
@@ -708,7 +708,7 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
                 Text(
                     row.label,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = TorJet.Text
+                    color = DeltaTor.Text
                 )
                 Spacer(Modifier.weight(1f))
                 when (row) {
@@ -716,7 +716,7 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
                         Text(
                             if (row.value) "ON" else "OFF",
                             style = MaterialTheme.typography.labelSmall,
-                            color = TorJet.Muted
+                            color = DeltaTor.Muted
                         )
                         Spacer(Modifier.width(8.dp))
                         PillSwitch(on = row.value, enabled = row.enabled)
@@ -728,16 +728,16 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
                                 .height(32.dp)
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(
-                                    Brush.verticalGradient(listOf(TorJet.SurfaceAlt, TorJet.Surface)),
+                                    Brush.verticalGradient(listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface)),
                                     RoundedCornerShape(16.dp)
                                 )
-                                .border(1.dp, TorJet.Border, RoundedCornerShape(16.dp)),
+                                .border(1.dp, DeltaTor.Border, RoundedCornerShape(16.dp)),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 row.value,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = TorJet.Text,
+                                color = DeltaTor.Text,
                                 textAlign = TextAlign.Center
                             )
                         }
@@ -750,7 +750,7 @@ private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
         Text(
             "applies on next connect",
             style = MaterialTheme.typography.bodySmall,
-            color = TorJet.Muted,
+            color = DeltaTor.Muted,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
