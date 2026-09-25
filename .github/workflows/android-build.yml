@@ -32,18 +32,6 @@ jobs:
       - name: Make gradlew executable
         run: chmod +x gradlew
 
-      - name: Compile Kotlin and collect errors
-        run: |
-          ./gradlew :app:compileDebugKotlin --no-daemon > /tmp/kotlin_errors.txt 2>&1 || true
-          cat /tmp/kotlin_errors.txt || true
-
-      - name: Upload kotlin errors
-        uses: actions/upload-artifact@v4
-        with:
-          name: kotlin-errors
-          path: /tmp/kotlin_errors.txt
-          if-no-files-found: ignore
-
       - name: Build debug APK
         run: ./gradlew assembleDebug --no-daemon
 
