@@ -217,7 +217,7 @@ class TorVpnService : VpnService() {
         AppState.update { it.copy(connecting = false, connected = false, error = null) }
         startForeground(
             NOTIFICATION_ID,
-            buildNotification("Tor ready \u00b7 VPN stopped \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}")
+            buildNotification("Tor ready \u00b7 VPN stopped \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}", progress = false)
         )
         Log.i(TAG, "VPN stopped, Tor still running")
     }
