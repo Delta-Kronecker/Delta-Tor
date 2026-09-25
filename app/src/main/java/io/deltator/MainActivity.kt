@@ -27,10 +27,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -128,9 +126,9 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------------------------------------------------------------------------
-// The DeltaTor look (mirrors scripts/DeltaTorUi.cs MainForm): gradient titlebar,
-// big state text with a drop shadow, a glowing power ring, pill rows, and a
-// zebra-striped settings page.
+// The DeltaTor look (mirrors scripts/TorJetUi.cs MainForm): a slim gradient
+// titlebar, big state text with a drop shadow, and a centered glowing power
+// ring with the connect label — dark, borderless, professional.
 // ---------------------------------------------------------------------------
 
 @Composable
@@ -139,7 +137,6 @@ fun DeltaTorScreen(
     onDisconnect: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
-    var settings by remember { mutableStateOf(false) }
     val ctx = LocalContext.current
     val version = remember {
         runCatching {
@@ -157,15 +154,10 @@ fun DeltaTorScreen(
             dotColor = stateColor(state),
             version = version
         )
-        if (settings) {
-            SettingsPage(state = state, onBack = { settings = false })
-        } else {
-            MainPage(
-                state = state,
-                onPrimary = { if (state.connecting || state.connected) onDisconnect() else onConnect() },
-                onOpenSettings = { settings = true }
-            )
-        }
+        MainPage(
+            state = state,
+            onPrimary = { if (state.connecting || state.connected) onDisconnect() else onConnect() }
+        )
     }
 }
 
@@ -243,8 +235,7 @@ private fun StatusDot(color: Color) {
 @Composable
 private fun MainPage(
     state: AppState.VpnState,
-    onPrimary: () -> Unit,
-    onOpenSettings: () -> Unit
+    onPrimary: () -> Unit
 ) {
     val connecting = state.connecting
     val connected = state.connected
@@ -294,93 +285,63 @@ private fun MainPage(
     }
     val labelColor = if (state.error != null) DeltaTor.Red else DeltaTor.Muted
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Spacer(Modifier.height(22.dp))
-
-        Text(
-            text = if (connecting) raceText else big,
-            style = TextStyle(
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = sc,
-                textAlign = TextAlign.Center,
-                shadow = Shadow(Color.Black.copy(alpha = 0.3f), Offset(0f, 2f), 0f)
-            )
-        )
-        Spacer(Modifier.height(6.dp))
-        if (connecting) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "race: first to 100% wins",
-                style = MaterialTheme.typography.bodySmall,
-                color = DeltaTor.Text
+                text = if (connecting) raceText else big,
+                style = TextStyle(
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = sc,
+                    textAlign = TextAlign.Center,
+                    shadow = Shadow(Color.Black.copy(alpha = 0.3f), Offset(0f, 2f), 0f)
+                )
             )
-            Spacer(Modifier.height(8.dp))
-        }
-        Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(20.dp))
 
-        Box(
-            Modifier.clickable(enabled = true) { onPrimary() },
-            contentAlignment = Alignment.Center
-        ) {
-            PowerRing(
-                ringColor = ringColor,
-                glowColor = ringGlow,
-                glyphColor = glyphColor,
-                progress = ringProgress
-            )
-        }
-        Spacer(Modifier.height(8.dp))
+            Box(
+                Modifier.clickable(enabled = true) { onPrimary() },
+                contentAlignment = Alignment.Center
+            ) {
+                PowerRing(
+                    ringColor = ringColor,
+                    glowColor = ringGlow,
+                    glyphColor = glyphColor,
+                    progress = ringProgress
+                )
+            }
+            Spacer(Modifier.height(16.dp))
 
-        Text(
-            labelText,
-            style = MaterialTheme.typography.bodyLarge,
-            color = labelColor,
-            textAlign = TextAlign.Center
-        )
-        if (connected) {
-            Spacer(Modifier.height(6.dp))
             Text(
-                "${state.transport.uppercase()} \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}",
-                style = MaterialTheme.typography.bodySmall,
-                color = DeltaTor.Muted
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                "\u25b2 ${formatBytes(state.txBytes)}   \u25bc ${formatBytes(state.rxBytes)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = DeltaTor.Muted
-            )
-        }
-        Spacer(Modifier.height(20.dp))
-
-        if (connecting) {
-            RaceRows(state)
-            Spacer(Modifier.height(14.dp))
-        } else if (state.error != null) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                state.error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+                labelText,
+                style = MaterialTheme.typography.bodyLarge,
+                color = labelColor,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(14.dp))
+            if (connected) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "${state.transport.uppercase()} \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DeltaTor.Muted
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "\u25b2 ${formatBytes(state.txBytes)}   \u25bc ${formatBytes(state.rxBytes)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DeltaTor.Muted
+                )
+            }
+            if (connecting) {
+                Spacer(Modifier.height(24.dp))
+                RaceRows(state)
+            }
         }
-
-        PillToggleRow(
-            label = "PROXY",
-            on = true,
-            enabled = false
-        )
-        Spacer(Modifier.height(10.dp))
-        SettingsPillRow(onClick = onOpenSettings)
-        Spacer(Modifier.height(28.dp))
     }
 }
 
@@ -535,7 +496,7 @@ private fun PowerRing(
     }
 }
 
-// ---- pill rows --------------------------------------------------------------
+// ---- pill row ---------------------------------------------------------------
 
 @Composable
 private fun PillSurface(
@@ -560,226 +521,6 @@ private fun PillSurface(
         content()
     }
 }
-
-@Composable
-private fun PillToggleRow(label: String, on: Boolean, enabled: Boolean) {
-    PillSurface(height = 40.dp) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                label,
-                style = MaterialTheme.typography.titleMedium,
-                color = if (on) DeltaTor.Text else DeltaTor.Muted
-            )
-            Spacer(Modifier.weight(1f))
-            PillSwitch(on = on, enabled = enabled)
-        }
-    }
-}
-
-@Composable
-private fun SettingsPillRow(onClick: () -> Unit) {
-    PillSurface(height = 40.dp) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(40.dp)
-                .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "SETTINGS",
-                style = MaterialTheme.typography.titleMedium,
-                color = DeltaTor.Text
-            )
-            Spacer(Modifier.weight(1f))
-            ChevronRight(color = DeltaTor.Muted)
-        }
-    }
-}
-
-@Composable
-fun PillSwitch(on: Boolean, enabled: Boolean) {
-    val bg = if (on) DeltaTor.Green else DeltaTor.SurfaceLight
-    Box(
-        Modifier
-            .width(44.dp)
-            .height(22.dp)
-            .background(Brush.verticalGradient(listOf(bg, bg.copy(alpha = 0.8f))), RoundedCornerShape(11.dp))
-            .drawBehind {
-                if (on) {
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            listOf(DeltaTor.Green.copy(alpha = 0.55f), DeltaTor.Green.copy(alpha = 0f)),
-                            center = center,
-                            radius = size.maxDimension
-                        ),
-                        radius = size.maxDimension
-                    )
-                }
-            },
-        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart
-    ) {
-        Box(
-            Modifier
-                .padding(3.dp)
-                .size(16.dp)
-                .background(if (on) Color.White else DeltaTor.BorderLight, CircleShape)
-                .border(if (on) Dp.Hairline else 1.dp, DeltaTor.Border, CircleShape)
-        )
-    }
-}
-
-@Composable
-private fun ChevronRight(color: Color) {
-    Canvas(Modifier.size(14.dp)) {
-        val p = 2.dp.toPx()
-        val mx = size.width / 2f
-        val my = size.height / 2f
-        drawLine(color, Offset(mx - 3.dp.toPx(), my - 4.dp.toPx()), Offset(mx + 3.dp.toPx(), my), p, StrokeCap.Round)
-        drawLine(color, Offset(mx + 3.dp.toPx(), my), Offset(mx - 3.dp.toPx(), my + 4.dp.toPx()), p, StrokeCap.Round)
-    }
-}
-
-// ---- settings page ----------------------------------------------------------
-
-@Composable
-private fun SettingsPage(state: AppState.VpnState, onBack: () -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-    ) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(44.dp)
-                .padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "\u2039  Back",
-                style = MaterialTheme.typography.bodyLarge,
-                color = DeltaTor.Muted,
-                modifier = Modifier.clickable(onClick = onBack)
-            )
-            Spacer(Modifier.weight(1f))
-        }
-        Text(
-            "SETTINGS",
-            style = MaterialTheme.typography.titleMedium,
-            color = DeltaTor.Text,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(10.dp))
-
-        buildSettingsRows(state).forEachIndexed { i, row ->
-            val zebra = i % 2 == 0
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                if (zebra) DeltaTor.Surface else DeltaTor.SurfaceAlt,
-                                if (zebra) DeltaTor.SurfaceAlt else DeltaTor.Surface
-                            )
-                        )
-                    )
-                    .drawBehind {
-                        drawLine(
-                            DeltaTor.Border,
-                            Offset(0f, size.height - 1.dp.toPx()),
-                            Offset(size.width, size.height - 1.dp.toPx()),
-                            1.dp.toPx()
-                        )
-                    }
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    row.label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = DeltaTor.Text
-                )
-                Spacer(Modifier.weight(1f))
-                when (row) {
-                    is SettingsRow.Toggle -> {
-                        Text(
-                            if (row.value) "ON" else "OFF",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = DeltaTor.Muted
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        PillSwitch(on = row.value, enabled = row.enabled)
-                    }
-                    is SettingsRow.Value -> {
-                        Box(
-                            Modifier
-                                .width(150.dp)
-                                .height(32.dp)
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    Brush.verticalGradient(listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface)),
-                                    RoundedCornerShape(16.dp)
-                                )
-                                .border(1.dp, DeltaTor.Border, RoundedCornerShape(16.dp)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                row.value,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = DeltaTor.Text,
-                                textAlign = TextAlign.Center
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "applies on next connect",
-            style = MaterialTheme.typography.bodySmall,
-            color = DeltaTor.Muted,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
-        )
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-private sealed interface SettingsRow {
-    val label: String
-    data class Toggle(
-        override val label: String,
-        val value: Boolean,
-        val enabled: Boolean
-    ) : SettingsRow
-    data class Value(
-        override val label: String,
-        val value: String
-    ) : SettingsRow
-}
-
-private fun buildSettingsRows(state: AppState.VpnState): List<SettingsRow> = listOf(
-    SettingsRow.Value("Mode", "Auto race"),
-    SettingsRow.Value("Transports", "vanilla + obfs4 + webtunnel"),
-    SettingsRow.Toggle("Auto proxy", value = true, enabled = false),
-    SettingsRow.Toggle("DNS tunneling", value = true, enabled = false),
-    SettingsRow.Value("SOCKS port", Config.proxyPort.toString()),
-    SettingsRow.Toggle("Debug mode", value = Config.debugMode, enabled = false),
-    SettingsRow.Value("Winner", state.transport.ifEmpty { "\u2014" })
-)
 
 private fun formatBytes(bytes: Long): String {
     if (bytes < 1024) return "$bytes B"
