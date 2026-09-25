@@ -23,5 +23,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TorJet"
+rootProject.name = "DeltaTor"
 include(":app")

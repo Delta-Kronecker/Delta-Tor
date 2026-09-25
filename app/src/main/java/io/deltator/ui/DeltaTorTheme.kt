@@ -10,10 +10,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 /**
- * The exact TorJet (win) theme — dark, borderless, fully owner-drawn look.
+ * The exact DeltaTor (win) theme — dark, borderless, fully owner-drawn look.
  * Colors are copied 1:1 from scripts/TorJetUi.cs Theme (TorJet Core).
  */
-object TorJet {
+object DeltaTor {
     val Bg = Color(0xFF12141C)
     val Surface = Color(0xFF1A1D26)
     val SurfaceAlt = Color(0xFF232732)
@@ -32,7 +32,7 @@ object TorJet {
 }
 
 // WinForms sizes (pt) — Title 11 / Big 18 / H2 9.5 / Body 9.25 / Small 8 / Caption 7.25.
-private val TorJetTypography = Typography(
+private val DeltaTorTypography = Typography(
     headlineLarge = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),   // Big 18pt
     headlineMedium = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold),  // Title 11pt
     titleLarge = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold),      // Title 11pt
@@ -43,28 +43,28 @@ private val TorJetTypography = Typography(
     labelSmall = TextStyle(fontSize = 10.sp, fontWeight = FontWeight.Bold)       // Caption 7.25pt
 )
 
-private val TorJetColors = darkColorScheme(
-    primary = TorJet.Accent,
-    onPrimary = TorJet.Text,
-    secondary = TorJet.Green,
+private val DeltaTorColors = darkColorScheme(
+    primary = DeltaTor.Accent,
+    onPrimary = DeltaTor.Text,
+    secondary = DeltaTor.Green,
     onSecondary = Color(0xFF001611),
-    background = TorJet.Bg,
-    onBackground = TorJet.Text,
-    surface = TorJet.Surface,
-    onSurface = TorJet.Text,
-    surfaceVariant = TorJet.SurfaceAlt,
-    onSurfaceVariant = TorJet.Muted,
-    error = TorJet.Red,
+    background = DeltaTor.Bg,
+    onBackground = DeltaTor.Text,
+    surface = DeltaTor.Surface,
+    onSurface = DeltaTor.Text,
+    surfaceVariant = DeltaTor.SurfaceAlt,
+    onSurfaceVariant = DeltaTor.Muted,
+    error = DeltaTor.Red,
     onError = Color(0xFFFFFFFF),
-    outline = TorJet.Border,
-    outlineVariant = TorJet.BorderLight
+    outline = DeltaTor.Border,
+    outlineVariant = DeltaTor.BorderLight
 )
 
 @Composable
 fun DeltaTorTheme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = TorJetColors,
-        typography = TorJetTypography,
+        colorScheme = DeltaTorColors,
+        typography = DeltaTorTypography,
         content = content
     )
 }

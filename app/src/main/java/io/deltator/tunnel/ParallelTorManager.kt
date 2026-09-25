@@ -149,7 +149,7 @@ object ParallelTorManager {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = 20_000
         conn.readTimeout = 20_000
-        conn.setRequestProperty("User-Agent", "TorJet/1.0")
+        conn.setRequestProperty("User-Agent", "DeltaTor/1.0")
         return try {
             if (conn.responseCode == HttpURLConnection.HTTP_OK) {
                 BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
