@@ -114,7 +114,7 @@ object BridgeStore {
         updateInProgress = true
         AppState.updateBridge { it.copy(updating = true, error = null) }
         scope.launch {
-            val result = try {
+            val failure = try {
                 updateInternal(context)
                 null
             } catch (e: Exception) {
@@ -123,7 +123,9 @@ object BridgeStore {
             }
             updateInProgress = false
             refreshState(context)
-            result?.let { AppState.updateBridge { it.copy(error = it) } }
+            if (failure != null) {
+                AppState.updateBridge { it.copy(error = failure) }
+            }
         }
     }
 
