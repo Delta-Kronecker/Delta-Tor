@@ -21,8 +21,20 @@ object AppState {
         val rxBytes: Long = 0
     )
 
+    data class BridgeState(
+        val updating: Boolean = false,
+        val lastUpdateMillis: Long = 0,
+        val vanilla: Int = 0,
+        val obfs4: Int = 0,
+        val webtunnel: Int = 0,
+        val error: String? = null
+    )
+
     private val _state = MutableStateFlow(VpnState())
     val state: StateFlow<VpnState> = _state.asStateFlow()
+
+    private val _bridgeState = MutableStateFlow(BridgeState())
+    val bridgeState: StateFlow<BridgeState> = _bridgeState.asStateFlow()
 
     @Volatile
     var vpnStarted = false
@@ -41,5 +53,9 @@ object AppState {
 
     fun update(block: (VpnState) -> VpnState) {
         _state.update(block)
+    }
+
+    fun updateBridge(block: (BridgeState) -> BridgeState) {
+        _bridgeState.update(block)
     }
 }

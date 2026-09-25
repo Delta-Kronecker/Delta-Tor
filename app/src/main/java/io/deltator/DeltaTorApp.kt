@@ -5,13 +5,22 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
+import io.deltator.tunnel.BridgeStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class DeltaTorApp : Application() {
+
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() {
         super.onCreate()
         Config.init(this)
         createNotificationChannels()
+        BridgeStore.refreshState(this)
+        appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
     }
 
     private fun createNotificationChannels() {

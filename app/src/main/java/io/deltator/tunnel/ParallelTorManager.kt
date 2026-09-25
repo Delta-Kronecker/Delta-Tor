@@ -68,7 +68,7 @@ object ParallelTorManager {
     ): TorRunner {
         stopAll()
 
-        val lines = withContext(Dispatchers.IO) { fetchBridgeLines() }
+        val lines = withContext(Dispatchers.IO) { fetchBridgeLines(context) }
 
         val ports = mapOf(
             TRANSPORT_VANILLA to basePort,
@@ -138,9 +138,10 @@ object ParallelTorManager {
         list.forEach { it.stop() }
     }
 
-    private fun fetchBridgeLines(): Map<String, String> {
+    /** Read the cached bridge lists (falling back to a fresh download + cache). */
+    private fun fetchBridgeLines(context: Context): Map<String, String> {
         return BRIDGE_SOURCES.associate { (name, url) ->
-            name to downloadText(url)
+            name to (BridgeStore.lines(context, name) ?: downloadText(url).also { BridgeStore.saveLines(context, name, it) })
         }
     }
 

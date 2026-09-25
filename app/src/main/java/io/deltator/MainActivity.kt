@@ -14,8 +14,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -52,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.deltator.tunnel.BridgeStore
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.ui.DeltaTor
 
@@ -84,7 +88,8 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onStopVpn = { sendAction(TorVpnService.ACTION_STOP_VPN) },
-                    onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) }
+                    onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) },
+                    onUpdateBridges = { BridgeStore.update(applicationContext) }
                 )
             }
         }
@@ -140,9 +145,11 @@ class MainActivity : ComponentActivity() {
 fun DeltaTorScreen(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onUpdateBridges: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
+    val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -152,9 +159,11 @@ fun DeltaTorScreen(
     ) {
         MainPage(
             state = state,
+            bridges = bridges,
             onPrimary = onPrimary,
             onStopVpn = onStopVpn,
-            onDisconnect = onDisconnect
+            onDisconnect = onDisconnect,
+            onUpdateBridges = onUpdateBridges
         )
     }
 }
@@ -171,9 +180,11 @@ private fun stateColor(state: AppState.VpnState): Color = when {
 @Composable
 private fun MainPage(
     state: AppState.VpnState,
+    bridges: AppState.BridgeState,
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
-    onDisconnect: () -> Unit
+    onDisconnect: () -> Unit,
+    onUpdateBridges: () -> Unit
 ) {
     val connecting = state.connecting
     val connected = state.connected
@@ -253,7 +264,10 @@ private fun MainPage(
         }
 
         // center zone: the ring stays at the exact center of the screen
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Box(
                 Modifier.clickable(enabled = true) { onPrimary() },
                 contentAlignment = Alignment.Center
@@ -305,6 +319,8 @@ private fun MainPage(
                     Spacer(Modifier.height(20.dp))
                     ActionPill(label = "DISCONNECT", onClick = onDisconnect)
                 }
+                Spacer(Modifier.height(if (connected || torRunning) 24.dp else 0.dp))
+                BridgePanel(bridges = bridges, onUpdate = onUpdateBridges)
             }
         }
     }
@@ -326,6 +342,99 @@ private fun ActionPill(label: String, onClick: () -> Unit) {
                 color = DeltaTor.Text
             )
         }
+    }
+}
+
+// ---- bridges ----------------------------------------------------------------
+
+@Composable
+private fun BridgePanel(bridges: AppState.BridgeState, onUpdate: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "BRIDGES",
+                style = MaterialTheme.typography.labelSmall,
+                color = DeltaTor.Muted
+            )
+            Spacer(Modifier.weight(1f))
+            if (bridges.updating) {
+                Text(
+                    "UPDATING \u2026",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DeltaTor.Amber
+                )
+            } else {
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
+                        .clickable { onUpdate() }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text(
+                        "UPDATE",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DeltaTor.Accent
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            BridgeChip("VANILLA", bridges.vanilla)
+            BridgeChip("OBFS4", bridges.obfs4)
+            BridgeChip("WEBTUNNEL", bridges.webtunnel)
+        }
+        Spacer(Modifier.height(8.dp))
+        val footer = if (bridges.error != null) {
+            "Update failed \u00b7 ${bridges.error}"
+        } else {
+            "Updated ${relativeTime(bridges.lastUpdateMillis)}"
+        }
+        Text(
+            footer,
+            style = MaterialTheme.typography.bodySmall,
+            color = if (bridges.error != null) DeltaTor.Red else DeltaTor.Muted,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+@Composable
+private fun BridgeChip(label: String, count: Int) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
+            .border(1.dp, DeltaTor.Border, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = DeltaTor.Muted
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "$count",
+            style = MaterialTheme.typography.labelSmall,
+            color = DeltaTor.Text
+        )
+    }
+}
+
+private fun relativeTime(ms: Long): String {
+    if (ms <= 0) return "never"
+    val secs = (System.currentTimeMillis() - ms) / 1000
+    return when {
+        secs < 60 -> "just now"
+        secs < 3600 -> "${secs / 60}m ago"
+        secs < 86_400 -> "${secs / 3600}h ago"
+        else -> "${secs / 86_400}d ago"
     }
 }
 
