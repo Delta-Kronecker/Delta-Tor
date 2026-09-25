@@ -266,8 +266,7 @@ private fun labelText(state: AppState.VpnState): String = when {
 
 private fun wordFor(connecting: Boolean, torRunning: Boolean, connected: Boolean, hasError: Boolean): String = when {
     hasError -> "ERROR"
-    connecting && torRunning -> "RECONNECTING"
-    connecting -> "RACING"
+    connecting -> "CONNECTING"
     connected -> "CONNECTED"
     torRunning -> "READY"
     else -> "OFFLINE"
@@ -282,7 +281,6 @@ private fun sublineFor(
     hasError: Boolean
 ): String = when {
     hasError -> "BOOTSTRAP FAILED"
-    connecting && torRunning -> "REINITIALIZING TUNNEL"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
     connected -> "${transport.uppercase()} \u00b7 GATEWAY ACTIVE"
     torRunning -> "TOR RUNNING \u00b7 VPN PAUSED"
