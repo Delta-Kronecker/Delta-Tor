@@ -16,7 +16,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,9 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -40,7 +37,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -48,7 +44,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,9 +131,9 @@ class MainActivity : ComponentActivity() {
 }
 
 // ---------------------------------------------------------------------------
-// The DeltaTor look (mirrors scripts/TorJetUi.cs MainForm): a slim gradient
-// titlebar, big state text with a drop shadow, and a centered glowing power
-// ring with the connect label — dark, borderless, professional.
+// The DeltaTor look (mirrors scripts/TorJetUi.cs MainForm): a centered glowing
+// power ring with big state text above and status/actions below — dark,
+// borderless, professional.
 // ---------------------------------------------------------------------------
 
 @Composable
@@ -148,23 +143,13 @@ fun DeltaTorScreen(
     onDisconnect: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
-    val ctx = LocalContext.current
-    val version = remember {
-        runCatching {
-            ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
-        }.getOrNull() ?: ""
-    }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(DeltaTor.Bg)
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-        TitleBar(
-            dotColor = stateColor(state),
-            version = version
-        )
         MainPage(
             state = state,
             onPrimary = onPrimary,
@@ -179,69 +164,6 @@ private fun stateColor(state: AppState.VpnState): Color = when {
     state.connected -> DeltaTor.Green
     state.torRunning -> DeltaTor.Amber
     else -> DeltaTor.Muted
-}
-
-// ---- titlebar ---------------------------------------------------------------
-
-@Composable
-private fun TitleBar(dotColor: Color, version: String) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(44.dp)
-            .background(Brush.verticalGradient(listOf(DeltaTor.SurfaceAlt, DeltaTor.Surface)))
-            .drawBehind {
-                drawLine(
-                    DeltaTor.Border,
-                    Offset(0f, size.height - 1.dp.toPx()),
-                    Offset(size.width, size.height - 1.dp.toPx()),
-                    1.dp.toPx()
-                )
-            }
-            .padding(horizontal = 14.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            StatusDot(dotColor)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "DeltaTor",
-                style = MaterialTheme.typography.titleLarge,
-                color = DeltaTor.Text
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "v$version",
-                style = MaterialTheme.typography.bodySmall,
-                color = DeltaTor.Muted
-            )
-        }
-    }
-}
-
-@Composable
-private fun StatusDot(color: Color) {
-    Box(
-        modifier = Modifier
-            .size(20.dp)
-            .drawBehind {
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(color.copy(alpha = 0.5f), color.copy(alpha = 0f)),
-                        center = center,
-                        radius = size.minDimension / 2f
-                    ),
-                    radius = size.minDimension / 2f,
-                    center = center
-                )
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        Box(
-            Modifier
-                .size(8.dp)
-                .background(color.copy(alpha = 0.92f), CircleShape)
-        )
-    }
 }
 
 // ---- main page --------------------------------------------------------------
@@ -306,13 +228,18 @@ private fun MainPage(
     }
     val labelColor = if (state.error != null) DeltaTor.Red else DeltaTor.Muted
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
-        contentAlignment = Alignment.Center
+            .padding(horizontal = 24.dp)
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // top zone: state text; flex so the ring stays at true center
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
             Text(
                 text = if (connecting && !torRunning) raceText else big,
                 style = TextStyle(
@@ -323,8 +250,10 @@ private fun MainPage(
                     shadow = Shadow(Color.Black.copy(alpha = 0.3f), Offset(0f, 2f), 0f)
                 )
             )
-            Spacer(Modifier.height(20.dp))
+        }
 
+        // center zone: the ring stays at the exact center of the screen
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Box(
                 Modifier.clickable(enabled = true) { onPrimary() },
                 contentAlignment = Alignment.Center
@@ -337,37 +266,45 @@ private fun MainPage(
                 )
             }
             Spacer(Modifier.height(16.dp))
-
             Text(
                 labelText,
                 style = MaterialTheme.typography.bodyLarge,
                 color = labelColor,
                 textAlign = TextAlign.Center
             )
-            if (connected) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "${state.transport.uppercase()} \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DeltaTor.Muted
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    "\u25b2 ${formatBytes(state.txBytes)}   \u25bc ${formatBytes(state.rxBytes)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DeltaTor.Muted
-                )
-                Spacer(Modifier.height(20.dp))
-                ActionPill(label = "STOP VPN", onClick = onStopVpn)
-            } else if (torRunning) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Tor on SOCKS 127.0.0.1:${Config.proxyPort} \u00b7 VPN stopped",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = DeltaTor.Muted
-                )
-                Spacer(Modifier.height(20.dp))
-                ActionPill(label = "DISCONNECT", onClick = onDisconnect)
+        }
+
+        // bottom zone: status and actions; flex so the ring stays at true center
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (connected) {
+                    Text(
+                        "${state.transport.uppercase()} \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "\u25b2 ${formatBytes(state.txBytes)}   \u25bc ${formatBytes(state.rxBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    ActionPill(label = "STOP VPN", onClick = onStopVpn)
+                } else if (torRunning) {
+                    Text(
+                        "Tor on SOCKS 127.0.0.1:${Config.proxyPort} \u00b7 VPN stopped",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    ActionPill(label = "DISCONNECT", onClick = onDisconnect)
+                }
             }
         }
     }
@@ -401,9 +338,9 @@ private fun PowerRing(
     glyphColor: Color,
     progress: Float?
 ) {
-    Canvas(Modifier.size(104.dp)) {
-        val stroke = 5.dp.toPx()
-        val glowRadius = size.minDimension / 2f + 14.dp.toPx()
+    Canvas(Modifier.size(128.dp)) {
+        val stroke = 6.dp.toPx()
+        val glowRadius = size.minDimension / 2f + 18.dp.toPx()
 
         if (glowColor != null) {
             drawCircle(
@@ -458,7 +395,7 @@ private fun PowerRing(
         }
 
         // power glyph (arc -60..240 + stem)
-        val g = 22.dp.toPx()
+        val g = 26.dp.toPx()
         drawArc(
             color = glyphColor,
             startAngle = -60f,
@@ -471,8 +408,8 @@ private fun PowerRing(
         val cx = size.width / 2f
         drawLine(
             color = glyphColor,
-            start = Offset(cx, 16.dp.toPx()),
-            end = Offset(cx, 46.dp.toPx()),
+            start = Offset(cx, 18.dp.toPx()),
+            end = Offset(cx, 56.dp.toPx()),
             strokeWidth = stroke,
             cap = StrokeCap.Round
         )
