@@ -23,12 +23,15 @@ object DeltaTor {
     val Text = Color(0xFFF5F7FC)
     val Muted = Color(0xFF78829B)
     val Accent = Color(0xFF8A5CF6)
+    val AccentLight = Color(0xFFB79CFF)
     val AccentSoft = Color(0xFF6040BE)
     val AccentDark = Color(0xFF4830A0)
     val Green = Color(0xFF34D399)
+    val GreenLight = Color(0xFF7DF3C0)
     val GreenDark = Color(0xFF269E76)
     val Red = Color(0xFFEF5C70)
     val Amber = Color(0xFFF5B23C)
+    val AmberLight = Color(0xFFFFD58A)
 }
 
 // WinForms sizes (pt) — Title 11 / Big 18 / H2 9.5 / Body 9.25 / Small 8 / Caption 7.25.
