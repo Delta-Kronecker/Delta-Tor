@@ -181,7 +181,11 @@ fun DeltaTorScreen(
     ) {
         AirBackground(glow = scAnimated)
 
-        Header(statusColor = scAnimated, statusLabel = statusLabel(connecting, connected, torRunning))
+        Header(
+            statusColor = scAnimated,
+            statusLabel = statusLabel(connecting, connected, torRunning),
+            modifier = Modifier.align(Alignment.TopCenter)
+        )
 
         StateBlock(
             connecting = connecting,
@@ -190,10 +194,12 @@ fun DeltaTorScreen(
             transport = state.transport,
             peak = peakPct(state.connecting, state.torRunning, state.transports),
             sc = scAnimated,
-            hasError = state.error != null
+            hasError = state.error != null,
+            modifier = Modifier.align(Alignment.Center).offset(y = (-128).dp)
         )
 
         RingButton(
+            modifier = Modifier.align(Alignment.Center),
             ringColor = scAnimated,
             glowColor = if (connecting || connected) scAnimated else null,
             glyphColor = glyphColor(connecting, connected),
@@ -220,7 +226,8 @@ fun DeltaTorScreen(
             onPrimary = onPrimary,
             onStopVpn = onStopVpn,
             onDisconnect = onDisconnect,
-            onUpdateBridges = onUpdateBridges
+            onUpdateBridges = onUpdateBridges,
+            modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
 }
@@ -357,10 +364,9 @@ private fun AirBackground(glow: Color) {
 // ---- header ----------------------------------------------------------------
 
 @Composable
-private fun Header(statusColor: Color, statusLabel: String) {
+private fun Header(statusColor: Color, statusLabel: String, modifier: Modifier = Modifier) {
     Column(
-        Modifier
-            .align(Alignment.TopCenter)
+        modifier
             .fillMaxWidth()
             .padding(horizontal = 22.dp, vertical = 18.dp)
     ) {
@@ -471,7 +477,8 @@ private fun StateBlock(
     transport: String,
     peak: Int,
     sc: Color,
-    hasError: Boolean
+    hasError: Boolean,
+    modifier: Modifier = Modifier
 ) {
     val word = wordFor(connecting, torRunning, connected, hasError)
     val sub = sublineFor(connecting, torRunning, connected, transport, peak, hasError)
@@ -482,9 +489,7 @@ private fun StateBlock(
     )
 
     Column(
-        modifier = Modifier
-            .align(Alignment.Center)
-            .offset(y = (-128).dp),
+        modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         AnimatedContent(
@@ -520,6 +525,7 @@ private fun StateBlock(
 
 @Composable
 private fun RingButton(
+    modifier: Modifier = Modifier,
     ringColor: Color,
     glowColor: Color?,
     glyphColor: Color,
@@ -548,8 +554,7 @@ private fun RingButton(
     val scale = if (connecting) breathe else 1f
 
     Box(
-        modifier = Modifier
-            .align(Alignment.Center)
+        modifier = modifier
             .size(176.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clickable { onClick() },
@@ -719,11 +724,11 @@ private fun BottomPanel(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
-    onUpdateBridges: () -> Unit
+    onUpdateBridges: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Column(
-        modifier = Modifier
-            .align(Alignment.BottomCenter)
+        modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 16.dp),
@@ -731,12 +736,32 @@ private fun BottomPanel(
     ) {
         when {
             state.connected -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GradientPill("STOP VPN", filled = true, onClick = onStopVpn)
-                GradientPill("DISCONNECT", filled = false, onClick = onDisconnect)
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "STOP VPN",
+                    filled = true,
+                    onClick = onStopVpn
+                )
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "DISCONNECT",
+                    filled = false,
+                    onClick = onDisconnect
+                )
             }
             state.torRunning -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GradientPill("START VPN", filled = true, onClick = onPrimary)
-                GradientPill("DISCONNECT", filled = false, onClick = onDisconnect)
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "START VPN",
+                    filled = true,
+                    onClick = onPrimary
+                )
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "DISCONNECT",
+                    filled = false,
+                    onClick = onDisconnect
+                )
             }
         }
 
@@ -768,7 +793,12 @@ private fun BottomPanel(
 }
 
 @Composable
-private fun GradientPill(label: String, filled: Boolean, onClick: () -> Unit) {
+private fun GradientPill(
+    modifier: Modifier = Modifier,
+    label: String,
+    filled: Boolean,
+    onClick: () -> Unit
+) {
     val shape = RoundedCornerShape(24.dp)
     val bg = if (filled) {
         Brush.horizontalGradient(listOf(DeltaTor.AccentSoft, DeltaTor.Accent))
@@ -777,8 +807,7 @@ private fun GradientPill(label: String, filled: Boolean, onClick: () -> Unit) {
     }
     val borderC = if (filled) DeltaTor.AccentLight.copy(alpha = 0.4f) else DeltaTor.BorderLight
     Box(
-        modifier = Modifier
-            .weight(1f)
+        modifier = modifier
             .height(48.dp)
             .clip(shape)
             .background(bg, shape)
