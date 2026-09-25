@@ -110,7 +110,7 @@ jobs:
             mingw-w64-x86_64-zstd=1.5.7-2
             mingw-w64-x86_64-gettext-runtime=1.0-1
             mingw-w64-x86_64-gettext-tools=1.0-1
-            perl=5.42.3-1
+            perl=5.42.3-2
 
       - name: Configure
         shell: msys2 {0}
