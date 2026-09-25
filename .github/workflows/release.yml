@@ -62,11 +62,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deltator-release-apk
-          path: deltator-${GITHUB_REF_NAME}.apk
+          path: deltator-${{ github.ref_name }}.apk
           if-no-files-found: error
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: deltator-${GITHUB_REF_NAME}.apk
+          files: deltator-${{ github.ref_name }}.apk
           generate_release_notes: true
