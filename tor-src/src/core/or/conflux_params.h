@@ -11,7 +11,7 @@
 
 #include "core/or/or.h"
 
-/** TorJet extension: conflux set-selection policies (ConfluxSetSelection). */
+/** DeltaTor extension: conflux set-selection policies (ConfluxSetSelection). */
 typedef enum conflux_set_select_t {
   CONFLUX_SET_SELECT_FIRST = 0,
   CONFLUX_SET_SELECT_ROUND_ROBIN = 1,

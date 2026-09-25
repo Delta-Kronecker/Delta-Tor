@@ -605,7 +605,7 @@ cfx_del_leg(conflux_t *cfx, const circuit_t *circ)
     cfx->prev_leg = NULL;
   }
 
-  /* TorJet: refund one launch-budget slot ONLY when a healthy linked leg was
+  /* DeltaTor: refund one launch-budget slot ONLY when a healthy linked leg was
    * closed on purpose (e.g. by the launcher's quality monitor). This lets tor
    * keep refilling the set toward its target leg count for the whole session
    * without permanently exhausting the per-set retry cap. A genuine teardown
@@ -1410,7 +1410,7 @@ conflux_predict_new(time_t now)
   }
 }
 
-/** TorJet extension: candidate set gathered while choosing where to attach a
+/** DeltaTor extension: candidate set gathered while choosing where to attach a
  * new stream. */
 typedef struct conflux_set_candidate_t {
   origin_circuit_t *ocirc;
@@ -1422,7 +1422,7 @@ typedef struct conflux_set_candidate_t {
   uint64_t total_streams;
 } conflux_set_candidate_t;
 
-/** TorJet extension: return the best (lowest) valid leg RTT in usec for the
+/** DeltaTor extension: return the best (lowest) valid leg RTT in usec for the
  * set, or UINT64_MAX if no leg has a measured RTT yet. */
 static uint64_t
 conflux_set_best_rtt(const conflux_t *cfx)
@@ -1437,7 +1437,7 @@ conflux_set_best_rtt(const conflux_t *cfx)
   return best;
 }
 
-/** TorJet extension: comparator for sorting set candidates by best-leg RTT
+/** DeltaTor extension: comparator for sorting set candidates by best-leg RTT
  * ascending (lowest RTT first). Sets without a measured RTT sort last so the
  * percentage filter never starves known-good sets. */
 static int
@@ -1456,7 +1456,7 @@ conflux_cand_rtt_asc_cmp(const void **a, const void **b)
   return 0;
 }
 
-/** Torjet extension: count the streams currently attached to the set. The
+/** DeltaTor extension: count the streams currently attached to the set. The
  * stream list head (p_streams) is mirrored on every leg, so inspecting the
  * first leg is enough. */
 static size_t
@@ -1475,14 +1475,14 @@ conflux_set_stream_count(const conflux_t *cfx)
   return count;
 }
 
-/** TorJet extension: SOCKS5 username used by TorJet's keep-alive streams. They
+/** DeltaTor extension: SOCKS5 username used by DeltaTor's keep-alive streams. They
  * arrive on the dedicated keep-alive SocksPort (9052, NoIsolateSOCKSAuth so the
  * marker does not isolate them off the shared circuits) and must always reach
  * every set, so they bypass the RTT-based set filters and are spread
  * round-robin regardless of the configured ConfluxSetSelection policy. */
-#define CONFLUX_KEEPALIVE_USERNAME "torjet-keepalive"
+#define CONFLUX_KEEPALIVE_USERNAME "deltator-keepalive"
 
-/** Return true iff the given connection is one of TorJet's keep-alive streams,
+/** Return true iff the given connection is one of DeltaTor's keep-alive streams,
  * identified by its SOCKS5 auth username. */
 static bool
 conflux_conn_is_keepalive(const entry_connection_t *conn)
@@ -1496,8 +1496,8 @@ conflux_conn_is_keepalive(const entry_connection_t *conn)
          !strncmp(socks->username, CONFLUX_KEEPALIVE_USERNAME, len);
 }
 
-/** Torjet extension: pick the set to attach a new stream to, honoring the
- * configured selection policy. If keepalive_balance is true (TorJet keep-alive
+/** DeltaTor extension: pick the set to attach a new stream to, honoring the
+ * configured selection policy. If keepalive_balance is true (DeltaTor keep-alive
  * streams), pick the set with the fewest cumulative streams: a stable,
  * self-balancing rotation that keeps keep-alive pings spread evenly across
  * every set even while sets are being rebuilt and drop in and out of the
@@ -1561,7 +1561,7 @@ conflux_pick_set_from_candidates(smartlist_t *cands, bool keepalive_balance)
  * conflux circuits are excluded by circuit_is_acceptable(). At present,
  * conflux circuits in this pool are non-internal.
  *
- * TorJet extension: instead of always returning the first acceptable set, we
+ * DeltaTor extension: instead of always returning the first acceptable set, we
  * gather every acceptable set and let the configured policy (ConfluxSetSelection)
  * pick one, so new streams are spread across the linked sets (load-balancing)
  * and slow sets can be skipped for failover when ConfluxSetRttMax is set.
@@ -1612,7 +1612,7 @@ conflux_get_circ_for_conn(const entry_connection_t *conn, time_t now,
     smartlist_add(cands, cand);
   } DIGEST256MAP_FOREACH_END;
 
-  /* TorJet: keep-alive streams bypass the RTT-based set filters (ConfluxSetRttMax
+  /* DeltaTor: keep-alive streams bypass the RTT-based set filters (ConfluxSetRttMax
    * and ConfluxSetRttPct) and are spread evenly across every acceptable set
    * (picking the least-loaded one), so keep-alive traffic keeps exercising all
    * sets no matter what the user's selection policy and filters are. */
@@ -1633,7 +1633,7 @@ conflux_get_circ_for_conn(const entry_connection_t *conn, time_t now,
     } SMARTLIST_FOREACH_END(c);
   }
 
-  /* TorJet: optionally prune the candidate list down to the best RTT_PCT% of
+  /* DeltaTor: optionally prune the candidate list down to the best RTT_PCT% of
    * sets (lowest best-leg RTT) before the selection policy runs. Like the
    * absolute threshold, this never empties the list: at least one set is kept
    * so a new stream can always attach somewhere. */
@@ -1852,13 +1852,13 @@ linked_circuit_closed(circuit_t *circ)
     conflux_mark_all_for_close(nonce, is_client, END_CIRC_REASON_FINISHED);
   }
 
-  /* TorJet: if a linked leg was closed while the set survived (e.g. by the
+  /* DeltaTor: if a linked leg was closed while the set survived (e.g. by the
    * launcher's quality monitor), launch a replacement so the set can refill
    * toward its target leg count. The budget refund in cfx_del_leg() keeps
    * this sustainable for long sessions. Mirrors the unlinked recovery logic
    * in unlinked_circuit_closed().
    *
-   * TorJet: the same applies when the closed leg was the last one of the set,
+   * DeltaTor: the same applies when the closed leg was the last one of the set,
    * so the set was removed from the linked pool above. A genuine teardown is
    * told apart from a deliberate close (such as the launcher removing a weak
    * sole leg) by in_full_teardown: conflux_mark_all_for_close() only sets it

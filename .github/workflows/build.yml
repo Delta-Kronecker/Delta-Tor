@@ -59,7 +59,7 @@ jobs:
           path: out/
 
   tor-win64:
-    name: torjet-win64 (single release artifact)
+    name: deltator-win64 (single release artifact)
     runs-on: windows-latest
     needs: [transports]
     steps:
@@ -239,7 +239,7 @@ jobs:
             if ($tmpV6 -and (Test-Path $tmpV6)) { Remove-Item $tmpV6 -Force }
           }
 
-      - name: Compile TorJet.exe
+      - name: Compile DeltaTor.exe
         shell: pwsh
         env:
           INPUT_TAG: ${{ github.event.inputs.tag }}
@@ -247,12 +247,12 @@ jobs:
           $ver = $env:INPUT_TAG
           if (-not $ver) { $ver = "${{ github.ref_name }}" }
           if ($ver -notmatch '^v?\d') { $ver = "" }
-          & "scripts\build-start-tor.ps1" -OutFile "dist\TorJet.exe" -Version $ver
+          & "scripts\build-start-tor.ps1" -OutFile "dist\DeltaTor.exe" -Version $ver
 
       - name: Upload single release artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
         with:
-          name: torjet-win64
+          name: deltator-win64
           path: dist/
 
       - name: Upload build log
@@ -306,13 +306,13 @@ jobs:
           PREV="$(git tag --sort=-creatordate | grep -vx "$TAG" | head -n 1 || true)"
           SHA="$(git rev-parse --short=9 HEAD)"
           {
-            echo "TorJet $TAG — portable Windows Tor client tuned for maximum throughput."
+            echo "DeltaTor $TAG — portable Windows Tor client tuned for maximum throughput."
             echo ""
             if [ "$BETA" = "true" ]; then
               echo "> **BETA (pre-release) build.**"
               echo ""
             fi
-            echo "**Download:** \`torjet-win64-$TAG.zip\` — unzip anywhere and double-click \`TorJet.exe\`."
+            echo "**Download:** \`deltator-win64-$TAG.zip\` — unzip anywhere and double-click \`DeltaTor.exe\`."
             echo ""
             echo "Built in CI from official tor 0.4.9.11 sources plus obfs4, webtunnel"
             echo "and snowflake."
@@ -345,7 +345,7 @@ jobs:
 
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0 (node24)
         with:
-          name: torjet-win64
+          name: deltator-win64
           path: release
 
       - name: Package portable folder into zip
@@ -354,7 +354,7 @@ jobs:
           TAG: ${{ steps.tag.outputs.TAG }}
         run: |
           cd release
-          zip -r "../torjet-win64-$TAG.zip" TorJet.exe data
+          zip -r "../deltator-win64-$TAG.zip" DeltaTor.exe data
           ls -la ../
 
       - name: Publish release
@@ -363,7 +363,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.tag.outputs.TAG }}
         run: |
-          ZIP="torjet-win64-$TAG.zip"
+          ZIP="deltator-win64-$TAG.zip"
           NOTES="$GITHUB_WORKSPACE/release-notes.md"
           if [ "$BETA" = "true" ]; then
             PRERELEASE="--prerelease"
@@ -384,7 +384,7 @@ jobs:
           else
             gh release create "$TAG" "$ZIP" \
               --repo "${{ github.repository }}" \
-              --title "TorJet $TAG" \
+              --title "DeltaTor $TAG" \
               --notes-file "$NOTES" \
               $PRERELEASE
           fi

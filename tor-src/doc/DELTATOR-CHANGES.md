@@ -1,8 +1,8 @@
-# TorJet modifications to tor 0.4.9.11
+# DeltaTor modifications to tor 0.4.9.11
 
-This tree is the official tor 0.4.9.11 release source plus the TorJet
+This tree is the official tor 0.4.9.11 release source plus the DeltaTor
 conflux extensions listed below. Everything else is untouched upstream
-code, so this file is the single place documenting where TorJet deviates.
+code, so this file is the single place documenting where DeltaTor deviates.
 
 ## New torrc options (client side)
 
@@ -38,7 +38,7 @@ CLOSECIRCUIT to prune weak ones.
 
 ## Keep-alive spread
 
-Streams whose SOCKS5 auth username equals `torjet-keepalive` bypass the
+Streams whose SOCKS5 auth username equals `deltator-keepalive` bypass the
 RTT-based set filters (`ConfluxSetRttMax`/`ConfluxSetRttPct`) and are sent
 to the set with the fewest cumulative streams, so keep-alive traffic keeps
 exercising every set regardless of the user's selection policy.
@@ -55,7 +55,7 @@ New fields on `conflux_t` (`src/core/or/conflux_st.h`): `total_streams`,
 ## Launch-budget refund for deliberate closes
 
 Upstream counts every leg launch against a per-set budget
-(`num_leg_launch`) so failing builds cannot churn forever. TorJet refunds
+(`num_leg_launch`) so failing builds cannot churn forever. DeltaTor refunds
 one slot in `cfx_del_leg()` **only** when a healthy linked leg was closed
 deliberately (no in-flight data, sequence numbers intact, not the current
 leg). Genuine teardowns keep their slot consumed — the set dies anyway and

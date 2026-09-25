@@ -11,4 +11,4 @@
 data/
 
 # locally compiled launcher (CI builds it into the artifact)
-/scripts/TorJet.exe
+/scripts/DeltaTor.exe

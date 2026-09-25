@@ -371,40 +371,40 @@ forward slash (/) in the configuration file and on the command line.
     only use the circuit with lower latency for all data. The lowmem versions
     minimize queue usage memory at the client. (Default: "throughput")
 
-// TorJet client extensions --------------------------------------------------
+// DeltaTor client extensions --------------------------------------------------
 
 [[ConfluxNumSets]] **ConfluxNumSets** __NUM__::
-    TorJet extension: override how many conflux sets (exit paths) the client
+    DeltaTor extension: override how many conflux sets (exit paths) the client
     keeps alive, replacing the consensus value of cfx_max_prebuilt_set and
     cfx_max_linked_set. 0 uses the consensus default. Valid range: 0-32.
     (Default: 0)
 
 [[ConfluxNumLegs]] **ConfluxNumLegs** __NUM__::
-    TorJet extension: override the number of legs (circuits) built per conflux
+    DeltaTor extension: override the number of legs (circuits) built per conflux
     set, replacing the consensus value of cfx_num_legs_set. More legs mean
     more parallel bandwidth per set. 0 uses the consensus default. Valid
     range: 0-16. (Default: 0)
 
 [[ConfluxNumLinkedSets]] **ConfluxNumLinkedSets** __NUM__::
-    TorJet extension: ceiling on the number of *linked* conflux sets. Only
+    DeltaTor extension: ceiling on the number of *linked* conflux sets. Only
     binds when set below ConfluxNumSets; equal values keep exactly that many
     sets linked. 0 uses the consensus default. Valid range: 0-32.
     (Default: 0)
 
 [[ConfluxSetSelection]] **ConfluxSetSelection** __NUM__::
-    TorJet extension: policy used when attaching a new stream to a conflux
+    DeltaTor extension: policy used when attaching a new stream to a conflux
     set. 0 = first acceptable set, 1 = round-robin across sets,
     2 = set with fewest streams, 3 = set with lowest best-leg RTT.
     (Default: 1)
 
 [[ConfluxSetRttMax]] **ConfluxSetRttMax** __NUM__::
-    TorJet extension: slow-set failover. When attaching a new stream, sets
+    DeltaTor extension: slow-set failover. When attaching a new stream, sets
     whose best-leg RTT is at or above this many milliseconds are skipped,
     unless every set is slow (a stream is never left unattached). 0 disables
     the filter. Must be >= 0. (Default: 0)
 
 [[ConfluxSetRttPct]] **ConfluxSetRttPct** __NUM__::
-    TorJet extension: when attaching a new stream, restrict candidates to the
+    DeltaTor extension: when attaching a new stream, restrict candidates to the
     best (lowest best-leg RTT) this-many percent of sets; always keeps at
     least one set. Applied after ConfluxSetRttMax. 0 disables the filter.
     Valid range: 0-100. (Default: 0)

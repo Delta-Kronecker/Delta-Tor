@@ -1,15 +1,15 @@
-TORJET CORE LICENSE
+DELTATOR CORE LICENSE
 Version 1.0
 Copyright (c) 2026 Delta-Kronecker
 
 1. DEFINITIONS
 
-"TorJet" means the software project published at
-https://github.com/Delta-Kronecker/TorJet (the "Repository").
+"DeltaTor" means the software project published at
+https://github.com/Delta-Kronecker/DeltaTor (the "Repository").
 
 "The Core" means all source code, configuration templates, build scripts,
-workflow definitions, and documentation authored by the TorJet project for the
-TorJet launcher — including, without limitation, scripts/start-tor.cs,
+workflow definitions, and documentation authored by the DeltaTor project for the
+DeltaTor launcher — including, without limitation, scripts/start-tor.cs,
 scripts/build-start-tor.ps1, scripts/bench.ps1,
 configs/torrc.jet, and .github/workflows/build.yml — but EXCLUDING third-party
 components (tor, pluggable transports, and any other
@@ -35,7 +35,7 @@ You may not exercise the rights granted in Section 2 unless BOTH of the
 following requirements are satisfied, without exception:
 
 (a) Prominent link. You must display, in a clearly visible and unmodified
-    form, the address https://github.com/Delta-Kronecker/TorJet on the main
+    form, the address https://github.com/Delta-Kronecker/DeltaTor on the main
     page or main screen of Your Program and/or on the main page of Your
     Program's repository.
 
@@ -43,8 +43,8 @@ following requirements are satisfied, without exception:
     following exact statement (in the same language(s) as the rest of Your
     Program's interface):
 
-    "This software uses the TorJet core, obtained from
-    https://github.com/Delta-Kronecker/TorJet"
+    "This software uses the DeltaTor core, obtained from
+    https://github.com/Delta-Kronecker/DeltaTor"
 
     If Your Program has no graphical or textual interface, this statement and
     the address must appear in your repository's main README file and in the
@@ -63,7 +63,7 @@ provide the source code on request to any user of that service.
 
 5. NO ENDORSEMENT
 
-Nothing in this License grants you the right to use the name "TorJet", or any
+Nothing in this License grants you the right to use the name "DeltaTor", or any
 trademark, logo, or trade name of the copyright holder, in a way that implies
 that the copyright holder endorses or sponsors Your Program, except for the
 attribution required by Section 3.

@@ -1,6 +1,6 @@
-// TorJetUi.cs - the WinForms front end (compiled together with start-tor.cs).
-// TorJet Core License v1.0 (see LICENSE). Using this Core in another program
-// requires the mandatory attribution of https://github.com/Delta-Kronecker/TorJet.
+// DeltaTorUi.cs - the WinForms front end (compiled together with start-tor.cs).
+// DeltaTor Core License v1.0 (see LICENSE). Using this Core in another program
+// requires the mandatory attribution of https://github.com/Delta-Kronecker/DeltaTor.
 // One borderless, fully owner-drawn surface: no native controls are placed on
 // the window, so the dark theme renders exactly the same everywhere. The
 // console machinery of Program is reused behind the scenes; its output goes
@@ -64,7 +64,7 @@ namespace StartTor
             }
         }
 
-        // The exact TorJet.ico travels INSIDE the exe (embedded resource), so
+        // The exact DeltaTor.ico travels INSIDE the exe (embedded resource), so
         // the tray, taskbar and Alt-Tab all show the real icon without any
         // external file. Falls back to the exe icon, then a drawn placeholder.
         internal static Icon LoadAppIcon()
@@ -72,7 +72,7 @@ namespace StartTor
             try
             {
                 System.Reflection.Assembly a = System.Reflection.Assembly.GetExecutingAssembly();
-                using (Stream s = a.GetManifestResourceStream("TorJet.ico"))
+                using (Stream s = a.GetManifestResourceStream("DeltaTor.ico"))
                 {
                     if (s != null) return new Icon(s);
                 }
@@ -102,7 +102,7 @@ namespace StartTor
             {
                 try
                 {
-                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "torjet-ui-crash.txt"),
+                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "deltator-ui-crash.txt"),
                         DateTime.Now + "\r\n" + e.Exception);
                 }
                 catch { }
@@ -111,7 +111,7 @@ namespace StartTor
             {
                 try
                 {
-                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "torjet-ui-crash.txt"),
+                    File.WriteAllText(Path.Combine(Path.GetTempPath(), "deltator-ui-crash.txt"),
                         DateTime.Now + "\r\n" + e.ExceptionObject);
                 }
                 catch { }
@@ -347,7 +347,7 @@ namespace StartTor
 
             public MainForm()
             {
-                Text = "TorJet";
+                Text = "DeltaTor";
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.CenterScreen;
                 ClientSize = new Size(400, 470);
@@ -363,7 +363,7 @@ namespace StartTor
                 }
                 catch { }
 
-                string forced = Environment.GetEnvironmentVariable("TORJET_UI_PAGE");
+                string forced = Environment.GetEnvironmentVariable("DELTATOR_UI_PAGE");
                 if (forced == "settings") page = Page.Settings;
 
                 Resize += delegate { LayoutPass(); };
@@ -381,7 +381,7 @@ namespace StartTor
                 trayMenu.Items.Add("Exit", null, delegate { ExitFromTray(); });
 
                 trayIcon = new System.Windows.Forms.NotifyIcon();
-                trayIcon.Text = "TorJet";
+                trayIcon.Text = "DeltaTor";
                 trayIcon.Icon = LoadAppIcon() ?? CreateTrayIcon();
                 trayIcon.ContextMenuStrip = trayMenu;
                 trayIcon.MouseClick += delegate(object s, MouseEventArgs e)
@@ -416,7 +416,7 @@ namespace StartTor
                     uiModePos = ModeNames.Length;   // Auto race
                 }
                 autoProxyEnabled = ReadAutoProxySetting();
-                LogLine("TorJet " + TorJetVersion.App);
+                LogLine("DeltaTor " + DeltaTorVersion.App);
             }
 
             // ---- geometry --------------------------------------------------
@@ -529,7 +529,7 @@ namespace StartTor
                 {
                     try
                     {
-                        File.WriteAllText(Path.Combine(Path.GetTempPath(), "torjet-ui-paint.txt"),
+                        File.WriteAllText(Path.Combine(Path.GetTempPath(), "deltator-ui-paint.txt"),
                             DateTime.Now + "\r\n" + ex);
                     }
                     catch { }
@@ -555,11 +555,11 @@ namespace StartTor
                 using (SolidBrush b = new SolidBrush(sc))
                     g.FillEllipse(b, 14, 13, 8, 8);
 
-                TextRenderer.DrawText(g, "TorJet", Theme.Title(),
+                TextRenderer.DrawText(g, "DeltaTor", Theme.Title(),
                     new Rectangle(30, 0, 120, 36), Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
-                string ver = TorJetVersion.App;
+                string ver = DeltaTorVersion.App;
                 TextRenderer.DrawText(g, "v" + ver, Theme.Small(),
                     new Rectangle(ClientSize.Width - 180, 0, 90, 36), Theme.Muted,
                     TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
@@ -1320,7 +1320,7 @@ namespace StartTor
                 try
                 {
                     Process.Start(new ProcessStartInfo(
-                        "https://github.com/Delta-Kronecker/TorJet/releases")
+                        "https://github.com/Delta-Kronecker/DeltaTor/releases")
                     { UseShellExecute = true });
                 }
                 catch { }
@@ -1673,8 +1673,8 @@ namespace StartTor
                 {
                     ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(
-                        "https://api.github.com/repos/Delta-Kronecker/TorJet/releases/latest");
-                    req.UserAgent = "torjet-ui/" + TorJetVersion.App;
+                        "https://api.github.com/repos/Delta-Kronecker/DeltaTor/releases/latest");
+                    req.UserAgent = "deltator-ui/" + DeltaTorVersion.App;
                     req.Timeout = 8000;
                     req.ReadWriteTimeout = 8000;
                     using (WebResponse resp = req.GetResponse())
@@ -1684,7 +1684,7 @@ namespace StartTor
                         if (m.Success)
                         {
                             string latest = m.Groups[1].Value.TrimStart('v', 'V');
-                            if (CompareVersionsLocal(latest, TorJetVersion.App) > 0)
+                            if (CompareVersionsLocal(latest, DeltaTorVersion.App) > 0)
                             {
                                 UiInvokeDelegate(delegate
                                 {
@@ -1837,7 +1837,7 @@ namespace StartTor
                         g.FillRectangle(b, 0, 0, ClientSize.Width, 32);
                     using (Pen pen = new Pen(Theme.Border))
                         g.DrawLine(pen, 0, 32, ClientSize.Width, 32);
-                    TextRenderer.DrawText(g, "TorJet", Theme.H2(),
+                    TextRenderer.DrawText(g, "DeltaTor", Theme.H2(),
                         new Rectangle(16, 0, 160, 32), Theme.Text,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
                     bool hovX = hover == 3;
@@ -1899,7 +1899,7 @@ namespace StartTor
             {
                 string icoPath = Path.Combine(
                     Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location) ?? "",
-                    "TorJet.ico");
+                    "DeltaTor.ico");
                 if (File.Exists(icoPath))
                 {
                     try { return new Icon(icoPath, 16, 16); } catch { }

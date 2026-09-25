@@ -138,11 +138,11 @@ struct conflux_t {
    * because there is a maximum allowed in order to avoid side channel(s). */
   unsigned int num_leg_launch;
 
-  /** TorJet: cumulative number of streams that have been attached to this set
+  /** DeltaTor: cumulative number of streams that have been attached to this set
    * since it was created. */
   uint64_t total_streams;
 
-  /** TorJet: cumulative payload bytes sent and received by all legs of this
+  /** DeltaTor: cumulative payload bytes sent and received by all legs of this
    * set since it was created. */
   uint64_t bytes_sent;
   uint64_t bytes_recv;

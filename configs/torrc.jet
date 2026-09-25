@@ -1,5 +1,5 @@
-# TorJet - speed-optimized portable Tor client config (tor 0.4.9.11)
-# Copied by TorJet.exe to data\torrc.template, then data\torrc is generated
+# DeltaTor - speed-optimized portable Tor client config (tor 0.4.9.11)
+# Copied by DeltaTor.exe to data\torrc.template, then data\torrc is generated
 # from it per the chosen mode. All paths are relative, so the whole folder is
 # fully portable: copy/move it anywhere and it still works.
 
@@ -71,7 +71,7 @@ SafeLogging 1
 ConfluxEnabled 1
 ConfluxClientUX throughput
 
-# --- Bridges (added by TorJet.exe when needed) ---
-# TorJet.exe copies this file to torrc.template and writes data\torrc from
+# --- Bridges (added by DeltaTor.exe when needed) ---
+# DeltaTor.exe copies this file to torrc.template and writes data\torrc from
 # it. When you pick webtunnel/obfs4/vanilla it appends UseBridges 1 + Bridge
 # lines from data\bridges\*.txt. Direct mode leaves the file as-is.

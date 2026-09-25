@@ -2645,7 +2645,7 @@ link_apconn_to_circ(entry_connection_t *apconn, origin_circuit_t *circ,
   circ->p_streams = ENTRY_TO_EDGE_CONN(apconn);
   conflux_update_p_streams(circ, ENTRY_TO_EDGE_CONN(apconn));
 
-  /* TorJet: count the stream against its conflux set, if any. */
+  /* DeltaTor: count the stream against its conflux set, if any. */
   conflux_t *stream_cfx = TO_CIRCUIT(circ)->conflux;
   if (stream_cfx) {
     stream_cfx->total_streams++;
@@ -3219,7 +3219,7 @@ circuit_sent_valid_data(origin_circuit_t *circ, uint16_t relay_body_len)
       tor_add_u32_nowrap(circ->n_overhead_written_circ_bw,
                          RELAY_PAYLOAD_SIZE_MAX-relay_body_len);
 
-  /* TorJet: accumulate against the conflux set, if any. */
+  /* DeltaTor: accumulate against the conflux set, if any. */
   conflux_t *cfx = TO_CIRCUIT(circ)->conflux;
   if (cfx) {
     cfx->bytes_sent += relay_body_len;
@@ -3245,7 +3245,7 @@ circuit_read_valid_data(origin_circuit_t *circ, uint16_t relay_body_len)
       tor_add_u32_nowrap(circ->n_overhead_read_circ_bw,
                          RELAY_PAYLOAD_SIZE_MAX-relay_body_len);
 
-  /* TorJet: accumulate against the conflux set, if any. */
+  /* DeltaTor: accumulate against the conflux set, if any. */
   conflux_t *cfx = TO_CIRCUIT(circ)->conflux;
   if (cfx) {
     cfx->bytes_recv += relay_body_len;

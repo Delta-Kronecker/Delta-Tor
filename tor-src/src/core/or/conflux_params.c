@@ -239,7 +239,7 @@ conflux_params_get_num_legs_set(void)
   return num_legs_set;
 }
 
-/** TorJet extension: override the number of legs per set at runtime
+/** DeltaTor extension: override the number of legs per set at runtime
  * (e.g. from the CONFLUX SET control command). Ignored if out of range. */
 void
 conflux_params_set_num_legs(uint8_t n)
@@ -249,7 +249,7 @@ conflux_params_set_num_legs(uint8_t n)
   }
 }
 
-/** TorJet extension: return the set-selection policy for new streams.
+/** DeltaTor extension: return the set-selection policy for new streams.
  * 0 = first acceptable, 1 = round-robin, 2 = least-streams, 3 = fastest. */
 int
 conflux_params_get_set_selection(void)
@@ -261,7 +261,7 @@ conflux_params_get_set_selection(void)
   return 0;
 }
 
-/** TorJet extension: return the slow-set RTT filter in milliseconds. 0 means
+/** DeltaTor extension: return the slow-set RTT filter in milliseconds. 0 means
  * no filter (every acceptable set is a candidate). */
 int
 conflux_params_get_set_rtt_max(void)
@@ -273,7 +273,7 @@ conflux_params_get_set_rtt_max(void)
   return 0;
 }
 
-/** TorJet extension: return the "best sets" percentage filter. 0 means no
+/** DeltaTor extension: return the "best sets" percentage filter. 0 means no
  * percentage filter; > 0 keeps only that percent of candidate sets with the
  * lowest best-leg RTT before the selection policy runs. */
 int
@@ -352,7 +352,7 @@ conflux_params_new_consensus(const networkstatus_t *ns)
                             NUM_LEGS_SET_DEFAULT,
                             NUM_LEGS_SET_MIN, NUM_LEGS_SET_MAX);
 
-  /* TorJet extension: the torrc ConfluxNumLegs option (0 = consensus default)
+  /* DeltaTor extension: the torrc ConfluxNumLegs option (0 = consensus default)
    * overrides the consensus cfx_num_legs_set, so every set is always kept at
    * exactly that many legs. */
   {
@@ -367,7 +367,7 @@ conflux_params_new_consensus(const networkstatus_t *ns)
                             MAX_LEGS_SET_DEFAULT,
                             MAX_LEGS_SET_MIN, MAX_LEGS_SET_MAX);
 
-  /* TorJet extension: the torrc ConfluxNumSets / ConfluxNumLinkedSets options
+  /* DeltaTor extension: the torrc ConfluxNumSets / ConfluxNumLinkedSets options
    * (0 = consensus default) override the consensus cfx_max_prebuilt_set /
    * cfx_max_linked_set values. ConfluxNumSets is the number of sets kept alive
    * (the pool in conflux_predict_new bounds the total, linked + unlinked, at

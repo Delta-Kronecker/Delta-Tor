@@ -756,33 +756,33 @@ struct or_options_t {
   /** Number of legs to build per conflux set. 0 (default) means "use the
    * consensus default" (cfx_num_legs, usually 2); any positive value overrides
    * it so every set is always kept at exactly this many legs. This is a
-   * TorJet extension. */
+   * DeltaTor extension. */
    int ConfluxNumLegs;
 
-  /** TorJet extension: target number of conflux sets to prebuild/keep. 0 means
+  /** DeltaTor extension: target number of conflux sets to prebuild/keep. 0 means
    * "use the consensus default" (cfx_max_prebuilt_set, usually 3); any positive
    * value overrides the prebuilt-set target. */
   int ConfluxNumSets;
 
-  /** TorJet extension: hard cap on the number of linked conflux sets tor may
+  /** DeltaTor extension: hard cap on the number of linked conflux sets tor may
    * keep at once. 0 means "use the consensus default" (cfx_max_linked_set,
    * usually 10); any positive value overrides it. Setting it equal to
    * ConfluxNumSets keeps exactly that many sets alive even while some are in
    * use; a larger value allows extra sets on top so that many stay ready. */
   int ConfluxNumLinkedSets;
 
-  /** TorJet extension: how to pick the conflux set a new stream is attached
+  /** DeltaTor extension: how to pick the conflux set a new stream is attached
    * to. 0 = first acceptable (stock behavior), 1 = round-robin across the
    * acceptable sets, 2 = the set with the fewest attached streams,
    * 3 = the set with the lowest best-leg RTT. */
   int ConfluxSetSelection;
 
-  /** TorJet extension: skip a conflux set when choosing one for a new stream
+  /** DeltaTor extension: skip a conflux set when choosing one for a new stream
    * if its best-leg RTT is at/above this many milliseconds. 0 (default) disables
    * the health filter so every acceptable set is a candidate. */
   int ConfluxSetRttMax;
 
-  /** TorJet extension: when choosing a set for a new stream, only keep the
+  /** DeltaTor extension: when choosing a set for a new stream, only keep the
    * best RTT_PCT% of candidate sets (those with the lowest best-leg RTT) and
    * let the selection policy pick among them. 0 (default) disables the
    * percentage filter. Applied after ConfluxSetRttMax when both are set, and

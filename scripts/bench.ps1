@@ -1,8 +1,8 @@
 <#
-# TorJet Core License v1.0 (see LICENSE). Using this Core in another program
-# requires the mandatory attribution of https://github.com/Delta-Kronecker/TorJet.
+# DeltaTor Core License v1.0 (see LICENSE). Using this Core in another program
+# requires the mandatory attribution of https://github.com/Delta-Kronecker/DeltaTor.
 .SYNOPSIS
-  TorJet benchmark orchestrator (step 0 harness).
+  DeltaTor benchmark orchestrator (step 0 harness).
 
   Works against a scratch copy of the release folder so your Downloads copy is
   never modified. Each run boots tor, waits for 100% bootstrap, runs a battery
@@ -10,7 +10,7 @@
   one CSV row per measurement.
 
 .PARAMETER Release
-  Pristine release folder (default: Downloads\torjet-win64-v1.1.7).
+  Pristine release folder (default: Downloads\deltator-win64-v2.0.0).
 
 .PARAMETER WorkDir
   Scratch folder created from Release. Reused across runs (keeps cached
@@ -46,8 +46,8 @@
   conflux set/leg counts.
 #>
 param(
-    [string]$Release = "C:\Users\agolb\Downloads\torjet-win64-v1.1.7",
-    [string]$WorkDir = "$env:TEMP\torjet-bench",
+    [string]$Release = "C:\Users\agolb\Downloads\deltator-win64-v2.0.0",
+    [string]$WorkDir = "$env:TEMP\deltator-bench",
     [string]$Mode = "direct",
     [int]$Iters = 3,
     [string]$Streams = "1,4,8",
@@ -69,10 +69,10 @@ param(
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Split-Path -Parent $scriptDir
-$newExe = Join-Path $scriptDir "TorJet.exe"
+$newExe = Join-Path $scriptDir "DeltaTor.exe"
 
 if (-not (Test-Path $Release)) { Write-Host "[x] release folder not found: $Release" -ForegroundColor Red; exit 1 }
-if (-not (Test-Path $newExe))  { Write-Host "[x] new TorJet.exe not built: $newExe" -ForegroundColor Red; exit 1 }
+if (-not (Test-Path $newExe))  { Write-Host "[x] new DeltaTor.exe not built: $newExe" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path (Join-Path $Release "data\tor.exe"))) { Write-Host "[x] invalid release folder (no data\tor.exe)" -ForegroundColor Red; exit 1 }
 
 # --- (re)build scratch work dir from the release, keeping cached consensus -----
@@ -103,7 +103,7 @@ foreach ($s in $settings) {
 
 # pre-flight: kill any tor leaked from this workdir and drop a stale lock file.
 # A tor whose path cannot be queried is LEFT ALONE: killing it might hit the
-# user's unrelated tor instance, and TorJet.exe itself stops previous runs
+# user's unrelated tor instance, and DeltaTor.exe itself stops previous runs
 # holding our ports at startup anyway.
 Get-Process tor -ErrorAction SilentlyContinue | Where-Object {
     try { $_.Path -like "$WorkDir*" } catch { $false }
@@ -133,7 +133,7 @@ function Invoke-Bench {
     }
 
     Write-Host "`n=== variant: $Name (mode=$Mode strategy=$Strategy iters=$Iters streams=$Streams) ===" -ForegroundColor Cyan
-    & (Join-Path $WorkDir "TorJet.exe") --bench $Mode --iters $Iters --streams $Streams --csv $OutCSV
+    & (Join-Path $WorkDir "DeltaTor.exe") --bench $Mode --iters $Iters --streams $Streams --csv $OutCSV
     if ($LASTEXITCODE -ne 0) { Write-Host "[!] bench exited with code $LASTEXITCODE" -ForegroundColor Yellow }
 }
 
@@ -143,7 +143,7 @@ if ($ConfluxModes.Trim().Length -gt 0) {
         $modes = $ConfluxModes -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
         foreach ($m in $modes) {
             Write-Host "`n=== conflux check: $m ===" -ForegroundColor Cyan
-            & (Join-Path $WorkDir "TorJet.exe") --conflux-check $m
+            & (Join-Path $WorkDir "DeltaTor.exe") --conflux-check $m
             # Propagate the child's exit code (0 = engaged, 1 = failed) instead
             # of always exiting 0 and masking failures.
             if ($LASTEXITCODE -gt $worst) { $worst = $LASTEXITCODE }
