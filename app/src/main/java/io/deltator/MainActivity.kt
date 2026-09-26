@@ -52,16 +52,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchColors
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -86,15 +81,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeStore
-import io.deltator.tunnel.TorrcOption
-import io.deltator.tunnel.TorrcOptionType
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
@@ -1281,16 +1273,6 @@ private fun DividerLine() {
 }
 
 @Composable
-private fun DividerInCard() {
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(1.dp)
-            .background(DeltaTor.Border)
-    )
-}
-
-@Composable
 private fun SettingsCardHeader(
     title: String,
     subtitle: String,
@@ -1346,10 +1328,7 @@ private fun SettingsScreen(
     onBack: () -> Unit,
     onOpenLog: () -> Unit
 ) {
-    val values by TorrcSettings.values.collectAsStateWithLifecycle()
-    val context = LocalContext.current
-    var customText by remember { mutableStateOf(TorrcSettings.customTorrc()) }
-    var preview by remember { mutableStateOf(TorrcSettings.readLastGenerated(context)) }
+    var templateText by remember { mutableStateOf(TorrcSettings.template()) }
     var saved by remember { mutableStateOf(false) }
 
     val tfColors = OutlinedTextFieldDefaults.colors(
@@ -1362,13 +1341,6 @@ private fun SettingsScreen(
         unfocusedTextColor = DeltaTor.Text,
         focusedPlaceholderColor = DeltaTor.Muted,
         unfocusedPlaceholderColor = DeltaTor.Muted
-    )
-    val switchColors = SwitchDefaults.colors(
-        checkedThumbColor = DeltaTor.Text,
-        checkedTrackColor = DeltaTor.Accent,
-        uncheckedThumbColor = DeltaTor.SurfaceLight,
-        uncheckedTrackColor = DeltaTor.SurfaceAlt,
-        uncheckedBorderColor = DeltaTor.BorderLight
     )
 
     LaunchedEffect(saved) {
@@ -1391,7 +1363,7 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(10.dp))
 
-            SettingsCardHeader("TORRC OPTIONS", "Basic tor configuration \u00b7 applied on next connect") {
+            SettingsCardHeader("TORRC TEMPLATE", "The full torrc, editable here") {
                 Text(
                     "RESET",
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -1401,65 +1373,40 @@ private fun SettingsScreen(
                     color = DeltaTor.AccentLight,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
-                        .clickable { TorrcSettings.resetAll() }
+                        .clickable {
+                            TorrcSettings.resetTemplate()
+                            templateText = TorrcSettings.template()
+                        }
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 )
             }
             SettingsCard {
-                TorrcSettings.options.forEachIndexed { index, option ->
-                    if (index > 0) DividerInCard()
-                    TorrcOptionRow(
-                        option = option,
-                        value = values[option.key] ?: "",
-                        tfColors = tfColors,
-                        switchColors = switchColors
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(22.dp))
-
-            SettingsCardHeader("TORRC FILE", "Manual torrc block \u00b7 merged on next connect") {
                 Text(
-                    "REFRESH",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.AccentLight,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { preview = TorrcSettings.readLastGenerated(context) }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                    "A ready-made torrc template. Bridges and pluggable transports are appended automatically \u00b7 applied on next connect.",
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted,
+                    modifier = Modifier.padding(vertical = 4.dp)
                 )
-            }
-            SettingsCard {
                 OutlinedTextField(
-                    value = customText,
-                    onValueChange = { customText = it },
+                    value = templateText,
+                    onValueChange = { templateText = it },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 4.dp),
-                    minLines = 6,
-                    maxLines = 9,
+                    minLines = 10,
+                    maxLines = 18,
                     textStyle = TextStyle(
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 11.sp,
-                        lineHeight = 14.sp,
+                        fontSize = 10.sp,
+                        lineHeight = 13.sp,
                         color = DeltaTor.Text
                     ),
-                    placeholder = {
-                        Text(
-                            "# One torrc directive per line, e.g.\nExcludeNodes {ir},{cn}\nStrictNodes 0",
-                            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = DeltaTor.Muted)
-                        )
-                    },
                     colors = tfColors
                 )
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (saved) "SAVED \u2713" else "Write directly to torrc \u00b7 overrides the options above",
+                        if (saved) "SAVED \u2713" else "One directive per line \u00b7 lines starting with # are ignored",
                         style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                         color = if (saved) DeltaTor.GreenLight else DeltaTor.Muted,
                         modifier = Modifier.weight(1f)
@@ -1472,9 +1419,8 @@ private fun SettingsScreen(
                                 RoundedCornerShape(12.dp)
                             )
                             .clickable {
-                                TorrcSettings.setCustomTorrc(customText)
+                                TorrcSettings.setTemplate(templateText)
                                 saved = true
-                                preview = TorrcSettings.readLastGenerated(context)
                             }
                             .padding(horizontal = 18.dp, vertical = 8.dp),
                         contentAlignment = Alignment.Center
@@ -1489,38 +1435,6 @@ private fun SettingsScreen(
                         )
                     }
                 }
-                Spacer(Modifier.height(10.dp))
-                DividerInCard()
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "LAST GENERATED TORRC (READ-ONLY)",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.Muted
-                )
-                Spacer(Modifier.height(6.dp))
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(150.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(DeltaTor.Bg, RoundedCornerShape(12.dp))
-                        .border(1.dp, DeltaTor.Border, RoundedCornerShape(12.dp))
-                        .verticalScroll(rememberScrollState())
-                        .padding(10.dp)
-                ) {
-                    Text(
-                        preview.ifBlank { "No torrc generated yet \u2014 connect once to populate this preview." },
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 9.sp,
-                            lineHeight = 12.sp,
-                            color = DeltaTor.Muted
-                        )
-                    )
-                }
             }
 
             Spacer(Modifier.height(22.dp))
@@ -1530,7 +1444,8 @@ private fun SettingsScreen(
             BridgeCard(
                 bridges = bridges,
                 sc = DeltaTor.Accent,
-                onUpdate = onUpdateBridges
+                onUpdate = onUpdateBridges,
+                modifier = Modifier.padding(horizontal = 22.dp)
             )
 
             Spacer(Modifier.height(22.dp))
@@ -1585,77 +1500,6 @@ private fun SettingsScreen(
             }
 
             Spacer(Modifier.height(22.dp))
-        }
-    }
-}
-
-@Composable
-private fun TorrcOptionRow(
-    option: TorrcOption,
-    value: String,
-    tfColors: TextFieldColors,
-    switchColors: SwitchColors
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                option.label,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 0.3.sp
-                ),
-                color = DeltaTor.Text
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                option.hint,
-                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                color = DeltaTor.Muted
-            )
-        }
-        Spacer(Modifier.width(12.dp))
-        when (option.type) {
-            TorrcOptionType.BOOL -> Switch(
-                checked = value == "1",
-                onCheckedChange = { TorrcSettings.set(option.key, if (it) "1" else "0") },
-                colors = switchColors
-            )
-            TorrcOptionType.INT -> OutlinedTextField(
-                value = value,
-                onValueChange = { raw -> TorrcSettings.set(option.key, raw.filter(Char::isDigit).take(6)) },
-                modifier = Modifier.width(92.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge,
-                placeholder = {
-                    Text(
-                        option.placeholder,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = DeltaTor.Muted
-                    )
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                colors = tfColors
-            )
-            TorrcOptionType.STRING -> OutlinedTextField(
-                value = value,
-                onValueChange = { TorrcSettings.set(option.key, it) },
-                modifier = Modifier.width(150.dp),
-                singleLine = true,
-                textStyle = MaterialTheme.typography.bodyLarge,
-                placeholder = {
-                    Text(
-                        option.placeholder,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = DeltaTor.Muted
-                    )
-                },
-                colors = tfColors
-            )
         }
     }
 }

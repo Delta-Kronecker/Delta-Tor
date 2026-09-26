@@ -300,9 +300,8 @@ class TorRunner(
             bridgeDirectives.appendLine("Bridge $line")
         }
 
-        val overrides = TorrcSettings.overrideLines()
-        val custom = TorrcSettings.customLines()
-        val torrcContent = "$common\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n${overrides.joinToString("\n")}\n${custom.joinToString("\n")}\n"
+        val templateLines = TorrcSettings.templateLines()
+        val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n"
         torrcFile.writeText(torrcContent)
         try {
             File(context.filesDir, "tor_last.torrc").writeText(torrcContent)
