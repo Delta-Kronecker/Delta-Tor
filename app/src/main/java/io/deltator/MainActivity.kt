@@ -2,6 +2,9 @@ package io.deltator
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.VpnService
@@ -11,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -30,6 +34,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -44,10 +49,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchColors
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextFieldColors
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,16 +79,27 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeStore
+import io.deltator.tunnel.TorrcOption
+import io.deltator.tunnel.TorrcOptionType
+import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
+import io.deltator.util.AppLog
+import kotlinx.coroutines.delay
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
 
@@ -159,12 +183,42 @@ class MainActivity : ComponentActivity() {
 // store panel. Dark, borderless, owner-drawn and fully professional.
 // ---------------------------------------------------------------------------
 
+private enum class Screen { Main, Settings, Log }
+
 @Composable
 fun DeltaTorScreen(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
     onUpdateBridges: () -> Unit
+) {
+    var screen by remember { mutableStateOf(Screen.Main) }
+
+    Crossfade(targetState = screen, label = "screen") { s ->
+        when (s) {
+            Screen.Main -> MainScreen(
+                onPrimary = onPrimary,
+                onStopVpn = onStopVpn,
+                onDisconnect = onDisconnect,
+                onUpdateBridges = onUpdateBridges,
+                onOpenSettings = { screen = Screen.Settings }
+            )
+            Screen.Settings -> SettingsScreen(
+                onBack = { screen = Screen.Main },
+                onOpenLog = { screen = Screen.Log }
+            )
+            Screen.Log -> LogScreen(onBack = { screen = Screen.Settings })
+        }
+    }
+}
+
+@Composable
+private fun MainScreen(
+    onPrimary: () -> Unit,
+    onStopVpn: () -> Unit,
+    onDisconnect: () -> Unit,
+    onUpdateBridges: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
@@ -185,6 +239,7 @@ fun DeltaTorScreen(
         Header(
             statusColor = scAnimated,
             statusLabel = statusLabel(connecting, connected, torRunning),
+            onOpenSettings = onOpenSettings,
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
@@ -364,7 +419,12 @@ private fun AirBackground(glow: Color) {
 // ---- header ----------------------------------------------------------------
 
 @Composable
-private fun Header(statusColor: Color, statusLabel: String, modifier: Modifier = Modifier) {
+private fun Header(
+    statusColor: Color,
+    statusLabel: String,
+    onOpenSettings: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier
             .fillMaxWidth()
@@ -390,6 +450,18 @@ private fun Header(statusColor: Color, statusLabel: String, modifier: Modifier =
                 color = DeltaTor.AccentLight
             )
             Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
+                    .clickable { onOpenSettings() },
+                contentAlignment = Alignment.Center
+            ) {
+                GearIcon(Modifier.size(20.dp), DeltaTor.Muted)
+            }
+            Spacer(Modifier.width(10.dp))
             StatusChip(color = statusColor, label = statusLabel)
         }
         Spacer(Modifier.height(14.dp))
@@ -1024,5 +1096,475 @@ private fun relativeTime(ms: Long): String {
         secs < 3600 -> "${secs / 60}m ago"
         secs < 86_400 -> "${secs / 3600}h ago"
         else -> "${secs / 86_400}d ago"
+    }
+}
+
+// ---- settings & log screens -------------------------------------------------
+
+@Composable
+private fun GearIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Muted) {
+    Canvas(modifier) {
+        val c = center
+        val r = size.minDimension / 2f
+        val inner = r * 0.58f
+        val tooth = r * 0.20f
+        val teeth = 8
+        for (i in 0 until teeth) {
+            val a = 2.0 * PI * i / teeth
+            val dx = cos(a).toFloat()
+            val dy = sin(a).toFloat()
+            drawLine(
+                color,
+                Offset(c.x + dx * inner, c.y + dy * inner),
+                Offset(c.x + dx * (inner + tooth), c.y + dy * (inner + tooth)),
+                r * 0.22f,
+                StrokeCap.Round
+            )
+        }
+        drawCircle(color, radius = r * 0.34f, center = c)
+        drawCircle(DeltaTor.Bg, radius = r * 0.13f, center = c)
+    }
+}
+
+@Composable
+private fun BackArrowIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
+    Canvas(modifier) {
+        val w = size.width
+        val h = size.height
+        val stroke = 2.dp.toPx()
+        val p = Path()
+        p.moveTo(w * 0.64f, h * 0.16f)
+        p.lineTo(w * 0.30f, h * 0.5f)
+        p.lineTo(w * 0.64f, h * 0.84f)
+        drawPath(p, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
+    }
+}
+
+@Composable
+private fun ScreenTopBar(
+    title: String,
+    onBack: () -> Unit,
+    action: (@Composable () -> Unit)? = null
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 22.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
+                    .clickable { onBack() },
+                contentAlignment = Alignment.Center
+            ) {
+                BackArrowIcon(Modifier.size(18.dp))
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    letterSpacing = 1.6.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.weight(1f))
+            action?.invoke()
+        }
+        DividerLine()
+    }
+}
+
+@Composable
+private fun DividerLine() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(
+                Brush.horizontalGradient(
+                    listOf(Color.Transparent, DeltaTor.Border, Color.Transparent)
+                )
+            )
+    )
+}
+
+@Composable
+private fun DividerInCard() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(DeltaTor.Border)
+    )
+}
+
+@Composable
+private fun SettingsCardHeader(
+    title: String,
+    subtitle: String,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.6.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.Muted
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                color = DeltaTor.Muted.copy(alpha = 0.75f)
+            )
+        }
+        trailing?.invoke()
+    }
+}
+
+@Composable
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                RoundedCornerShape(18.dp)
+            )
+            .border(1.dp, DeltaTor.Border, RoundedCornerShape(18.dp))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        content = content
+    )
+}
+
+@Composable
+private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
+    val tfColors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = DeltaTor.AccentLight,
+        unfocusedBorderColor = DeltaTor.BorderLight,
+        focusedContainerColor = DeltaTor.Surface,
+        unfocusedContainerColor = DeltaTor.Surface,
+        cursorColor = DeltaTor.AccentLight,
+        focusedTextColor = DeltaTor.Text,
+        unfocusedTextColor = DeltaTor.Text,
+        focusedPlaceholderColor = DeltaTor.Muted,
+        unfocusedPlaceholderColor = DeltaTor.Muted
+    )
+    val switchColors = SwitchDefaults.colors(
+        checkedThumbColor = DeltaTor.Text,
+        checkedTrackColor = DeltaTor.Accent,
+        uncheckedThumbColor = DeltaTor.SurfaceLight,
+        uncheckedTrackColor = DeltaTor.SurfaceAlt,
+        uncheckedBorderColor = DeltaTor.BorderLight
+    )
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
+            )
+    ) {
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+            ScreenTopBar("SETTINGS", onBack)
+
+            Spacer(Modifier.height(10.dp))
+
+            SettingsCardHeader("TORRC", "Basic tor configuration \u00b7 applied on next connect") {
+                Text(
+                    "RESET",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.AccentLight,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { TorrcSettings.resetAll() }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            SettingsCard {
+                TorrcSettings.options.forEachIndexed { index, option ->
+                    if (index > 0) DividerInCard()
+                    TorrcOptionRow(
+                        option = option,
+                        value = TorrcSettings.valueOf(option.key),
+                        tfColors = tfColors,
+                        switchColors = switchColors
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            SettingsCardHeader("CONNECTION LOG", "Exact Tor bootstrap output \u00b7 copy with one tap")
+            SettingsCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "View connection log",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Shows the live bootstrap; press COPY to share it.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent),
+                                    RoundedCornerShape(12.dp)
+                                ),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable { onOpenLog() }
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "VIEW LOG",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.2.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = Color.White
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+        }
+    }
+}
+
+@Composable
+private fun TorrcOptionRow(
+    option: TorrcOption,
+    value: String,
+    tfColors: TextFieldColors,
+    switchColors: SwitchColors
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                option.label,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.3.sp
+                ),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                option.hint,
+                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                color = DeltaTor.Muted
+            )
+        }
+        Spacer(Modifier.width(12.dp))
+        when (option.type) {
+            TorrcOptionType.BOOL -> Switch(
+                checked = value == "1",
+                onCheckedChange = { TorrcSettings.set(option.key, if (it) "1" else "0") },
+                colors = switchColors
+            )
+            TorrcOptionType.INT -> OutlinedTextField(
+                value = value,
+                onValueChange = { raw -> TorrcSettings.set(option.key, raw.filter(Char::isDigit).take(6)) },
+                modifier = Modifier.width(92.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge,
+                placeholder = {
+                    Text(
+                        option.placeholder,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = DeltaTor.Muted
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                colors = tfColors
+            )
+            TorrcOptionType.STRING -> OutlinedTextField(
+                value = value,
+                onValueChange = { TorrcSettings.set(option.key, it) },
+                modifier = Modifier.width(150.dp),
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge,
+                placeholder = {
+                    Text(
+                        option.placeholder,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = DeltaTor.Muted
+                    )
+                },
+                colors = tfColors
+            )
+        }
+    }
+}
+
+private fun logLevelColor(level: Char): Color = when (level) {
+    'E' -> DeltaTor.Red
+    'W' -> DeltaTor.AmberLight
+    'I' -> DeltaTor.GreenLight
+    else -> DeltaTor.Muted
+}
+
+@Composable
+private fun LogScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val lines by AppLog.lines.collectAsStateWithLifecycle()
+    val scroll = rememberScrollState()
+    var copied by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        AppLog.addObserver()
+        while (true) {
+            AppLog.flushIfDirty()
+            delay(120)
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { AppLog.removeObserver() }
+    }
+
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) {
+            scroll.animateScrollTo(scroll.maxValue)
+        }
+    }
+
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1500)
+            copied = false
+        }
+    }
+
+    fun copyLog() {
+        val text = lines.joinToString("\n") { it.raw }
+        if (text.isBlank()) return
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("DeltaTor connection log", text))
+        copied = true
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
+            )
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            ScreenTopBar("CONNECTION LOG", onBack) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (copied) {
+                                Brush.horizontalGradient(
+                                    listOf(DeltaTor.GreenDark, DeltaTor.Green),
+                                    RoundedCornerShape(12.dp)
+                                )
+                            } else {
+                                Brush.horizontalGradient(
+                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent),
+                                    RoundedCornerShape(12.dp)
+                                )
+                            },
+                            RoundedCornerShape(12.dp)
+                        )
+                        .clickable { copyLog() }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (copied) "COPIED" else "COPY",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = Color.White
+                    )
+                }
+            }
+
+            if (lines.isEmpty()) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "No log lines captured yet. Start a connection.",
+                        style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.4.sp),
+                        color = DeltaTor.Muted
+                    )
+                }
+            } else {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(scroll)
+                        .padding(horizontal = 22.dp, vertical = 10.dp)
+                ) {
+                    lines.forEach { entry ->
+                        Text(
+                            entry.raw,
+                            style = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                lineHeight = 13.sp,
+                                color = logLevelColor(entry.level)
+                            ),
+                            modifier = Modifier.padding(bottom = 3.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(18.dp))
+                }
+            }
+        }
     }
 }
