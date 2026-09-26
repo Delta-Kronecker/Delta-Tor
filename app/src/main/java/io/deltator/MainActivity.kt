@@ -443,8 +443,6 @@ private fun Header(
             .padding(horizontal = 22.dp, vertical = 18.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Logo()
-            Spacer(Modifier.width(12.dp))
             Text(
                 "DELTA",
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -475,39 +473,6 @@ private fun Header(
                     )
                 )
         )
-    }
-}
-
-@Composable
-private fun Logo() {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(RoundedCornerShape(13.dp))
-            .background(Brush.linearGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent)))
-            .border(1.dp, DeltaTor.AccentLight.copy(alpha = 0.35f), RoundedCornerShape(13.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        Canvas(Modifier.size(20.dp)) {
-            val stroke = 2.dp.toPx()
-            val r = size.minDimension / 2f - stroke
-            drawArc(
-                Brush.linearGradient(listOf(Color.White, DeltaTor.AccentLight)),
-                startAngle = 310f,
-                sweepAngle = 280f,
-                useCenter = false,
-                topLeft = Offset(center.x - r, center.y - r),
-                size = Size(r * 2, r * 2),
-                style = Stroke(stroke, cap = StrokeCap.Round)
-            )
-            drawLine(
-                Color.White,
-                Offset(center.x, center.y - r - 2.dp.toPx()),
-                Offset(center.x, center.y),
-                stroke,
-                StrokeCap.Round
-            )
-        }
     }
 }
 
