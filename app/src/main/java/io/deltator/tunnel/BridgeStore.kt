@@ -25,13 +25,20 @@ object BridgeStore {
     private const val CONNECT_TIMEOUT_MS = 20_000
     private const val READ_TIMEOUT_MS = 20_000
 
+    /**
+     * Bumped when the shape of the sources changed (webtunnel became two merged
+     * files), so an upgrade refreshes the cache once instead of keeping a list
+     * written by the old code.
+     */
+    private const val KEY_LAST_UPDATE = "bridges_last_update_v2"
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var updateInProgress = false
 
     private fun prefs(context: Context): android.content.SharedPreferences =
         context.getSharedPreferences("deltator", Context.MODE_PRIVATE)
 
-    private fun sources(): List<Pair<String, String>> = ParallelTorManager.BRIDGE_SOURCES
+    private fun sources(): Map<String, List<String>> = ParallelTorManager.BRIDGE_SOURCES
 
     fun dir(context: Context): File = File(context.filesDir, "bridges")
 
@@ -62,12 +69,12 @@ object BridgeStore {
         content.lineSequence().count { it.isNotBlank() && !it.trimStart().startsWith("#") }
 
     fun stats(context: Context): Map<String, Int> =
-        sources().associate { (name, _) ->
-            name to (lines(context, name)?.let { countLines(it) } ?: 0)
+        sources().keys.associateWith { name ->
+            lines(context, name)?.let { countLines(it) } ?: 0
         }
 
     fun lastUpdatedMillis(context: Context): Long =
-        prefs(context).getLong("bridges_last_update", 0L)
+        prefs(context).getLong(KEY_LAST_UPDATE, 0L)
 
     /** True when no bridge cache exists yet or it is older than a day. */
     fun shouldAutoUpdate(context: Context): Boolean {
@@ -76,20 +83,31 @@ object BridgeStore {
         return last == 0L || System.currentTimeMillis() - last >= UPDATE_INTERVAL_MS
     }
 
-    /** Download every bridge list and atomically replace the cached files. */
+    /**
+     * Download every bridge file and atomically replace the cached lists. A
+     * transport backed by several files (webtunnel) gets the merged result.
+     */
     private fun updateInternal(context: Context): Map<String, Int> {
         var ok = 0
-        sources().forEach { (name, url) ->
-            val body = downloadText(url)
-            if (body.isNotBlank()) {
-                saveLines(context, name, body)
+        sources().forEach { (name, urls) ->
+            val bodies = urls.mapNotNull { url ->
+                val body = downloadText(url)
+                if (body.isNotBlank()) {
+                    body
+                } else {
+                    Log.w(TAG, "Empty download for $url")
+                    null
+                }
+            }
+            if (bodies.isEmpty()) return@forEach
+            val merged = ParallelTorManager.mergeBridgeLists(bodies)
+            if (merged.isNotBlank()) {
+                saveLines(context, name, merged)
                 ok++
-            } else {
-                Log.w(TAG, "Empty download for $name")
             }
         }
         if (ok > 0) {
-            prefs(context).edit().putLong("bridges_last_update", System.currentTimeMillis()).apply()
+            prefs(context).edit().putLong(KEY_LAST_UPDATE, System.currentTimeMillis()).apply()
         }
         return stats(context)
     }

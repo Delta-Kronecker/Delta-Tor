@@ -39,16 +39,35 @@ object ParallelTorManager {
 
     private const val BRIDGE_BASE_URL =
         "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
+
+    /**
+     * Remote bridge lists per transport. webtunnel is published as two files and
+     * both are used: they are merged into a single list before anything is handed
+     * to Tor.
+     */
+    val BRIDGE_SOURCES: Map<String, List<String>> = mapOf(
+        TRANSPORT_VANILLA to listOf("$BRIDGE_BASE_URL/vanilla_tested.txt"),
+        TRANSPORT_OBFS4 to listOf("$BRIDGE_BASE_URL/obfs4_tested.txt"),
+        TRANSPORT_WEBTUNNEL to listOf(
+            "$BRIDGE_BASE_URL/webtunnel_tested.txt",
+            "$BRIDGE_BASE_URL/webtunnel_ipv6_tested.txt"
+        )
+    )
+
+    /**
+     * The same files are bundled in the APK under assets/bridges/, so a connect
+     * works on the first launch and while the network is unavailable. The asset
+     * name is the last path segment of its URL, so the two lists can never drift
+     * apart.
+     */
+    const val BUNDLED_ASSET_DIR = "bridges"
+    fun bundledAssetName(url: String): String = url.substringAfterLast('/')
+
     private const val RACE_TIMEOUT_MS = 300_000L
     private const val POLL_INTERVAL_MS = 1_000L
     private const val PORT_FREE_TIMEOUT_MS = 15_000L
     private const val PORT_FREE_POLL_MS = 250L
 
-    val BRIDGE_SOURCES = listOf(
-        TRANSPORT_VANILLA to "$BRIDGE_BASE_URL/vanilla_tested.txt",
-        TRANSPORT_OBFS4 to "$BRIDGE_BASE_URL/obfs4_tested.txt",
-        TRANSPORT_WEBTUNNEL to "$BRIDGE_BASE_URL/webtunnel_tested.txt"
-    )
 
     private val runnersLock = Any()
     @Volatile private var runners = mutableMapOf<String, TorRunner>()
@@ -253,15 +272,84 @@ object ParallelTorManager {
         return ports.all { awaitPortFree(host, it) }
     }
 
-    /** Read the cached bridge lists (falling back to a fresh download + cache). */
+    /**
+     * Read the bridge list for every transport. Preference order:
+     * disk cache -> bundled assets -> network. A transport may be backed by
+     * several files, which are merged by [mergeBridgeLists] into one list.
+     */
     private fun fetchBridgeLines(context: Context): Map<String, String> {
-        val lines = BRIDGE_SOURCES.associate { (name, url) ->
-            name to (BridgeStore.lines(context, name) ?: downloadText(url).also { BridgeStore.saveLines(context, name, it) })
+        val lines = LinkedHashMap<String, String>()
+        BRIDGE_SOURCES.forEach { (name, urls) ->
+            val cached = BridgeStore.lines(context, name)
+            val content = when {
+                !cached.isNullOrBlank() -> cached
+                else -> readBundled(context, urls)?.also { BridgeStore.saveLines(context, name, it) }
+                    ?: downloadLists(urls).also { if (it.isNotBlank()) BridgeStore.saveLines(context, name, it) }
+            }
+            lines[name] = content
         }
         // Let the UI (exit-node ranking, bridge counts) see the cache we just wrote.
         BridgeStore.refreshState(context)
         return lines
     }
+
+    /** The bundled copies of every file this transport is built from. */
+    private fun readBundled(context: Context, urls: List<String>): String? {
+        val bodies = urls.mapNotNull { url ->
+            val asset = "$BUNDLED_ASSET_DIR/${bundledAssetName(url)}"
+            try {
+                context.assets.open(asset).use { it.readBytes().toString(Charsets.UTF_8) }
+                    .takeIf { it.isNotBlank() }
+                    ?.also { Log.i(TAG, "bundled $asset (${it.length} chars)") }
+            } catch (e: Exception) {
+                Log.w(TAG, "no bundled $asset: ${e.message}")
+                null
+            }
+        }
+        return mergeBridgeLists(bodies).ifBlank { null }
+    }
+
+    private fun downloadLists(urls: List<String>): String {
+        val bodies = urls.mapNotNull { url ->
+            val text = runCatching { downloadText(url) }.getOrElse {
+                Log.e(TAG, "download failed for $url: ${it.message}")
+                ""
+            }
+            text.takeIf { it.isNotBlank() }
+        }
+        return mergeBridgeLists(bodies)
+    }
+
+    /**
+     * Merge several bridge files into one list, keeping every bridge exactly once
+     * (identified by its fingerprint) and alternating between the sources so a
+     * transport backed by two files still draws from both once Tor's per-runner
+     * line cap is applied. Comment and blank lines are dropped.
+     */
+    fun mergeBridgeLists(bodies: List<String>): String {
+        val lists = bodies.map { body ->
+            body.lines().map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                .map { it to BridgeMemory.fingerprintOf(it) }
+        }
+        if (lists.isEmpty()) return ""
+        if (lists.size == 1) return lists[0].joinToString("\n") { it.first }
+
+        val seen = HashSet<String>()
+        val merged = mutableListOf<String>()
+        val longest = lists.maxOf { it.size }
+        for (i in 0 until longest) {
+            lists.forEach { list ->
+                val (line, fp) = list.getOrNull(i) ?: return@forEach
+                if (fp != null && !seen.add(fp)) return@forEach
+                if (fp == null && !seen.add(line)) return@forEach
+                merged += line
+            }
+        }
+        Log.i(TAG, "merged ${lists.size} bridge files into ${merged.size} unique bridge(s)")
+        return merged.joinToString("\n")
+    }
+
 
     private fun downloadText(url: String): String {
         Log.i(TAG, "Downloading $url")
