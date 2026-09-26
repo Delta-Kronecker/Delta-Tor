@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.BridgeCountries
+import io.deltator.tunnel.BridgeMemory
 import io.deltator.tunnel.ExitLocator
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
@@ -108,10 +109,11 @@ class TorVpnService : VpnService() {
         TorSocksBridge.debugLogging = Config.debugMode
         TorSocksBridge.domainRouter = io.deltator.tunnel.DomainRouter.DISABLED
 
-        // Step 1: Fetch bridge lists and race vanilla / obfs4 / webtunnel.
+        // Step 1: Fetch bridge lists and race vanilla / obfs4 / webtunnel, plus a
+        // fourth "memory" runner on the bridges that provably worked last time.
         // Monitor each transport's bootstrap progress; the first to reach 100%
         // wins and the losing transports are stopped by the manager.
-        Log.i(TAG, "Racing vanilla / obfs4 / webtunnel transports")
+        Log.i(TAG, "Racing vanilla / obfs4 / webtunnel${if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""} transports")
         updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
 
         val w = try {

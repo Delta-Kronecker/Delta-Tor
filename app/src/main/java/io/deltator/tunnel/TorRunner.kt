@@ -90,6 +90,46 @@ class TorRunner(
     fun logLines(): List<String> = synchronized(recentLog) { recentLog.toList() }
 
     /**
+     * Fingerprints of the bridges that actually worked for this run: Tor only
+     * logs a bridge descriptor once the pluggable-transport handshake and the
+     * descriptor download both succeeded, which makes it the one reliable
+     * "this bridge is alive" signal in the log.
+     */
+    private val healthyBridges = LinkedHashSet<String>()
+
+    fun healthyBridges(): Set<String> = synchronized(healthyBridges) { healthyBridges.toSet() }
+
+    // Matches: new bridge descriptor 'NAME' (cached): $FINGERPRINT~NAME [...]
+    // and the "(fresh): $" variant. Mirrors the Windows client's log scan.
+    private fun noteBridgeDescriptor(line: String) {
+        if (!line.contains("bridge descriptor", ignoreCase = true)) return
+        var i = line.indexOf(CACHED_MARKER)
+        if (i < 0) {
+            i = line.indexOf(FRESH_MARKER)
+            if (i < 0) return
+            i += FRESH_MARKER.length
+        } else {
+            i += CACHED_MARKER.length
+        }
+        val hex = StringBuilder()
+        while (i < line.length && line[i] != '~' && hex.length < 40) {
+            val c = line[i]
+            if (c.isLetterOrDigit()) {
+                hex.append(c)
+                i++
+            } else if (c == '$') {
+                i++
+            } else {
+                break
+            }
+        }
+        val fp = hex.toString()
+        if (fp.length == 32 || fp.length == 40) {
+            synchronized(healthyBridges) { healthyBridges.add(fp) }
+        }
+    }
+
+    /**
      * Start the PT (if needed) and the Tor process for this transport.
      * Bridge lines are capped to [MAX_BRIDGE_LINES] to keep torrc manageable.
      */
@@ -100,6 +140,7 @@ class TorRunner(
         failed = null
         started = true
         synchronized(recentLog) { recentLog.clear() }
+        synchronized(healthyBridges) { healthyBridges.clear() }
 
         try {
             val cleanLines = bridgeLines.lines()
@@ -113,9 +154,12 @@ class TorRunner(
             }
 
             val isVanilla = name == "vanilla"
+            // Only real pluggable-transport names count. The memory runner mixes
+            // plain `ip:port fp` lines with prefixed ones, and a bare address as
+            // the first token must not be mistaken for a CMETHOD.
             val transports = if (isVanilla) mutableListOf<String>() else
-                cleanLines.map { it.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: "" }
-                    .filter { it.isNotEmpty() }
+                cleanLines.mapNotNull { it.split(WHITESPACE).firstOrNull()?.lowercase() }
+                    .filter { it in PLUGGABLE_TRANSPORTS }
                     .distinct()
                     .toMutableList()
 
@@ -161,6 +205,7 @@ class TorRunner(
                         noteLog("Tor: $line")
                         val up = line!!
                         Log.d(tag, up)
+                        noteBridgeDescriptor(up)
                         val match = Regex("Bootstrapped (\\d+)%").find(up)
                         if (match != null) {
                             val pct = match.groupValues[1].toInt()
@@ -421,5 +466,9 @@ class TorRunner(
 
     companion object {
         private const val MAX_BRIDGE_LINES = 100
+        private const val CACHED_MARKER = "(cached): \$"
+        private const val FRESH_MARKER = "(fresh): \$"
+        private val WHITESPACE = Regex("\\s+")
+        private val PLUGGABLE_TRANSPORTS = setOf("obfs4", "webtunnel", "snowflake", "meek_lite", "meek")
     }
 }
