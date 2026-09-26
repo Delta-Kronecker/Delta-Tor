@@ -20,9 +20,11 @@ class DeltaTorApp : Application() {
         super.onCreate()
         Config.init(this)
         TorrcSettings.init(this)
+        ReleaseChecker.init(this)
         createNotificationChannels()
         BridgeStore.refreshState(this)
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
+        appScope.launch { ReleaseChecker.check(this@DeltaTorApp) }
     }
 
     private fun createNotificationChannels() {
@@ -37,6 +39,17 @@ class DeltaTorApp : Application() {
                 setShowBadge(false)
             }
             manager.createNotificationChannel(vpn)
+
+            manager.createNotificationChannel(
+                NotificationChannel(
+                    TorVpnService.CHANNEL_UPDATES,
+                    getString(R.string.channel_updates),
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = getString(R.string.channel_updates_desc)
+                    setShowBadge(true)
+                }
+            )
         }
     }
 }

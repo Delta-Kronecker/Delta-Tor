@@ -34,6 +34,7 @@ class TorVpnService : VpnService() {
         const val ACTION_START_VPN = "io.deltator.START_VPN"
         const val ACTION_STOP_VPN = "io.deltator.STOP_VPN"
         const val CHANNEL_VPN_STATUS = "vpn_status"
+        const val CHANNEL_UPDATES = "deltator_updates"
         const val NOTIFICATION_ID = 1
 
         private const val TAG = "TorVpnService"

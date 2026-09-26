@@ -222,7 +222,9 @@ private fun MainScreen(
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
+    val release by AppState.releaseState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
+    var dismissedRelease by remember { mutableStateOf(ReleaseChecker.dismissedVersion()) }
 
     val connecting = state.connecting
     val connected = state.connected
@@ -242,6 +244,20 @@ private fun MainScreen(
             onOpenSettings = onOpenSettings,
             modifier = Modifier.align(Alignment.TopCenter)
         )
+
+        if (release.newer && release.latestVersion.isNotBlank() && release.latestVersion != dismissedRelease) {
+            UpdateBanner(
+                version = release.latestVersion,
+                onOpen = { ReleaseChecker.openInBrowser(LocalContext.current, release.latestUrl) },
+                onDismiss = {
+                    dismissedRelease = release.latestVersion
+                    ReleaseChecker.dismiss()
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = 98.dp)
+            )
+        }
 
         StateBlock(
             connecting = connecting,
@@ -1181,6 +1197,66 @@ private fun ScreenTopBar(
 }
 
 @Composable
+private fun UpdateBanner(
+    version: String,
+    onOpen: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 22.dp)
+            .clip(shape)
+            .background(
+                Brush.horizontalGradient(listOf(Color(0xFF2A2140), DeltaTor.Surface)),
+                shape
+            )
+            .border(1.dp, DeltaTor.Accent.copy(alpha = 0.45f), shape)
+            .clickable { onOpen() }
+            .padding(horizontal = 14.dp, vertical = 12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(9.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(DeltaTor.Green)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "NEW RELEASE v$version",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.3.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.GreenLight
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                "DISMISS",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.1.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.Muted,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onDismiss() }
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(
+            "An update is available \u00b7 tap anywhere to open on GitHub",
+            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+            color = DeltaTor.Muted
+        )
+    }
+}
+
+@Composable
 private fun DividerLine() {
     Box(
         Modifier
@@ -1344,8 +1420,7 @@ private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
                             .clip(RoundedCornerShape(12.dp))
                             .background(
                                 Brush.horizontalGradient(
-                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent),
-                                    RoundedCornerShape(12.dp)
+                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent)
                                 ),
                                 RoundedCornerShape(12.dp)
                             )
@@ -1502,15 +1577,9 @@ private fun LogScreen(onBack: () -> Unit) {
                         .clip(RoundedCornerShape(12.dp))
                         .background(
                             if (copied) {
-                                Brush.horizontalGradient(
-                                    listOf(DeltaTor.GreenDark, DeltaTor.Green),
-                                    RoundedCornerShape(12.dp)
-                                )
+                                Brush.horizontalGradient(listOf(DeltaTor.GreenDark, DeltaTor.Green))
                             } else {
-                                Brush.horizontalGradient(
-                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent),
-                                    RoundedCornerShape(12.dp)
-                                )
+                                Brush.horizontalGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent))
                             },
                             RoundedCornerShape(12.dp)
                         )

@@ -3,4 +3,6 @@
     <string name="app_name">DeltaTor</string>
     <string name="channel_vpn_status">VPN Status</string>
     <string name="channel_vpn_status_desc">Shows current DeltaTor connection status</string>
+    <string name="channel_updates">DeltaTor Updates</string>
+    <string name="channel_updates_desc">Alerts when a new DeltaTor release is published</string>
 </resources>
