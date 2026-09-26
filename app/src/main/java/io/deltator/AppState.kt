@@ -18,7 +18,12 @@ object AppState {
         val transport: String = "",
         val error: String? = null,
         val txBytes: Long = 0,
-        val rxBytes: Long = 0
+        val rxBytes: Long = 0,
+        val txSpeed: Float = 0f,
+        val rxSpeed: Float = 0f,
+        val connectedAtMillis: Long = 0,
+        val exitCode: String = "",
+        val exitName: String = ""
     )
 
     data class BridgeState(
