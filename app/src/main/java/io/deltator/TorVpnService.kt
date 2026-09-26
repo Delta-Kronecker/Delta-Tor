@@ -306,7 +306,7 @@ class TorVpnService : VpnService() {
 
     private fun formatBytes(bytes: Long): String {
         if (bytes < 1) return "0 B"
-        val units = arrayOf("B", "KB", "MB", "GB", "TB") = arrayOf("B", "KB", "MB", "GB", "TB")
+        val units = arrayOf("B", "KB", "MB", "GB", "TB")
         var v = bytes.toFloat()
         var idx = 0
         while (v >= 1024 && idx < units.size - 1) {
