@@ -15,7 +15,7 @@ import android.content.SharedPreferences
 object TorrcSettings {
 
     private const val PREFS = "deltator"
-    private const val KEY_TEMPLATE = "torrc_template_v2"
+    private const val KEY_TEMPLATE = "torrc_template_v3"
     private lateinit var prefs: SharedPreferences
 
     val defaultTemplate: String = """
@@ -27,8 +27,12 @@ object TorrcSettings {
         #   - Log path               : app reads stdout for the in-app log.
         # Bridges are appended automatically on connect.
 
-        # --- Local proxies (VPN tunnel uses its own SocksPort; extra listeners kept) ---
-        CookieAuthentication 1
+        # --- Local proxy policy ---
+        # The SOCKS5 listener is set by the app and is the only listener:
+        # three Tor processes (vanilla / obfs4 / webtunnel) run in parallel, so
+        # any hard-coded port here would be claimed by the first one to start
+        # and make the other two fail. Never add fixed SocksPort /
+        # HTTPTunnelPort / DNSPort / ControlPort lines to this template.
         SocksPolicy accept 127.0.0.1
         SocksPolicy reject *
 
@@ -89,13 +93,6 @@ object TorrcSettings {
         MaxClientCircuitsPending 128
         CircuitPriorityHalflife 5
         SocksTimeout 120
-
-        # --- socks listeners (in addition to the forced tunnel SocksPort) ---
-        SocksPort 127.0.0.1:9350 IsolateSOCKSAuth
-        SocksPort 127.0.0.1:9352 NoIsolateSOCKSAuth
-        HTTPTunnelPort 127.0.0.1:8350
-        DNSPort 127.0.0.1:63530
-        ControlPort 127.0.0.1:9351
     """.trimIndent()
 
     fun init(context: Context) {
