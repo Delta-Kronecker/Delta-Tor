@@ -4,6 +4,11 @@ on:
   push:
     tags: [ 'v*' ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to build, e.g. v2.0.0 (workflow_dispatch only; blank on tag push)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -32,6 +37,18 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;29.0.14206865"
 
+      - name: Create or update release tag
+        # Manual runs build from the branch HEAD; point the tag input there.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --force --tags
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG" --force
+
       - name: Make gradlew executable
         run: chmod +x gradlew
 
@@ -55,18 +72,19 @@ jobs:
         run: |
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           echo "Using apksigner: $APKSIGNER"
-          cp app/build/outputs/apk/release/app-release.apk "deltator-${GITHUB_REF_NAME}.apk"
-          "$APKSIGNER" verify --verbose --print-certs "deltator-${GITHUB_REF_NAME}.apk"
+          cp app/build/outputs/apk/release/app-release.apk "deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk"
+          "$APKSIGNER" verify --verbose --print-certs "deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk"
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
           name: deltator-release-apk
-          path: deltator-${{ github.ref_name }}.apk
+          path: deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk
           if-no-files-found: error
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: deltator-${{ github.ref_name }}.apk
+          tag_name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
+          files: deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk
           generate_release_notes: true
