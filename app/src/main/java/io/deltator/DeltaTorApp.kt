@@ -20,7 +20,6 @@ class DeltaTorApp : Application() {
         super.onCreate()
         Config.init(this)
         TorrcSettings.init(this)
-        ReleaseChecker.init(this)
         createNotificationChannels()
         BridgeStore.refreshState(this)
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }

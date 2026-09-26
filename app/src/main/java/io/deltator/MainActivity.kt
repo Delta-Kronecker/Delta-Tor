@@ -221,7 +221,6 @@ private fun MainScreen(
     val release by AppState.releaseState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
     val context = LocalContext.current
-    var dismissedRelease by remember { mutableStateOf("") }
 
     val connecting = state.connecting
     val connected = state.connected
@@ -241,11 +240,10 @@ private fun MainScreen(
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
-        if (release.newer && release.latestVersion.isNotBlank() && release.latestVersion != dismissedRelease) {
+        if (release.newer && release.latestVersion.isNotBlank()) {
             UpdateBanner(
                 version = release.latestVersion,
                 onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
-                onDismiss = { dismissedRelease = release.latestVersion },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset(y = 98.dp)
@@ -1202,7 +1200,6 @@ private fun ScreenTopBar(
 private fun UpdateBanner(
     version: String,
     onOpen: () -> Unit,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
@@ -1234,19 +1231,6 @@ private fun UpdateBanner(
                     fontWeight = FontWeight.Bold
                 ),
                 color = DeltaTor.GreenLight
-            )
-            Spacer(Modifier.weight(1f))
-            Text(
-                "DISMISS",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    letterSpacing = 1.1.sp,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = DeltaTor.Muted,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { onDismiss() }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
         }
         Spacer(Modifier.height(5.dp))
