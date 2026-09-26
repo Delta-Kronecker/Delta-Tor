@@ -2048,10 +2048,11 @@ private fun LogScreen(onBack: () -> Unit) {
                         .weight(1f),
                     contentAlignment = Alignment.Center
                 ) {
+                    val activeTransport = transport
                     Text(
                         when {
                             lines.isEmpty() -> "No log lines captured yet. Start a connection."
-                            transport != null -> "No ${transport.uppercase()} lines captured yet."
+                            activeTransport != null -> "No ${activeTransport.uppercase()} lines captured yet."
                             else -> "No entries for this level."
                         },
                         style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.4.sp),
