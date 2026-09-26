@@ -70,7 +70,9 @@ class TorVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        teardown()
+        // Teardown blocks until every Tor/lyrebird process has exited and its
+        // ports are released, so it must never run on the main thread.
+        Thread({ teardown() }, "deltator-teardown").apply { isDaemon = true }.start()
         super.onDestroy()
     }
 
@@ -139,6 +141,12 @@ class TorVpnService : VpnService() {
 
         // Step 2: Start the SOCKS5 bridge between TUN and the winning Tor instance.
         // The bridge and Tor stay alive across VPN stop/start.
+        // The losing runners were killed by race(); their processes are gone by
+        // now, but wait for the kernel to release the ports anyway so the bind
+        // below cannot lose a race against a dying socket.
+        withContext(Dispatchers.IO) {
+            ParallelTorManager.awaitPortFree(proxyHost, proxyPort)
+        }
         val bridgeResult = TorSocksBridge.start(
             torSocksPort = w.torSocksPort,
             torHost = "127.0.0.1",
@@ -383,7 +391,9 @@ class TorVpnService : VpnService() {
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
         try { TorSocksBridge.stop() } catch (_: Exception) {}
-        try { ParallelTorManager.stopAll() } catch (_: Exception) {}
+        // Blocks until every Tor/lyrebird process is really gone and the ports are
+        // released, so a connect right after a stop cannot hit EADDRINUSE.
+        try { ParallelTorManager.stopAllAndWait(Config.proxyPort) } catch (_: Exception) {}
         activeRunner = null
         try { wakeLock?.release() } catch (_: Exception) {}
         wakeLock = null

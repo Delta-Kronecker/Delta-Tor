@@ -437,35 +437,46 @@ class TorRunner(
 
     /**
      * Stop the Tor and lyrebird processes for this instance.
+     *
+     * This blocks until the processes are really gone: a listening socket is only
+     * released when its process exits, which lags destroy()/destroyForcibly().
+     * Callers that immediately rebind the same port depend on that guarantee,
+     * so a stubborn process is reported instead of being left behind.
      */
+    @Synchronized
     fun stop() {
-        torProcess?.let { p ->
-            try {
-                p.destroy()
-                Thread.sleep(500)
-                if (p.isAlive) p.destroyForcibly()
-            } catch (e: Exception) {
-                Log.e(tag, "Error stopping Tor", e)
-            }
-        }
+        val tor = torProcess
+        val bird = lyrebirdProcess
         torProcess = null
-
-        lyrebirdProcess?.let { p ->
-            try {
-                try { p.outputStream.close() } catch (_: Exception) {}
-                Thread.sleep(500)
-                if (p.isAlive) p.destroyForcibly()
-            } catch (e: Exception) {
-                Log.e(tag, "Error stopping lyrebird", e)
-            }
-        }
         lyrebirdProcess = null
+
+        terminate(tor, "Tor")
+        terminate(bird, "lyrebird")
+
         lyrebirdCmethods.clear()
         ready = false
     }
 
+    private fun terminate(p: Process?, what: String) {
+        if (p == null) return
+        try {
+            p.destroy()
+            if (!p.waitForExit(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                Log.w(tag, "$what ignored SIGTERM, forcing kill")
+                p.destroyForcibly()
+                if (!p.waitForExit(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    Log.e(tag, "$what still alive after SIGKILL (pid ${p.pid()})")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Error stopping $what", e)
+            try { p.destroyForcibly() } catch (_: Exception) {}
+        }
+    }
+
     companion object {
         private const val MAX_BRIDGE_LINES = 100
+        private const val TERMINATE_TIMEOUT_MS = 2_000L
         private const val CACHED_MARKER = "(cached): \$"
         private const val FRESH_MARKER = "(fresh): \$"
         private val WHITESPACE = Regex("\\s+")
