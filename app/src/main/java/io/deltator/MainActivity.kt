@@ -761,24 +761,7 @@ private fun BottomPanel(
             Spacer(Modifier.height(12.dp))
         }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StatCard(
-                label = "SPEED DOWN",
-                value = if (state.connected) "${formatBytes(state.rxSpeed.toLong())}/s" else "--",
-                accent = DeltaTor.Green,
-                up = false,
-                modifier = Modifier.weight(1f)
-            )
-            StatCard(
-                label = "SPEED UP",
-                value = if (state.connected) "${formatBytes(state.txSpeed.toLong())}/s" else "--",
-                accent = DeltaTor.Accent,
-                up = true,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        Spacer(Modifier.height(10.dp))
+        // Live speed lives in the notification only.
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatCard(
