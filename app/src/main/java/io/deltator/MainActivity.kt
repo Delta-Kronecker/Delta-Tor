@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1338,7 +1339,112 @@ private fun SettingsCardHeader(
 }
 
 @Composable
-private fun ExitCountryRow(
+/**
+ * The exit-country picker, kept in its own composable so that selecting a
+ * country only recomposes this card. Reading the selection in the parent screen
+ * would invalidate the whole ADVANCED page - including the large editable torrc
+ * field - on every tap.
+ */
+@Composable
+private fun ExitNodeCard(countries: List<ExitCountry>) {
+    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
+    val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
+
+    SettingsCardHeader("EXIT NODE", "Optional exit countries \u00b7 pick as many as you like")
+    SettingsCard {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                when {
+                    selectedCodes.isEmpty() -> "Any location \u00b7 default"
+                    selectedCodes.size == 1 -> {
+                        val only = selectedCodes.first()
+                        "${flagEmoji(only)}  ${exitNames[only].orEmpty()}"
+                    }
+                    else -> "${selectedCodes.size} countries selected"
+                },
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = DeltaTor.Text,
+                modifier = Modifier.weight(1f)
+            )
+            if (selectedCodes.isNotEmpty()) {
+                Text(
+                    "CLEAR",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.Red,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { ExitNodes.clear() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+            }
+            Text(
+                "NEXT CONNECT",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.1.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.AccentLight
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Tap to add or remove a country \u00b7 written to torrc as " +
+                "ExitNodes {us},{nl},\u2026 with StrictNodes 1.",
+            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+            color = DeltaTor.Muted
+        )
+        if (countries.isEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Loading country list \u2026",
+                style = MaterialTheme.typography.bodySmall,
+                color = DeltaTor.Muted.copy(alpha = 0.75f)
+            )
+        } else {
+            Spacer(Modifier.height(6.dp))
+            DividerLine()
+            // 249 countries in a plain scrolling Column are all composed, measured
+            // and drawn the moment the page opens, which is what made it stutter.
+            // A height-bounded LazyColumn only builds the rows that are on screen.
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(340.dp),
+                contentPadding = PaddingValues(vertical = 2.dp)
+            ) {
+                item(key = "any") {
+                    ExitNodeRow(
+                        emoji = "\uD83C\uDF10",
+                        name = "Any location \u00b7 default",
+                        code = "--",
+                        selected = selectedCodes.isEmpty(),
+                        onClick = { ExitNodes.clear() }
+                    )
+                }
+                items(countries.size, key = { countries[it].code }) { i ->
+                    val c = countries[i]
+                    ExitNodeRow(
+                        emoji = remember(c.code) { flagEmoji(c.code) },
+                        name = c.name,
+                        code = c.code,
+                        selected = c.code in selectedCodes,
+                        onClick = { ExitNodes.toggle(c.code, c.name) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExitNodeRow(
     emoji: String,
     name: String,
     code: String,
@@ -1422,8 +1528,6 @@ private fun SettingsScreen(
     var templateText by remember { mutableStateOf(TorrcSettings.template()) }
     var saved by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
-    val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
 
     // Plain country list from the bundled table. Recommended countries first,
@@ -1554,92 +1658,7 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(22.dp))
 
-            SettingsCardHeader("EXIT NODE", "Optional exit countries \u00b7 pick as many as you like")
-            SettingsCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        when {
-                            selectedCodes.isEmpty() -> "Any location \u00b7 default"
-                            selectedCodes.size == 1 -> {
-                                val only = selectedCodes.first()
-                                "${flagEmoji(only)}  ${exitNames[only].orEmpty()}"
-                            }
-                            else -> "${selectedCodes.size} countries selected"
-                        },
-                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                        color = DeltaTor.Text,
-                        modifier = Modifier.weight(1f)
-                    )
-                    if (selectedCodes.isNotEmpty()) {
-                        Text(
-                            "CLEAR",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.1.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = DeltaTor.Red,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .clickable { ExitNodes.clear() }
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    Text(
-                        "NEXT CONNECT",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 1.1.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = DeltaTor.AccentLight
-                    )
-                }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "Tap to add or remove a country \u00b7 written to torrc as " +
-                        "ExitNodes {us},{nl},\u2026 with StrictNodes 1.",
-                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                    color = DeltaTor.Muted
-                )
-                if (countries.isEmpty()) {
-                    Spacer(Modifier.height(10.dp))
-                    Text(
-                        "Loading country list \u2026",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = DeltaTor.Muted.copy(alpha = 0.75f)
-                    )
-                } else {
-                    Spacer(Modifier.height(6.dp))
-                    DividerLine()
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 340.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(vertical = 2.dp)
-                    ) {
-                        ExitCountryRow(
-                            emoji = "\uD83C\uDF10",
-                            name = "Any location \u00b7 default",
-                            code = "--",
-                            selected = selectedCodes.isEmpty(),
-                            onClick = { ExitNodes.clear() }
-                        )
-                        countries.forEach { c ->
-                            ExitCountryRow(
-                                emoji = flagEmoji(c.code),
-                                name = c.name,
-                                code = c.code,
-                                selected = c.code in selectedCodes,
-                                onClick = { ExitNodes.toggle(c.code, c.name) }
-                            )
-                        }
-                    }
-                }
-            }
+            ExitNodeCard(countries)
 
             Spacer(Modifier.height(22.dp))
 
