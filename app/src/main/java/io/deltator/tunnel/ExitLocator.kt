@@ -4,10 +4,10 @@ import android.content.Context
 import io.deltator.util.AppLog as Log
 import java.io.BufferedReader
 import java.net.HttpURLConnection
-import java.net.HttpsURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URL
+import javax.net.ssl.HttpsURLConnection
 
 /** Where the traffic leaves the Tor network. */
 data class ExitInfo(
