@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -96,6 +97,7 @@ import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
 import io.deltator.util.LogEntry
+import io.deltator.util.LogSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -1700,6 +1702,7 @@ private fun logLevelColor(level: Char): Color = when (level) {
     'E' -> DeltaTor.Red
     'W' -> DeltaTor.AmberLight
     'I' -> DeltaTor.GreenLight
+    '=' -> DeltaTor.AccentLight
     else -> DeltaTor.Muted
 }
 
@@ -1714,19 +1717,45 @@ private fun levelLabel(level: Char): String = when (level) {
 private const val LOG_SEVERITY_ORDER = "EWIDV"
 
 private sealed interface LogNode {
-    data class Header(val level: Char, val count: Int) : LogNode
+    data class SessionHeader(val id: Int, val title: String, val count: Int) : LogNode
+    data class Header(val level: Char, val count: Int, val owner: Int) : LogNode
     data class Row(val entry: LogEntry) : LogNode
 }
 
-/** Chronological log grouped into discrete per-severity sections. */
-private fun groupLog(lines: List<LogEntry>, filter: Char?): List<LogNode> {
+/**
+ * Chronological log, split into one section per connect attempt so failures can
+ * be read per connection instead of being interleaved.
+ */
+private fun groupLog(lines: List<LogEntry>, sessions: List<LogSession>, filter: Char?): List<LogNode> {
     val out = ArrayList<LogNode>()
-    for (level in LOG_SEVERITY_ORDER) {
-        if (filter != null && filter != level) continue
-        val sel = lines.filter { it.level == level }
-        if (sel.isEmpty()) continue
-        out.add(LogNode.Header(level, sel.size))
-        sel.forEach { out.add(LogNode.Row(it)) }
+
+    fun addSections(section: List<LogEntry>, sid: Int) {
+        for (level in LOG_SEVERITY_ORDER) {
+            if (filter != null && filter != level) continue
+            val sel = section.filter { it.level == level }
+            if (sel.isEmpty()) continue
+            out.add(LogNode.Header(level, sel.size, sid))
+            sel.forEach { out.add(LogNode.Row(it)) }
+        }
+    }
+
+    if (lines.none { it.session != 0 }) {
+        addSections(lines, 0)
+        return out
+    }
+
+    // Oldest session first; the list is reverse-rendered so newest ends up on top.
+    val ids = lines.map { it.session }.distinct()
+    ids.forEach { sid ->
+        val section = lines.filter { it.session == sid }
+        if (filter != null && section.none { it.level == filter }) return@forEach
+        val meta = sessions.firstOrNull { it.id == sid }
+        val title = listOfNotNull(
+            meta?.label,
+            meta?.outcome
+        ).joinToString(" \u00b7 ").ifBlank { if (sid == 0) "startup" else "session $sid" }
+        out.add(LogNode.SessionHeader(sid, title, section.size))
+        addSections(section, sid)
     }
     return out
 }
@@ -1798,12 +1827,58 @@ private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifie
 }
 
 @Composable
+private fun LogSessionHeader(id: Int, title: String, count: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(DeltaTor.Accent.copy(alpha = 0.16f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(DeltaTor.AccentLight)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "CONNECTION #$id",
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.6.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = DeltaTor.AccentLight
+        )
+        if (title.isNotBlank()) {
+            Spacer(Modifier.width(8.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+                color = DeltaTor.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "\u00b7 $count lines",
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+            color = DeltaTor.Muted
+        )
+    }
+}
+
+@Composable
 private fun LogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lines by AppLog.lines.collectAsStateWithLifecycle()
+    val sessions by AppLog.sessions.collectAsStateWithLifecycle()
     var copied by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf<Char?>(null) }
-    val nodes = remember(lines, filter) { groupLog(lines, filter) }
+    val nodes = remember(lines, sessions, filter) { groupLog(lines, sessions, filter) }
 
     LaunchedEffect(Unit) {
         AppLog.addObserver()
@@ -1915,7 +1990,15 @@ private fun LogScreen(onBack: () -> Unit) {
                 ) {
                     reversed.forEach { node ->
                         when (node) {
-                            is LogNode.Header -> item(key = "h-${node.level}") {
+                            is LogNode.SessionHeader -> item(key = "s-${node.id}") {
+                                LogSessionHeader(
+                                    id = node.id,
+                                    title = node.title,
+                                    count = node.count,
+                                    modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                                )
+                            }
+                            is LogNode.Header -> item(key = "h-${node.owner}-${node.level}") {
                                 LogGroupHeader(
                                     level = node.level,
                                     count = node.count,

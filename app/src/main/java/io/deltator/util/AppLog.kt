@@ -9,7 +9,26 @@ import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
-data class LogEntry(val id: Long, val raw: String, val level: Char)
+data class LogEntry(
+    val id: Long,
+    val raw: String,
+    val level: Char,
+    /** Connection session this line belongs to (0 = before the first connection). */
+    val session: Int = 0
+)
+
+/**
+ * One connect attempt. Every log line is stamped with the session it belongs to
+ * so the log screen can show each connection separately, with its own header and
+ * outcome.
+ */
+data class LogSession(
+    val id: Int,
+    val label: String,
+    val startedAtMillis: Long,
+    /** Set when the attempt finishes, e.g. "connected via obfs4" or the failure reason. */
+    val outcome: String? = null
+)
 
 /**
  * In-memory log buffer that wraps [android.util.Log].
@@ -23,12 +42,43 @@ data class LogEntry(val id: Long, val raw: String, val level: Char)
  * — no other code changes needed.
  */
 object AppLog {
-    private const val MAX_LINES = 500
+    private const val MAX_LINES = 1500
     private val nextId = AtomicLong(0)
     private val buffer = ArrayDeque<LogEntry>()
 
     /** When true, sensitive config details are redacted from the in-app log buffer. */
     @Volatile var redactSensitive = false
+
+    // --- connect sessions -----------------------------------------------------
+    private val sessionLock = Any()
+    private val sessionIds = AtomicLong(0)
+    private val _sessions = MutableStateFlow<List<LogSession>>(emptyList())
+    val sessions: StateFlow<List<LogSession>> = _sessions.asStateFlow()
+    private val currentSession = AtomicLong(0)
+
+    /**
+     * Begin a new connection session. Subsequent lines are tagged with its id
+     * until the next [beginSession]. The returned id is stamped on every entry.
+     */
+    fun beginSession(label: String): Int = synchronized(sessionLock) {
+        val id = sessionIds.incrementAndGet().toInt()
+        currentSession.set(id.toLong())
+        _sessions.value = (_sessions.value + LogSession(id, label, System.currentTimeMillis())).takeLast(12)
+        append('=', "DeltaTor", "=== connection #$id \u00b7 $label ===")
+        id
+    }
+
+    /** Mark the current session as finished and record the outcome on its header. */
+    fun endSession(outcome: String) = synchronized(sessionLock) {
+        val id = currentSession.get().toInt()
+        if (id == 0) return@synchronized
+        _sessions.value = _sessions.value.map {
+            if (it.id == id) it.copy(outcome = outcome) else it
+        }
+        append('=', "DeltaTor", "=== connection #$id \u00b7 $outcome ===")
+    }
+
+    private fun sessionOf(): Int = currentSession.get().toInt()
 
     // Lazy snapshot — only rebuilt when the debug sheet is open (observerCount > 0).
     private val _lines = MutableStateFlow<List<LogEntry>>(emptyList())
@@ -51,10 +101,10 @@ object AppLog {
         val id = nextId.getAndIncrement()
         val entry = if (observerCount > 0) {
             val ts = dateFormat.get()!!.format(Date())
-            LogEntry(id, "$ts $level/$tag: $msg", level)
+            LogEntry(id, "$ts $level/$tag: $msg", level, sessionOf())
         } else {
             // Lightweight entry — no timestamp formatting when nobody is watching
-            LogEntry(id, "$level/$tag: $msg", level)
+            LogEntry(id, "$level/$tag: $msg", level, sessionOf())
         }
         synchronized(buffer) {
             buffer.addLast(entry)
@@ -173,6 +223,23 @@ object AppLog {
         synchronized(buffer) {
             buffer.clear()
             _lines.value = emptyList()
+        }
+    }
+
+    /**
+     * Log an event tied to a specific connect session, used by the transport
+     * runner threads so their lines land in the right section even though they
+     * are not the connection owner.
+     */
+    fun session(sessionId: Int, level: Char, tag: String, msg: String) {
+        synchronized(sessionLock) {
+            val prev = currentSession.get()
+            currentSession.set(sessionId.toLong())
+            try {
+                append(level, tag, msg)
+            } finally {
+                currentSession.set(prev)
+            }
         }
     }
 }

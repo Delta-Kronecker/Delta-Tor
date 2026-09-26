@@ -52,6 +52,9 @@ class TorVpnService : VpnService() {
     private var statsJob: Job? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    /** Id of the connect session whose lines this service emits. */
+    @Volatile private var currentSession: Int = 0
+
     private val _notificationText = MutableStateFlow("")
     val notificationText = _notificationText.asStateFlow()
 
@@ -76,6 +79,7 @@ class TorVpnService : VpnService() {
             return
         }
         AppState.markStarted()
+        currentSession = Log.beginSession("connect")
         AppState.update { it.copy(connecting = true, connected = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
@@ -111,7 +115,7 @@ class TorVpnService : VpnService() {
         updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
 
         val w = try {
-            ParallelTorManager.race(applicationContext, basePort = proxyPort) { snapshot ->
+            ParallelTorManager.race(applicationContext, basePort = proxyPort, sessionId = currentSession) { snapshot ->
                 val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
                 AppState.update { it.copy(transports = progress) }
                 val maxProg = (progress.values.maxOrNull() ?: 0).coerceAtLeast(0)
@@ -189,6 +193,7 @@ class TorVpnService : VpnService() {
         startStatsPolling()
         startExitLocator(proxyHost, proxyPort)
         Log.i(TAG, "DeltaTor connected. Winner: ${w.name}, SOCKS5 at $proxyHost:$proxyPort")
+        Log.endSession("connected via ${w.name}")
     }
 
     /** Re-establish the VPN on top of an already-running Tor engine. */
@@ -337,6 +342,7 @@ class TorVpnService : VpnService() {
 
     private fun fail(message: String) {
         Log.e(TAG, message)
+        Log.endSession("failed \u00b7 $message")
         AppState.update { it.copy(connecting = false, connected = false, torRunning = false, error = message) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -346,6 +352,7 @@ class TorVpnService : VpnService() {
 
     private fun disconnect() {
         Log.i(TAG, "Disconnecting...")
+        Log.endSession("disconnected by user")
         serviceScope.launch {
             AppState.update { it.copy(connecting = false, connected = false) }
             teardown()

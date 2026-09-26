@@ -53,6 +53,42 @@ class TorRunner(
 
     fun progress(): Int = bootstrapPercent.get()
 
+    // Ring buffer of this runner's own log lines, so a dead process can be
+    // explained after the fact (Tor's own words, not a generic "process exited").
+    private val recentLog = ArrayDeque<String>()
+
+    private fun noteLog(message: String) {
+        synchronized(recentLog) {
+            recentLog.addLast(message)
+            while (recentLog.size > 60) recentLog.removeFirst()
+        }
+    }
+
+    /**
+     * One-line reason this runner is not going to win: the most informative
+     * line Tor or lyrebird printed, preferring errors/warnings over the rest.
+     */
+    fun failureSummary(): String {
+        val lines = synchronized(recentLog) { recentLog.toList() }
+        if (lines.isEmpty()) return "process exited (no output captured)"
+        val meaningful = lines.filter { line ->
+            val l = line.lowercase()
+            l.contains("error") || l.contains("failed") || l.contains("fatal") ||
+                l.contains("warn") || l.contains("could not") || l.contains("unable") ||
+                l.contains("refused") || l.contains("no such") || l.contains("not found") ||
+                l.contains("unrecognized") || l.contains("invalid") || l.contains("timeout")
+        }
+        val detail = (meaningful.ifEmpty { lines }).last().trim()
+        val exit = torProcess
+            ?.takeIf { !it.isAlive }
+            ?.let { " (exit ${runCatching { it.exitValue() }.getOrDefault(-1)})" }
+            .orEmpty()
+        return "process exited$exit \u00b7 ${detail.take(220)}"
+    }
+
+    /** Everything this runner has logged during the current session (for the log UI). */
+    fun logLines(): List<String> = synchronized(recentLog) { recentLog.toList() }
+
     /**
      * Start the PT (if needed) and the Tor process for this transport.
      * Bridge lines are capped to [MAX_BRIDGE_LINES] to keep torrc manageable.
@@ -63,6 +99,7 @@ class TorRunner(
         ready = false
         failed = null
         started = true
+        synchronized(recentLog) { recentLog.clear() }
 
         try {
             val cleanLines = bridgeLines.lines()
@@ -121,8 +158,10 @@ class TorRunner(
                     val reader = BufferedReader(InputStreamReader(process.inputStream))
                     var line: String?
                     while (reader.readLine().also { line = it } != null) {
-                        Log.d(tag, "Tor: $line")
-                        val match = Regex("Bootstrapped (\\d+)%").find(line!!)
+                        noteLog("Tor: $line")
+                        val up = line!!
+                        Log.d(tag, up)
+                        val match = Regex("Bootstrapped (\\d+)%").find(up)
                         if (match != null) {
                             val pct = match.groupValues[1].toInt()
                             bootstrapPercent.set(pct)
@@ -183,7 +222,9 @@ class TorRunner(
                 val reader = BufferedReader(InputStreamReader(process.errorStream))
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
-                    Log.d(tag, "Lyrebird stderr: $line")
+                    val l = "lyrebird stderr: $line"
+                    noteLog(l)
+                    Log.d(tag, l)
                 }
             } catch (_: Exception) {}
         }, "$name-lyrebird-stderr").also { it.isDaemon = true; it.start() }
@@ -197,6 +238,7 @@ class TorRunner(
                 var line: String?
                 while (reader.readLine().also { line = it } != null) {
                     val l = line!!.trim()
+                    noteLog("lyrebird PT: $l")
                     Log.d(tag, "Lyrebird PT: $l")
                     when {
                         l.startsWith("VERSION ") -> Log.i(tag, "Lyrebird protocol: $l")
