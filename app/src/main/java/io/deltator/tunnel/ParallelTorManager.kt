@@ -160,9 +160,12 @@ object ParallelTorManager {
 
     /** Read the cached bridge lists (falling back to a fresh download + cache). */
     private fun fetchBridgeLines(context: Context): Map<String, String> {
-        return BRIDGE_SOURCES.associate { (name, url) ->
+        val lines = BRIDGE_SOURCES.associate { (name, url) ->
             name to (BridgeStore.lines(context, name) ?: downloadText(url).also { BridgeStore.saveLines(context, name, it) })
         }
+        // Let the UI (exit-node ranking, bridge counts) see the cache we just wrote.
+        BridgeStore.refreshState(context)
+        return lines
     }
 
     private fun downloadText(url: String): String {
