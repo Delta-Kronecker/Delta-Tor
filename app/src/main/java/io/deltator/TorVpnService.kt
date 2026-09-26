@@ -9,6 +9,8 @@ import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import io.deltator.tunnel.BridgeCountries
+import io.deltator.tunnel.ExitLocator
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.TorRunner
@@ -173,10 +175,19 @@ class TorVpnService : VpnService() {
         }
 
         AppState.update {
-            it.copy(connecting = false, connected = true, error = null, transports = mapOf(w.name to 100))
+            it.copy(
+                connecting = false,
+                connected = true,
+                error = null,
+                transports = mapOf(w.name to 100),
+                connectedAtMillis = System.currentTimeMillis(),
+                exitCode = "",
+                exitName = ""
+            )
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         startStatsPolling()
+        startExitLocator(proxyHost, proxyPort)
         Log.i(TAG, "DeltaTor connected. Winner: ${w.name}, SOCKS5 at $proxyHost:$proxyPort")
     }
 
@@ -263,7 +274,12 @@ class TorVpnService : VpnService() {
                     lastTime = now
 
                     AppState.update {
-                        it.copy(txBytes = stats.txBytes, rxBytes = stats.rxBytes)
+                        it.copy(
+                            txBytes = stats.txBytes,
+                            rxBytes = stats.rxBytes,
+                            txSpeed = upSpeed,
+                            rxSpeed = downSpeed
+                        )
                     }
                     val notif = NotificationCompat.Builder(this@TorVpnService, CHANNEL_VPN_STATUS)
                         .setSmallIcon(R.drawable.ic_tor)
@@ -290,7 +306,7 @@ class TorVpnService : VpnService() {
 
     private fun formatBytes(bytes: Long): String {
         if (bytes < 1) return "0 B"
-        val units = arrayOf("B", "KB", "MB", "GB", "TB")
+        val units = arrayOf("B", "KB", "MB", "GB", "TB") = arrayOf("B", "KB", "MB", "GB", "TB")
         var v = bytes.toFloat()
         var idx = 0
         while (v >= 1024 && idx < units.size - 1) {
@@ -302,6 +318,21 @@ class TorVpnService : VpnService() {
 
     private fun formatBytes(bytes: Float): String {
         return formatBytes(bytes.toLong())
+    }
+
+    private fun startExitLocator(proxyHost: String, proxyPort: Int) {
+        serviceScope.launch {
+            try {
+                val ip = ExitLocator.exitIp(proxyHost, proxyPort) ?: return@launch
+                val info = BridgeCountries.countryInfo(this@TorVpnService, ip)
+                if (info != null) {
+                    Log.i(TAG, "Exit located: $ip (${info.first})")
+                    AppState.update { it.copy(exitCode = info.first, exitName = info.second) }
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "Exit locator failed: ${e.message}")
+            }
+        }
     }
 
     private fun fail(message: String) {

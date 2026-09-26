@@ -94,8 +94,10 @@ object BridgeCountries {
     private const val TAG = "BridgeCountries"
 
     @Volatile private var db: CountryDb? = null
+    @Volatile private var cachedNames: Map<String, String>? = null
 
     private fun countryNames(context: Context): Map<String, String> {
+        cachedNames?.let { return it }
         val map = HashMap<String, String>()
         try {
             context.assets.open("geoip/countries.tsv").use { input ->
@@ -109,8 +111,18 @@ object BridgeCountries {
         } catch (e: Exception) {
             Log.w(TAG, "Country names unavailable: ${e.message}")
         }
+        cachedNames = map
         return map
     }
+
+    /** Country (code, name) for an IP that exited through the tunnel. */
+    suspend fun countryInfo(context: Context, ip: String): Pair<String, String>? =
+        withContext(Dispatchers.IO) {
+            val geo = db ?: CountryDb.load(context).also { db = it }
+            val l = ipv4ToLong(ip.trim().substringBefore(':')) ?: return@withContext null
+            val cc = geo.country(l) ?: return@withContext null
+            cc to (countryNames(context)[cc] ?: cc)
+        }
 
     /** Rank countries by unique bridge IP count, best first. */
     suspend fun top(context: Context): List<ExitCountry> = withContext(Dispatchers.IO) {

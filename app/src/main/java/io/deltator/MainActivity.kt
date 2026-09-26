@@ -795,17 +795,55 @@ private fun BottomPanel(
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatCard(
+                label = "SPEED DOWN",
+                value = if (state.connected) "${formatBytes(state.rxSpeed.toLong())}/s" else "--",
+                accent = DeltaTor.Green,
+                up = false,
+                modifier = Modifier.weight(1f)
+            )
+            StatCard(
+                label = "SPEED UP",
+                value = if (state.connected) "${formatBytes(state.txSpeed.toLong())}/s" else "--",
+                accent = DeltaTor.Accent,
+                up = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            StatCard(
                 label = "DOWNLOADED",
-                value = formatBytes(state.txBytes),
+                value = formatBytes(state.rxBytes),
                 accent = DeltaTor.Green,
                 up = false,
                 modifier = Modifier.weight(1f)
             )
             StatCard(
                 label = "UPLOADED",
-                value = formatBytes(state.rxBytes),
+                value = formatBytes(state.txBytes),
                 accent = DeltaTor.Accent,
                 up = true,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            InfoPill(
+                label = "UP TIME",
+                value = if (state.connected) formatDuration(System.currentTimeMillis() - state.connectedAtMillis) else "--",
+                modifier = Modifier.weight(1f)
+            )
+            InfoPill(
+                label = "EXIT",
+                value = when {
+                    state.exitCode.isNotBlank() -> "${flagEmoji(state.exitCode)} ${state.exitName}"
+                    state.connected -> "Locating \u2026"
+                    else -> "--"
+                },
                 modifier = Modifier.weight(1f)
             )
         }
@@ -903,6 +941,34 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
                 letterSpacing = 0.4.sp,
                 fontWeight = FontWeight.Bold
             ),
+            color = DeltaTor.Text,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(16.dp)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(DeltaTor.Surface, shape)
+            .border(1.dp, DeltaTor.BorderLight, shape)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.2.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = DeltaTor.Muted
+        )
+        Spacer(Modifier.height(3.dp))
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
             color = DeltaTor.Text,
             maxLines = 1
         )
@@ -1108,6 +1174,15 @@ private fun formatBytes(bytes: Long): String {
         idx++
     }
     return String.format("%.1f %s", v, units[idx])
+}
+
+private fun formatDuration(ms: Long): String {
+    val total = (ms / 1000).coerceAtLeast(0)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    fun pad(n: Long) = n.toString().padStart(2, '0')
+    return if (h > 0) "$h:${pad(m)}:${pad(s)}" else "${pad(m)}:${pad(s)}"
 }
 
 private fun relativeTime(ms: Long): String {
