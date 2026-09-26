@@ -1338,7 +1338,6 @@ private fun SettingsCardHeader(
     }
 }
 
-@Composable
 /**
  * The exit-country picker, kept in its own composable so that selecting a
  * country only recomposes this card. Reading the selection in the parent screen
