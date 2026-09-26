@@ -31,6 +31,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,8 +49,6 @@ import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -99,6 +98,7 @@ import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
+import io.deltator.util.LogEntry
 import kotlinx.coroutines.delay
 import kotlin.math.PI
 import kotlin.math.cos
@@ -1669,11 +1669,107 @@ private fun logLevelColor(level: Char): Color = when (level) {
     else -> DeltaTor.Muted
 }
 
+private fun levelLabel(level: Char): String = when (level) {
+    'E' -> "ERRORS"
+    'W' -> "WARNINGS"
+    'I' -> "INFO"
+    'D' -> "DEBUG"
+    else -> "VERBOSE"
+}
+
+private const val LOG_SEVERITY_ORDER = "EWIDV"
+
+private sealed interface LogNode {
+    data class Header(val level: Char, val count: Int) : LogNode
+    data class Row(val entry: LogEntry) : LogNode
+}
+
+/** Chronological log grouped into discrete per-severity sections. */
+private fun groupLog(lines: List<LogEntry>, filter: Char?): List<LogNode> {
+    val out = ArrayList<LogNode>()
+    for (level in LOG_SEVERITY_ORDER) {
+        if (filter != null && filter != level) continue
+        val sel = lines.filter { it.level == level }
+        if (sel.isEmpty()) continue
+        out.add(LogNode.Header(level, sel.size))
+        sel.forEach { out.add(LogNode.Row(it)) }
+    }
+    return out
+}
+
+@Composable
+private fun SeverityChip(
+    label: String,
+    level: Char?,
+    selected: Boolean,
+    onSelect: () -> Unit
+) {
+    val color = if (level != null) logLevelColor(level) else DeltaTor.AccentLight
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall.copy(
+            letterSpacing = 1.1.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        color = if (selected) DeltaTor.Text else DeltaTor.Muted,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (selected) color.copy(alpha = 0.18f) else DeltaTor.Surface,
+                RoundedCornerShape(50)
+            )
+            .border(
+                1.dp,
+                if (selected) color.copy(alpha = 0.9f) else DeltaTor.BorderLight,
+                RoundedCornerShape(50)
+            )
+            .clickable { onSelect() }
+            .padding(horizontal = 13.dp, vertical = 6.dp)
+    )
+}
+
+@Composable
+private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifier) {
+    val color = logLevelColor(level)
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(color.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(color)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            levelLabel(level),
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.6.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = color
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "\u00b7 $count",
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+            color = DeltaTor.Muted
+        )
+    }
+}
+
 @Composable
 private fun LogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lines by AppLog.lines.collectAsStateWithLifecycle()
     var copied by remember { mutableStateOf(false) }
+    var filter by remember { mutableStateOf<Char?>(null) }
+    val nodes = remember(lines, filter) { groupLog(lines, filter) }
 
     LaunchedEffect(Unit) {
         AppLog.addObserver()
@@ -1737,7 +1833,29 @@ private fun LogScreen(onBack: () -> Unit) {
                 }
             }
 
-            if (lines.isEmpty()) {
+            Spacer(Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                SeverityChip("ALL", level = null, selected = filter == null, onSelect = { filter = null })
+                for (level in LOG_SEVERITY_ORDER) {
+                    SeverityChip(
+                        levelLabel(level),
+                        level = level,
+                        selected = filter == level,
+                        onSelect = { filter = level }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            if (nodes.isEmpty()) {
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -1745,31 +1863,44 @@ private fun LogScreen(onBack: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        "No log lines captured yet. Start a connection.",
+                        if (lines.isEmpty()) "No log lines captured yet. Start a connection."
+                        else "No entries for this level.",
                         style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.4.sp),
                         color = DeltaTor.Muted
                     )
                 }
             } else {
+                val reversed = nodes.asReversed()
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 22.dp, vertical = 10.dp),
+                        .padding(horizontal = 22.dp),
                     reverseLayout = true,
                     state = rememberLazyListState()
                 ) {
-                    items(items = lines.asReversed(), key = { it.id }) { entry ->
-                        Text(
-                            entry.raw,
-                            style = TextStyle(
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp,
-                                color = logLevelColor(entry.level)
-                            ),
-                            modifier = Modifier.padding(bottom = 3.dp)
-                        )
+                    reversed.forEach { node ->
+                        when (node) {
+                            is LogNode.Header -> item(key = "h-${node.level}") {
+                                LogGroupHeader(
+                                    level = node.level,
+                                    count = node.count,
+                                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                                )
+                            }
+                            is LogNode.Row -> item(key = node.entry.id) {
+                                Text(
+                                    node.entry.raw,
+                                    style = TextStyle(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 10.sp,
+                                        lineHeight = 13.sp,
+                                        color = logLevelColor(node.entry.level)
+                                    ),
+                                    modifier = Modifier.padding(bottom = 3.dp)
+                                )
+                            }
+                        }
                     }
                     item { Spacer(Modifier.height(18.dp)) }
                 }
