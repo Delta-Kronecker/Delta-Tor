@@ -461,11 +461,11 @@ class TorRunner(
         if (p == null) return
         try {
             p.destroy()
-            if (!p.waitForExit(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            if (!p.waitFor(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 Log.w(tag, "$what ignored SIGTERM, forcing kill")
                 p.destroyForcibly()
-                if (!p.waitForExit(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    Log.e(tag, "$what still alive after SIGKILL (pid ${p.pid()})")
+                if (!p.waitFor(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                    Log.e(tag, "$what ($what) still alive after SIGKILL: ${describe(p)}")
                 }
             }
         } catch (e: Exception) {
@@ -473,6 +473,8 @@ class TorRunner(
             try { p.destroyForcibly() } catch (_: Exception) {}
         }
     }
+
+    private fun describe(p: Process): String = runCatching { p.toString() }.getOrDefault("pid ?")
 
     companion object {
         private const val MAX_BRIDGE_LINES = 100
