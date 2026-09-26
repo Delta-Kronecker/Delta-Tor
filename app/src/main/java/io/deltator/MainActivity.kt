@@ -1450,9 +1450,15 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val exitCode by ExitNodes.code.collectAsStateWithLifecycle()
     val exitName by ExitNodes.name.collectAsStateWithLifecycle()
+    val bridgeState by AppState.bridgeState.collectAsStateWithLifecycle()
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
 
+    // Ranking comes from the cached bridge lists, so make sure a cache exists
+    // and rebuild the list whenever the cache changes.
     LaunchedEffect(Unit) {
+        runCatching { BridgeStore.autoUpdateIfStale(context) }
+    }
+    LaunchedEffect(bridgeState.vanilla, bridgeState.obfs4, bridgeState.webtunnel, bridgeState.lastUpdateMillis) {
         countries = withContext(Dispatchers.IO) {
             runCatching { BridgeCountries.top(context) }.getOrDefault(emptyList())
         }

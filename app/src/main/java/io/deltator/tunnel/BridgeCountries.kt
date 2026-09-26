@@ -58,8 +58,9 @@ private class CountryDb(
                     lines.forEach { line ->
                         val p = line.split(',')
                         if (p.size < 3) return@forEach
-                        val a = p[0].trim().toLongOrNull() ?: return@forEach
-                        val b = p[1].trim().toLongOrNull() ?: return@forEach
+                        // db-ip country-lite stores dotted quads, e.g. "1.0.0.0"
+                        val a = ipv4ToLong(p[0].trim()) ?: return@forEach
+                        val b = ipv4ToLong(p[1].trim()) ?: return@forEach
                         val cc = p[2].trim().uppercase()
                         if (cc.length != 2 || !cc.all { it in 'A'..'Z' }) return@forEach
                         startsRaw.add(a)
@@ -157,16 +158,17 @@ object BridgeCountries {
         }
         return null
     }
+}
 
-    private fun ipv4ToLong(host: String): Long? {
-        val p = host.split('.')
-        if (p.size != 4) return null
-        var v = 0L
-        for (octet in p) {
-            val n = octet.toIntOrNull() ?: return null
-            if (n !in 0..255) return null
-            v = (v shl 8) or n.toLong()
-        }
-        return v
+/** "1.2.3.4" -> packed 32-bit value, or null when not a dotted quad. */
+private fun ipv4ToLong(host: String): Long? {
+    val p = host.split('.')
+    if (p.size != 4) return null
+    var v = 0L
+    for (octet in p) {
+        val n = octet.toIntOrNull() ?: return null
+        if (n !in 0..255) return null
+        v = (v shl 8) or n.toLong()
     }
+    return v
 }
