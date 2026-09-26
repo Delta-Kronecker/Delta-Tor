@@ -4,7 +4,6 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.content.SharedPreferences
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import io.deltator.util.AppLog as Log
@@ -16,23 +15,13 @@ import java.net.URL
 
 /**
  * Checks GitHub for a newer DeltaTor release, raises an in-app banner and a
- * system notification when one exists, and opens the release page in a browser.
+ * system notification whenever one exists, and opens the release page in a browser.
  */
 object ReleaseChecker {
     private const val TAG = "ReleaseChecker"
     private const val REPO = "Delta-Kronecker/Delta-Tor"
     private const val API_LATEST = "https://api.github.com/repos/$REPO/releases/latest"
     private const val GITHUB_URL = "https://github.com/$REPO"
-    private const val PREFS = "deltator"
-    private const val KEY_NOTIFIED = "release_notified_v"
-
-    private lateinit var prefs: SharedPreferences
-
-    fun init(context: Context) {
-        if (!::prefs.isInitialized) {
-            prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        }
-    }
 
     fun openInBrowser(context: Context, url: String) {
         try {
@@ -79,12 +68,8 @@ object ReleaseChecker {
     }
 
     private fun notify(context: Context, version: String, url: String) {
-        // System notification fires once per release version; the in-app banner
-        // is re-shown on every app launch until the user taps DISMISS.
-        val prev = prefs.getString(KEY_NOTIFIED, null)
-        if (prev == version) return
-        prefs.edit().putString(KEY_NOTIFIED, version).apply()
-
+        // System notification and in-app banner are raised on every app launch
+        // while a newer release exists; there is no dismiss state.
         val open = PendingIntent.getActivity(
             context,
             40,
