@@ -300,8 +300,16 @@ class TorRunner(
             bridgeDirectives.appendLine("Bridge $line")
         }
 
+        val exitDirective = buildString {
+            val cc = ExitNodes.currentCode().trim().uppercase()
+            if (cc.length == 2 && cc.all { it in 'A'..'Z' }) {
+                appendLine("ExitNodes {$cc}")
+                appendLine("StrictNodes 1")
+            }
+        }
+
         val templateLines = TorrcSettings.templateLines()
-        val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n"
+        val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n$exitDirective\n"
         torrcFile.writeText(torrcContent)
         try {
             File(context.filesDir, "tor_last.torrc").writeText(torrcContent)

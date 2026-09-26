@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -86,13 +87,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeStore
+import io.deltator.tunnel.ExitCountry
+import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
 import io.deltator.util.LogEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -1289,6 +1295,56 @@ private fun SettingsCardHeader(
 }
 
 @Composable
+private fun ExitCountryRow(
+    emoji: String,
+    name: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 4.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(emoji, fontSize = 18.sp)
+        Spacer(Modifier.width(10.dp))
+        Text(
+            name,
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+            color = DeltaTor.Text,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            if (selected) "SELECTED \u2713" else "$count",
+            style = MaterialTheme.typography.labelMedium.copy(
+                letterSpacing = 0.4.sp,
+                color = if (selected) DeltaTor.GreenLight else DeltaTor.Muted
+            )
+        )
+        Spacer(Modifier.width(8.dp))
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(50))
+                .background(if (selected) DeltaTor.Green else DeltaTor.Border)
+        )
+    }
+}
+
+private fun flagEmoji(code: String): String {
+    if (code.length != 2) return "\uD83C\uDF10"
+    val sb = StringBuilder()
+    for (c in code.uppercase()) {
+        sb.appendCodePoint(0x1F1E6 + (c - 'A'))
+    }
+    return sb.toString()
+}
+
+@Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Column(
         modifier = Modifier
@@ -1314,6 +1370,16 @@ private fun SettingsScreen(
 ) {
     var templateText by remember { mutableStateOf(TorrcSettings.template()) }
     var saved by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    val exitCode by ExitNodes.code.collectAsStateWithLifecycle()
+    val exitName by ExitNodes.name.collectAsStateWithLifecycle()
+    var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
+
+    LaunchedEffect(Unit) {
+        countries = withContext(Dispatchers.IO) {
+            runCatching { BridgeCountries.top(context) }.getOrDefault(emptyList())
+        }
+    }
 
     val tfColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = DeltaTor.AccentLight,
@@ -1431,6 +1497,73 @@ private fun SettingsScreen(
                 onUpdate = onUpdateBridges,
                 modifier = Modifier.padding(horizontal = 22.dp)
             )
+
+            Spacer(Modifier.height(22.dp))
+
+            SettingsCardHeader("EXIT NODE", "Optional exit country \u00b7 ranked by tested bridges")
+            SettingsCard {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        if (exitCode.isBlank()) "Any location \u00b7 default"
+                        else "${flagEmoji(exitCode)}  $exitName",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = DeltaTor.Text,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "NEXT CONNECT",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.1.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight
+                    )
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Tap a country to use it as your exit \u00b7 applied as ExitNodes {cc} + StrictNodes 1 in torrc.",
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted
+                )
+                if (countries.isEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "No bridges cached yet \u00b7 connect once to build the ranking.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = DeltaTor.Muted.copy(alpha = 0.75f)
+                    )
+                } else {
+                    Spacer(Modifier.height(6.dp))
+                    DividerLine()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 340.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 2.dp)
+                    ) {
+                        ExitCountryRow(
+                            emoji = "\uD83C\uDF10",
+                            name = "Any location \u00b7 default",
+                            count = countries.sumOf { it.bridges },
+                            selected = exitCode.isBlank(),
+                            onClick = { ExitNodes.clear() }
+                        )
+                        countries.forEach { c ->
+                            ExitCountryRow(
+                                emoji = flagEmoji(c.code),
+                                name = c.name,
+                                count = c.bridges,
+                                selected = c.code == exitCode,
+                                onClick = { ExitNodes.select(c.code, c.name) }
+                            )
+                        }
+                    }
+                }
+            }
 
             Spacer(Modifier.height(22.dp))
 
