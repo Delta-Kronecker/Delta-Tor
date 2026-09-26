@@ -110,14 +110,15 @@ jobs:
           git tag -f "$TAG" "$GITHUB_SHA"
           git push origin "$TAG" --force
           NOTES="Automated build from workflow run $GITHUB_RUN_NUMBER ([view]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))."
-          if gh release create "$TAG" "deltator-${TAG}.apk" \
-              --target "$GITHUB_SHA" \
-              --title "DeltaTor $TAG" \
-              --notes "$NOTES" \
-              --latest; then
-            echo "Release created for $TAG"
-          else
+          if gh release view "$TAG" >/dev/null 2>&1; then
             echo "Release already exists for $TAG — updating assets instead"
             gh release upload "$TAG" "deltator-${TAG}.apk" --clobber
             gh release edit "$TAG" --title "DeltaTor $TAG" --notes "$NOTES" --latest
+          else
+            echo "Creating release for $TAG"
+            gh release create "$TAG" "deltator-${TAG}.apk" \
+                --target "$GITHUB_SHA" \
+                --title "DeltaTor $TAG" \
+                --notes "$NOTES" \
+                --latest
           fi
