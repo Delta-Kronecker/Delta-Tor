@@ -14,7 +14,9 @@ data class LogEntry(
     val raw: String,
     val level: Char,
     /** Connection session this line belongs to (0 = before the first connection). */
-    val session: Int = 0
+    val session: Int = 0,
+    /** Transport that produced the line: vanilla / obfs4 / webtunnel, null = shared. */
+    val transport: String? = null
 )
 
 /**
@@ -45,6 +47,9 @@ object AppLog {
     private const val MAX_LINES = 1500
     private val nextId = AtomicLong(0)
     private val buffer = ArrayDeque<LogEntry>()
+
+    /** Live entry count per transport ("" = shared lines), used for fair trimming. */
+    private val perTransport = HashMap<String, Int>()
 
     /** When true, sensitive config details are redacted from the in-app log buffer. */
     @Volatile var redactSensitive = false
@@ -98,20 +103,61 @@ object AppLog {
     }
 
     private fun append(level: Char, tag: String, msg: String) {
+        appendFor(level, tag, msg, transportOf(tag))
+    }
+
+    /** Transports raced in parallel; the log screen lets the user pick one. */
+    val TRANSPORTS = listOf("vanilla", "obfs4", "webtunnel")
+
+    private val runnerTag = Regex("""TorRunner\[(\w+)]""")
+
+    private fun transportOf(tag: String): String? =
+        runnerTag.find(tag)?.groupValues?.get(1)?.takeIf { it in TRANSPORTS }
+
+    private fun appendFor(level: Char, tag: String, msg: String, transport: String?) {
         val id = nextId.getAndIncrement()
         val entry = if (observerCount > 0) {
             val ts = dateFormat.get()!!.format(Date())
-            LogEntry(id, "$ts $level/$tag: $msg", level, sessionOf())
+            LogEntry(id, "$ts $level/$tag: $msg", level, sessionOf(), transport)
         } else {
             // Lightweight entry — no timestamp formatting when nobody is watching
-            LogEntry(id, "$level/$tag: $msg", level, sessionOf())
+            LogEntry(id, "$level/$tag: $msg", level, sessionOf(), transport)
         }
         synchronized(buffer) {
             buffer.addLast(entry)
-            while (buffer.size > MAX_LINES) buffer.removeFirst()
+            perTransport[transport ?: ""] = (perTransport[transport ?: ""] ?: 0) + 1
+            trimLocked()
         }
         if (observerCount > 0) {
             dirty.set(true)
+        }
+    }
+
+    /**
+     * Keep the buffer bounded without letting one noisy transport (vanilla emits
+     * thousands of Tor lines) evict the other two: always drop the oldest line
+     * of whichever transport currently holds the most of them.
+     */
+    private fun trimLocked() {
+        while (buffer.size > MAX_LINES) {
+            var victim = ""
+            var worst = 0
+            for ((t, n) in perTransport) {
+                if (n > worst) {
+                    worst = n
+                    victim = t
+                }
+            }
+            val idx = buffer.indexOfFirst { (it.transport ?: "") == victim }
+            if (idx < 0) {
+                // Should not happen; fall back to plain FIFO so we never spin.
+                val dropped = buffer.removeFirst()
+                val key = dropped.transport ?: ""
+                perTransport[key] = (perTransport[key] ?: 1) - 1
+                continue
+            }
+            buffer.removeAt(idx)
+            perTransport[victim] = (perTransport[victim] ?: 1) - 1
         }
     }
 
@@ -222,6 +268,7 @@ object AppLog {
     fun clear() {
         synchronized(buffer) {
             buffer.clear()
+            perTransport.clear()
             _lines.value = emptyList()
         }
     }
@@ -237,6 +284,25 @@ object AppLog {
             currentSession.set(sessionId.toLong())
             try {
                 append(level, tag, msg)
+            } finally {
+                currentSession.set(prev)
+            }
+        }
+    }
+
+    /** Same as [session] but also attributes the line to one transport. */
+    fun transport(
+        sessionId: Int,
+        transport: String,
+        level: Char,
+        tag: String,
+        msg: String
+    ) {
+        synchronized(sessionLock) {
+            val prev = currentSession.get()
+            currentSession.set(sessionId.toLong())
+            try {
+                appendFor(level, tag, msg, transport)
             } finally {
                 currentSession.set(prev)
             }
