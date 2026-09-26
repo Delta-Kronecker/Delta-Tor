@@ -317,6 +317,8 @@ namespace StartTor
             private DateTime nextUpdateCheck = DateTime.UtcNow.AddMinutes(2);
 
             private int hoverId = -1;
+            private bool tunShownOn, tunShownPending, tunLocalPending;
+            private string lastTunErrorShown = "";
             private bool anyHover;
 
             private bool autoProxyEnabled;
@@ -330,8 +332,8 @@ namespace StartTor
             private System.Windows.Forms.NotifyIcon trayIcon;
             private System.Windows.Forms.ContextMenuStrip trayMenu;
 
-            private Rectangle rcClose, rcMin,
-                              rcProxy, rcSettings, rcPower, rcBack, rcUpdateBtn;
+private Rectangle rcClose, rcMin,
+                             rcProxy, rcTun, rcSettings, rcPower, rcBack, rcUpdateBtn;
             private readonly Rectangle[] rcRowVal = new Rectangle[12];
             private readonly Rectangle[] rcRowPrev = new Rectangle[12];
             private readonly Rectangle[] rcRowNext = new Rectangle[12];
@@ -430,10 +432,11 @@ namespace StartTor
                 bool showProxy = !autoProxyEnabled;
                 bool showUpd = showUpdateBanner && updateVersion.Length > 0;
 
-                // vertical flow: ring -> connect -> proxy? -> settings -> update?
+                // vertical flow: ring -> connect -> proxy? -> tun -> settings -> update?
                 // connect text is drawn at rcPower.Bottom + 8 with height 22.
                 int total = 104 + 30 + 24;              // ring + connect region + gap
                 if (showProxy) total += 42 + 14;        // proxy row + gap
+                total += 42 + 14;                       // TUN row + gap
                 total += 38;                            // settings row
                 if (showUpd) total += 14 + 38;          // gap + update banner row
 
@@ -448,6 +451,8 @@ namespace StartTor
                 }
                 else
                     rcProxy = new Rectangle(0, 0, 0, 0);
+                rcTun = new Rectangle(24, y, pw, 42);
+                y += 42 + 14;
                 rcSettings = new Rectangle(24, y, pw, 38);
                 y += 38;
                 if (showUpd)
@@ -699,6 +704,11 @@ namespace StartTor
 
                 if (!autoProxyEnabled)
                     PaintTogglePill(g, rcProxy, "PROXY", ProxyIsOurs(), hoverId == 20, false);
+
+                bool tunReady = state == RunState.Connected || state == RunState.Restarting;
+                string tunName = tunReady || !TunPending() ? "TUN" : "TUN \u2026";
+                PaintTogglePill(g, rcTun, tunName, TunOnNow(), hoverId == 21,
+                    TunPending() || tunLocalPending);
 
                 bool hovSet = hoverId == 30;
                 Theme.PillGradient(g, rcSettings,
@@ -1098,6 +1108,7 @@ namespace StartTor
                     case 2: WindowState = FormWindowState.Minimized; break;
                     case 5: OnConnectButton(); break;
                     case 20: ApplyProxyToggle(!ProxyIsOurs()); break;
+                    case 21: ApplyTunToggle(); break;
                     case 30: page = Page.Settings; settingsScrollY = 0; CancelEdit(); LayoutPass(); Invalidate(); break;
                     case 50: OpenReleases(); break;
                     case 40: page = Page.Main; CancelEdit(); LayoutPass(); Invalidate(); break;
@@ -1208,6 +1219,7 @@ namespace StartTor
                 if (page == Page.Main)
                 {
                     if (!autoProxyEnabled && rcProxy.Contains(p)) return 20;
+                    if (rcTun.Contains(p)) return 21;
                     if (rcSettings.Contains(p)) return 30;
                     if (showUpdateBanner && updateVersion.Length > 0 &&
                         rcUpdateBtn.Contains(p)) return 50;
@@ -1295,6 +1307,30 @@ namespace StartTor
                 {
                     SetSystemProxy(false);
                     FlashMessage("system proxy off", false);
+                }
+                Invalidate();
+            }
+
+            // Toggle whole-system TUN (zeptun). Starting it spawns the elevated
+            // supervisor (UAC prompt); stopping it is just the stop file, which
+            // the elevated keeper picks up within a few seconds.
+            private void ApplyTunToggle()
+            {
+                if (state != RunState.Connected && state != RunState.Restarting)
+                {
+                    FlashMessage("connect first");
+                    Invalidate();
+                    return;
+                }
+                bool want = !TunOnNow();
+                if (want && (TunOnNow() || TunPending())) return;
+                TunToggle(want);
+                if (want)
+                    FlashMessage("TUN on - allow the admin prompt", false);
+                else
+                {
+                    tunLocalPending = true;
+                    FlashMessage("TUN off", false);
                 }
                 Invalidate();
             }
@@ -1563,6 +1599,8 @@ namespace StartTor
                 watchdogStop = true;
                 circuitWatchStop = true;
                 StopKeepAlive();
+                TunRequestOff();    // leaves the elevated keeper to tear down
+                tunLocalPending = false;
                 if (autoProxyEnabled && ProxyIsOurs()) SetSystemProxy(false);
                 try { if (torProc != null) torProc.Kill(); } catch { }
                 torProc = null;
@@ -1626,6 +1664,29 @@ namespace StartTor
                 {
                     nextUpdateCheck = DateTime.UtcNow.AddMinutes(5);
                     RunBg(delegate { CheckForUpdateFromUi(); });
+                }
+
+                // Reflect TUN (zeptun) changes and helper errors on the
+                // main-page pill without blocking.
+                if (state != RunState.Stopping)
+                {
+                    bool ton = TunOnNow();
+                    bool tpen = TunPending();
+                    string tmsg = TunErrorNow();
+                    if (tmsg.Length > 0 && tmsg != lastTunErrorShown)
+                    {
+                        lastTunErrorShown = tmsg;
+                        tunLocalPending = false;
+                        FlashMessage("TUN: " + tmsg);
+                    }
+                    else if (tmsg.Length == 0) lastTunErrorShown = "";
+                    if (ton != tunShownOn || tpen != tunShownPending)
+                    {
+                        tunShownOn = ton;
+                        tunShownPending = tpen;
+                        if (ton) tunLocalPending = false;
+                        Invalidate();
+                    }
                 }
 
                 if (state == RunState.Connected || state == RunState.Restarting)

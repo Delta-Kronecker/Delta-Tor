@@ -66,6 +66,16 @@ try {
         -out:$cliOut $src $srcUi $versionSrc
     if ($LASTEXITCODE -ne 0) { Write-Host "[x] DeltaTorCli compile failed ($LASTEXITCODE)"; exit $LASTEXITCODE }
     Write-Host "[ok] built $cliOut (version $Version)"
+
+    # Elevated TUN supervisor (zeptun). The requireAdministrator manifest makes
+    # even a direct launch run as admin; the launcher spawns it with `runas`.
+    $helperSrc = Join-Path $PSScriptRoot "zeptun-helper.cs"
+    $helperManifest = Join-Path $PSScriptRoot "zeptun-helper.manifest"
+    $helperOut = Join-Path $cliDir "zeptun-helper.exe"
+    & $csc -nologo -optimize+ -target:winexe -win32manifest:$helperManifest `
+        -out:$helperOut $helperSrc
+    if ($LASTEXITCODE -ne 0) { Write-Host "[x] zeptun-helper compile failed ($LASTEXITCODE)"; exit $LASTEXITCODE }
+    Write-Host "[ok] built $helperOut (version $Version)"
 } finally {
     Remove-Item $versionSrc -ErrorAction SilentlyContinue
 }

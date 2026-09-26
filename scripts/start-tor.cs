@@ -11,9 +11,11 @@
 // The user picks a connection mode (direct / webtunnel / obfs4 / vanilla / snowflake); the
 // program writes data\torrc and starts tor. Tor is NOT set as the system proxy
 // automatically: press P to toggle the Windows system proxy
-// (HTTP 127.0.0.1:8118) on/off. C stops tor (system proxy + core) and returns
+// (HTTP 127.0.0.1:8118) on/off. T toggles a whole-system TUN tunnel
+// (zeptun, an elevated supervisor in data\, admin prompt) through the same
+// tor instance. C stops tor (system proxy + core + TUN) and returns
 // to the main menu.
-// Subcommands: --newcircuit, --stop, --update-bridges,
+// Subcommands: --newcircuit, --stop, --tun on|off|status, --update-bridges,
 // --bootstrap-only [mode].
 // A trailing `proxy` argument auto-enables the Windows system proxy
 // right after bootstrap, e.g. `DeltaTor.exe obfs4 aggressive proxy`.
@@ -186,6 +188,17 @@ namespace StartTor
         // the next restore would write empty strings over the registry.
         private static readonly string ProxyBackupFile =
             Path.Combine(DataDir, "proxy-backup.txt");
+
+        // TUN mode (zeptun): the launcher itself never touches the tunnel — an
+        // ELEVATED supervisor in data\ (zeptun-helper.exe, built from
+        // zeptun-helper.cs with a requireAdministrator manifest) runs zeptun
+        // and owns it. The state/stop/result files documented below are polled
+        // here; turning TUN off only writes the stop file (no elevation).
+        private static readonly string ZeptunHelper = Path.Combine(DataDir, "zeptun-helper.exe");
+        private static readonly string ZeptunExe = Path.Combine(DataDir, "zeptun.exe");
+        private static readonly string TunStateFile = Path.Combine(DataDir, "zeptun-state.txt");
+        private static readonly string TunStopFile = Path.Combine(DataDir, "zeptun-stop.txt");
+        private static readonly string TunResultFile = Path.Combine(DataDir, "zeptun-result.txt");
 
         private const int InternetOptionSettingsChanged = 39;
         private const int InternetOptionRefresh = 37;
@@ -474,12 +487,119 @@ namespace StartTor
             cleaned = true;
             StopKeepAlive();
             circuitWatchStop = true;
+            TunRequestOff();
             if (torProc != null)
             {
                 try { if (!torProc.HasExited) { torProc.Kill(); torProc.WaitForExit(5000); } }
                 catch { }
             }
             SetSystemProxy(false);
+        }
+
+        // ---- TUN (zeptun) ---------------------------------------------------
+        // The elevated helper (data\zeptun-helper.exe) is the only process that
+        // runs zeptun. Its progress lives in data\zeptun-state.txt
+        // ("status=on|off|starting|error" + pid/relays/socks/msg); a request to
+        // STOP is just the presence of data\zeptun-stop.txt, which the keeper
+        // notices within ~4 s and tears the tunnel down on its own.
+        private static string TunStateKey(string key)
+        {
+            try
+            {
+                if (!File.Exists(TunStateFile)) return "";
+                foreach (string ln in File.ReadAllLines(TunStateFile))
+                {
+                    int eq = ln.IndexOf('=');
+                    if (eq < 0) continue;
+                    if (ln.Substring(0, eq).Trim().Equals(key, StringComparison.OrdinalIgnoreCase))
+                        return ln.Substring(eq + 1).Trim();
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private static bool TunOnNow() { return TunStateKey("status") == "on"; }
+
+        private static bool TunPending()
+        {
+            string s = TunStateKey("status");
+            return s == "starting" || s == "stopping";
+        }
+
+        private static string TunErrorNow()
+        {
+            if (TunStateKey("status") == "error") return TunStateKey("msg");
+            return "";
+        }
+
+        private static void TunRequestOff()
+        {
+            try { File.WriteAllText(TunStopFile, "1", new UTF8Encoding(false)); }
+            catch { }
+        }
+
+        private static void TunLaunchHelper(string args)
+        {
+            try
+            {
+                if (!File.Exists(ZeptunHelper)) return;
+                Environment.SetEnvironmentVariable("DELTATOR_DATA_DIR", DataDir,
+                                                   EnvironmentVariableTarget.Process);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = ZeptunHelper,
+                    Arguments = args,
+                    UseShellExecute = true,
+                    Verb = "runas",
+                    WindowStyle = ProcessWindowStyle.Hidden
+                };
+                using (Process p = Process.Start(psi)) { }
+            }
+            catch
+            {
+                // user declined the UAC prompt — the pill stays off
+            }
+        }
+
+        private static void TunToggle(bool want)
+        {
+            if (want)
+            {
+                if (TunOnNow() || TunPending()) return;
+                TunLaunchHelper("on " + liveSocksPort);
+            }
+            else
+            {
+                TunRequestOff();
+            }
+        }
+
+        // Poll the state file until `want` is reached or the budget expires.
+        // Used by the console T key and the --tun subcommand, which block until
+        // the elevated session reports back (UAC prompt included).
+        private static bool TunWait(bool want, int timeoutMs, bool verbose)
+        {
+            var sw = Stopwatch.StartNew();
+            bool lastPending = false;
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                string msg = TunErrorNow();
+                if (msg.Length > 0)
+                {
+                    if (verbose) Console.WriteLine("  [x] TUN: " + msg);
+                    return false;
+                }
+                bool p = TunPending();
+                if (p != lastPending)
+                {
+                    lastPending = p;
+                    if (verbose && p) Console.WriteLine("  TUN ...");
+                }
+                if (TunOnNow() == want) return true;
+                Thread.Sleep(500);
+            }
+            return false;
         }
 
         private static void WaitForKey()
@@ -3452,6 +3572,7 @@ namespace StartTor
 
         private static int StopTor()
         {
+            TunRequestOff();
             Process p = FindTor();
             if (p != null)
             {
@@ -4266,8 +4387,11 @@ namespace StartTor
                     Console.WriteLine();
                     Console.WriteLine("\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705\u2705");
                     Console.WriteLine("  P    :     On / Off  system proxy");
+                    Console.WriteLine("  T    :     On / Off  TUN tunnel (zeptun, whole system)");
                     Console.WriteLine("  C    :     Stop Tor, back to menu");
                     Console.WriteLine();
+                    Console.WriteLine("  TUN          :  " +
+                        (TunOnNow() ? "ON (zeptun)" : (TunPending() ? "starting..." : "off")));
                 }
                 StartWatchdog();
 
@@ -4298,6 +4422,30 @@ namespace StartTor
                                 proxyOn = !proxyOn;
                                 SetSystemProxy(proxyOn);
                                 Console.WriteLine("  System proxy " + (proxyOn ? "ON  (127.0.0.1:" + liveHttpPort + ")" : "OFF"));
+                            }
+                            else if (ki.Key == ConsoleKey.T)
+                            {
+                                lock (consoleLock)
+                                {
+                                    if (!TunOnNow() && !TunPending())
+                                    {
+                                        Console.WriteLine("  TUN on (zeptun; allow the admin prompt)...");
+                                        TunToggle(true);
+                                        if (TunWait(true, 30000, true))
+                                            Console.WriteLine("  TUN is UP - the whole system is routed through Tor.");
+                                        else
+                                            Console.WriteLine("  [x] TUN did not come up; see data\\zeptun-state.txt");
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine("  TUN off...");
+                                        TunToggle(false);
+                                        if (TunWait(false, 15000, true))
+                                            Console.WriteLine("  TUN stopped.");
+                                        else
+                                            Console.WriteLine("  [x] TUN did not stop; run --tun status.");
+                                    }
+                                }
                             }
                             else if (ki.Key == ConsoleKey.S)
                             {
@@ -4588,6 +4736,32 @@ namespace StartTor
             if (args.Length > 0 && args[0] == "--stop")
             {
                 return StopTor();
+            }
+            if (args.Length > 0 && args[0] == "--tun")
+            {
+                // TUN toggle/status subcommand: --tun on|off|status
+                string act = args.Length > 1 ? args[1].ToLowerInvariant() : "status";
+                if (act == "on")
+                {
+                    TunToggle(true);
+                    Console.WriteLine(TunWait(true, 30000, true)
+                        ? "TUN on (zeptun)."
+                        : "TUN did not come up; read data\\zeptun-state.txt.");
+                }
+                else if (act == "off")
+                {
+                    TunToggle(false);
+                    Console.WriteLine(TunWait(false, 15000, true)
+                        ? "TUN off."
+                        : "TUN did not stop; run --tun status and check the state file.");
+                }
+                else
+                {
+                    string st = TunOnNow() ? "on" : (TunPending() ? "pending" : "off");
+                    string msg = TunErrorNow();
+                    Console.WriteLine("TUN status: " + st + (msg.Length > 0 ? " (" + msg + ")" : ""));
+                }
+                return 0;
             }
             if (args.Length > 0 &&
                 (args[0] == "--update-bridges" || args[0] == "--update" || args[0] == "-u"))

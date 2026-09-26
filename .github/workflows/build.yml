@@ -193,6 +193,30 @@ jobs:
           Copy-Item "transports\*.exe" -Destination "dist\data\" -Force
           Get-ChildItem "dist" -Recurse -File | Select-Object FullName, Length
 
+      # zeptun (TUN engine) is consumed as a pinned official release, never
+      # built here (Zig is not installed on the runner). v1.1.1's Windows zip
+      # bundles both zeptun.exe and wintun.dll; the sha256 is verified so a
+      # tampered or rotated asset fails the build instead of shipping.
+      - name: Download zeptun TUN engine (pinned v1.1.1)
+        shell: pwsh
+        run: |
+          $ver = "v1.1.1"
+          $expected = "9d1cf6b6fc1aeb7d81d5f69802b485ef247902fe88a565a520e29fcf21f04da7"
+          $zip = Join-Path $env:TEMP "zeptun-$ver.zip"
+          $uri = "https://github.com/Noisemux/zeptun/releases/download/$ver/zeptun-windows-x86_64.zip"
+          Invoke-WebRequest -Uri $uri -OutFile $zip -UseBasicParsing
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "zeptun $ver sha256 mismatch: got $actual expected $expected"
+          }
+          Expand-Archive -Path $zip -DestinationPath "dist\data" -Force
+          $srcDir = "dist\data\zeptun-win-x86_64"
+          if (Test-Path $srcDir) {
+            Get-ChildItem $srcDir -File | ForEach-Object { Move-Item $_.FullName "dist\data\" -Force }
+            Remove-Item $srcDir -Recurse -Force
+          }
+          Get-ChildItem "dist\data\zeptun.exe", "dist\data\wintun.dll" | Select-Object Name, Length
+
       - name: Copy config template, snowflake bridge, README
         shell: pwsh
         run: |
@@ -315,7 +339,8 @@ jobs:
             echo "**Download:** \`deltator-win64-$TAG.zip\` — unzip anywhere and double-click \`DeltaTor.exe\`."
             echo ""
             echo "Built in CI from official tor 0.4.9.11 sources plus obfs4, webtunnel"
-            echo "and snowflake."
+            echo "and snowflake, with the pinned official zeptun release for the"
+            echo "whole-system TUN tunnel (press T)."
             echo ""
             echo "| Endpoint | Address |"
             echo "|---|---|"
