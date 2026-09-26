@@ -41,6 +41,8 @@ object ParallelTorManager {
         "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
     private const val RACE_TIMEOUT_MS = 300_000L
     private const val POLL_INTERVAL_MS = 1_000L
+    private const val PORT_FREE_TIMEOUT_MS = 15_000L
+    private const val PORT_FREE_POLL_MS = 250L
 
     val BRIDGE_SOURCES = listOf(
         TRANSPORT_VANILLA to "$BRIDGE_BASE_URL/vanilla_tested.txt",
@@ -65,8 +67,10 @@ object ParallelTorManager {
      * 100% bootstrap. Returns the winning [TorRunner]; the losers are stopped and
      * their processes torn down.
      *
-     * @param basePort the winner's Tor SOCKS5 port is derived from this
-     *        (vanilla=base, obfs4=base+1, webtunnel=base+2, memory=base+3)
+    /**
+     * @param basePort the app's own TUN<->Tor bridge port. It is reserved and NOT
+     *        handed to any runner: the runners take basePort+1 .. basePort+4, so a
+     *        runner that wins can never hold the port the bridge needs to bind.
      * @param onProgress called every [POLL_INTERVAL_MS] with a live snapshot,
      *        including runners that have not finished starting yet.
      */
@@ -89,11 +93,12 @@ object ParallelTorManager {
             Log.i(TAG, "Memory runner: nothing proven yet, racing 3 transports only")
         }
 
+        // basePort belongs to the app's TUN bridge, so the runners start above it.
         val ports = mapOf(
-            TRANSPORT_VANILLA to basePort,
-            TRANSPORT_OBFS4 to basePort + 1,
-            TRANSPORT_WEBTUNNEL to basePort + 2,
-            TRANSPORT_MEMORY to basePort + 3
+            TRANSPORT_VANILLA to basePort + 1,
+            TRANSPORT_OBFS4 to basePort + 2,
+            TRANSPORT_WEBTUNNEL to basePort + 3,
+            TRANSPORT_MEMORY to basePort + 4
         )
         val plans = buildList {
             BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
@@ -103,7 +108,7 @@ object ParallelTorManager {
         synchronized(runnersLock) { runners = mutableMapOf() }
 
         plans.forEach { (name, bridgeLines) ->
-            val runner = TorRunner(context, name, ports[name] ?: basePort, bridgeLines)
+            val runner = TorRunner(context, name, ports.getValue(name), bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
             Log.transport(sessionId, name, 'I', TAG, "starting ($bridgeCount bridges)")
@@ -196,7 +201,11 @@ object ParallelTorManager {
         )
     }
 
-    /** Stop and discard every runner. */
+    /**
+     * Stop and discard every runner. [TorRunner.stop] blocks until the processes
+     * are really gone, so this returns with no Tor/lyrebird process of ours left
+     * holding a socket.
+     */
     fun stopAll() {
         val list = synchronized(runnersLock) {
             val copy = runners.values.toList()
@@ -204,6 +213,45 @@ object ParallelTorManager {
             copy
         }
         list.forEach { it.stop() }
+    }
+
+    /**
+     * Block until [port] on [host] can actually be bound, or the timeout expires.
+     * A killed process keeps its listening socket until the kernel reaps it, so
+     * anything that binds right after a teardown has to wait for this.
+     * Returns true when the port is free.
+     */
+    fun awaitPortFree(host: String, port: Int, timeoutMs: Long = PORT_FREE_TIMEOUT_MS): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var attempt = 0
+        while (true) {
+            val free = try {
+                java.net.ServerSocket().use { it.reuseAddress = true; it.bind(java.net.InetSocketAddress(host, port)); true }
+            } catch (_: Exception) {
+                false
+            }
+            if (free) {
+                if (attempt > 0) Log.i(TAG, "port $port free after $attempt wait(s)")
+                return true
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                Log.e(TAG, "port $port still in use after ${timeoutMs}ms")
+                return false
+            }
+            attempt++
+            Log.w(TAG, "port $port still held, waiting (attempt $attempt)")
+            Thread.sleep(PORT_FREE_POLL_MS)
+        }
+    }
+
+    /**
+     * Stop everything and wait for every runner port to be released. Used on
+     * disconnect so a following connect never races the previous teardown.
+     */
+    fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
+        val ports = (basePort..basePort + 4).toList()
+        stopAll()
+        return ports.all { awaitPortFree(host, it) }
     }
 
     /** Read the cached bridge lists (falling back to a fresh download + cache). */
