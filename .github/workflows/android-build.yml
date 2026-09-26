@@ -4,6 +4,11 @@ on:
   push:
     branches: [ "main", "android" ]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release version tag to build, e.g. v1.2.3 (leave blank to only debug-build)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -41,3 +46,78 @@ jobs:
           name: deltator-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  release:
+    # Only runs when triggered manually with a tag input.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Android SDK platform, build-tools and NDK
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -1)"
+          echo "Using sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "ndk;29.0.14206865"
+
+      - name: Restore release keystore from secret
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/android-release.jks"
+            echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/android-release.jks" >> "$GITHUB_ENV"
+          fi
+        env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
+
+      - name: Build signed release APK
+        run: ./gradlew assembleRelease --no-daemon
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_STORE_TYPE }}
+
+      - name: Tag, create or update GitHub release
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK_PATH"
+          cp "$APK_PATH" "deltator-${TAG}.apk"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --force --tags
+          git tag -f "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG" --force
+          NOTES="Automated build from workflow run $GITHUB_RUN_NUMBER ([view]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID))."
+          if gh release create "$TAG" "deltator-${TAG}.apk" \
+              --target "$GITHUB_SHA" \
+              --title "DeltaTor $TAG" \
+              --notes "$NOTES" \
+              --latest; then
+            echo "Release created for $TAG"
+          else
+            echo "Release already exists for $TAG — updating assets instead"
+            gh release upload "$TAG" "deltator-${TAG}.apk" --clobber
+            gh release edit "$TAG" --title "DeltaTor $TAG" --notes "$NOTES" --latest
+          fi
