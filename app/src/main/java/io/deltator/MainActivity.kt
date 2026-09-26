@@ -1422,15 +1422,16 @@ private fun SettingsScreen(
     var templateText by remember { mutableStateOf(TorrcSettings.template()) }
     var saved by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val exitCode by ExitNodes.code.collectAsStateWithLifecycle()
-    val exitName by ExitNodes.name.collectAsStateWithLifecycle()
+    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
+    val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
 
-    // Plain country list from the bundled table, alphabetical by name. Does not
-    // depend on the bridge cache, so it is available on the very first launch.
+    // Plain country list from the bundled table. Recommended countries first,
+    // then the rest alphabetically. Does not depend on the bridge cache, so it
+    // is available on the very first launch.
     LaunchedEffect(Unit) {
         countries = withContext(Dispatchers.IO) {
-            runCatching { BridgeCountries.top(context) }.getOrDefault(emptyList())
+            runCatching { ExitNodes.order(BridgeCountries.top(context)) }.getOrDefault(emptyList())
         }
     }
 
@@ -1553,19 +1554,40 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(22.dp))
 
-            SettingsCardHeader("EXIT NODE", "Optional exit country \u00b7 alphabetical")
+            SettingsCardHeader("EXIT NODE", "Optional exit countries \u00b7 pick as many as you like")
             SettingsCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        if (exitCode.isBlank()) "Any location \u00b7 default"
-                        else "${flagEmoji(exitCode)}  $exitName",
+                        when {
+                            selectedCodes.isEmpty() -> "Any location \u00b7 default"
+                            selectedCodes.size == 1 -> {
+                                val only = selectedCodes.first()
+                                "${flagEmoji(only)}  ${exitNames[only].orEmpty()}"
+                            }
+                            else -> "${selectedCodes.size} countries selected"
+                        },
                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                         color = DeltaTor.Text,
                         modifier = Modifier.weight(1f)
                     )
+                    if (selectedCodes.isNotEmpty()) {
+                        Text(
+                            "CLEAR",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.1.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = DeltaTor.Red,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .clickable { ExitNodes.clear() }
+                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
                     Text(
                         "NEXT CONNECT",
                         style = MaterialTheme.typography.labelSmall.copy(
@@ -1577,7 +1599,8 @@ private fun SettingsScreen(
                 }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Tap a country to use it as your exit \u00b7 applied as ExitNodes {cc} + StrictNodes 1 in torrc.",
+                    "Tap to add or remove a country \u00b7 written to torrc as " +
+                        "ExitNodes {us},{nl},\u2026 with StrictNodes 1.",
                     style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                     color = DeltaTor.Muted
                 )
@@ -1602,7 +1625,7 @@ private fun SettingsScreen(
                             emoji = "\uD83C\uDF10",
                             name = "Any location \u00b7 default",
                             code = "--",
-                            selected = exitCode.isBlank(),
+                            selected = selectedCodes.isEmpty(),
                             onClick = { ExitNodes.clear() }
                         )
                         countries.forEach { c ->
@@ -1610,8 +1633,8 @@ private fun SettingsScreen(
                                 emoji = flagEmoji(c.code),
                                 name = c.name,
                                 code = c.code,
-                                selected = c.code == exitCode,
-                                onClick = { ExitNodes.select(c.code, c.name) }
+                                selected = c.code in selectedCodes,
+                                onClick = { ExitNodes.toggle(c.code, c.name) }
                             )
                         }
                     }

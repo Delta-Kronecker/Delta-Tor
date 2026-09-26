@@ -343,9 +343,12 @@ class TorRunner(
         }
 
         val exitDirective = buildString {
-            val cc = ExitNodes.currentCode().trim().uppercase()
-            if (cc.length == 2 && cc.all { it in 'A'..'Z' }) {
-                appendLine("ExitNodes {$cc}")
+            val ccs = ExitNodes.currentCodes()
+                .map { it.trim().uppercase() }
+                .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+                .distinct()
+            if (ccs.isNotEmpty()) {
+                appendLine("ExitNodes " + ccs.joinToString(",") { "{$it}" })
                 appendLine("StrictNodes 1")
             }
         }
