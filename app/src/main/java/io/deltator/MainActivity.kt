@@ -228,7 +228,7 @@ private fun MainScreen(
     val release by AppState.releaseState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
     val context = LocalContext.current
-    var dismissedRelease by remember { mutableStateOf(ReleaseChecker.dismissedVersion()) }
+    var dismissedRelease by remember { mutableStateOf("") }
 
     val connecting = state.connecting
     val connected = state.connected
@@ -252,10 +252,7 @@ private fun MainScreen(
             UpdateBanner(
                 version = release.latestVersion,
                 onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
-                onDismiss = {
-                    dismissedRelease = release.latestVersion
-                    ReleaseChecker.dismiss()
-                },
+                onDismiss = { dismissedRelease = release.latestVersion },
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .offset(y = 98.dp)
