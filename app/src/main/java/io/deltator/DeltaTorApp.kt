@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import io.deltator.tunnel.BridgeStore
+import io.deltator.tunnel.TorrcSettings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,6 +19,7 @@ class DeltaTorApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Config.init(this)
+        TorrcSettings.init(this)
         createNotificationChannels()
         BridgeStore.refreshState(this)
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
