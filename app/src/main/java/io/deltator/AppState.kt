@@ -30,11 +30,21 @@ object AppState {
         val error: String? = null
     )
 
+    data class ReleaseState(
+        val checking: Boolean = false,
+        val latestVersion: String = "",
+        val latestUrl: String = "",
+        val newer: Boolean = false
+    )
+
     private val _state = MutableStateFlow(VpnState())
     val state: StateFlow<VpnState> = _state.asStateFlow()
 
     private val _bridgeState = MutableStateFlow(BridgeState())
     val bridgeState: StateFlow<BridgeState> = _bridgeState.asStateFlow()
+
+    private val _releaseState = MutableStateFlow(ReleaseState(checking = true))
+    val releaseState: StateFlow<ReleaseState> = _releaseState.asStateFlow()
 
     @Volatile
     var vpnStarted = false
@@ -57,5 +67,9 @@ object AppState {
 
     fun updateBridge(block: (BridgeState) -> BridgeState) {
         _bridgeState.update(block)
+    }
+
+    fun updateRelease(block: (ReleaseState) -> ReleaseState) {
+        _releaseState.update(block)
     }
 }
