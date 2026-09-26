@@ -1341,7 +1341,7 @@ private fun SettingsCardHeader(
 private fun ExitCountryRow(
     emoji: String,
     name: String,
-    count: Int,
+    code: String,
     selected: Boolean,
     onClick: () -> Unit
 ) {
@@ -1362,10 +1362,18 @@ private fun ExitCountryRow(
             modifier = Modifier.weight(1f)
         )
         Text(
-            if (selected) "SELECTED \u2713" else "$count",
+            code,
+            style = MaterialTheme.typography.labelMedium.copy(
+                letterSpacing = 1.sp,
+                color = DeltaTor.Muted
+            )
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            if (selected) "SELECTED \u2713" else "",
             style = MaterialTheme.typography.labelMedium.copy(
                 letterSpacing = 0.4.sp,
-                color = if (selected) DeltaTor.GreenLight else DeltaTor.Muted
+                color = DeltaTor.GreenLight
             )
         )
         Spacer(Modifier.width(8.dp))
@@ -1416,15 +1424,11 @@ private fun SettingsScreen(
     val context = LocalContext.current
     val exitCode by ExitNodes.code.collectAsStateWithLifecycle()
     val exitName by ExitNodes.name.collectAsStateWithLifecycle()
-    val bridgeState by AppState.bridgeState.collectAsStateWithLifecycle()
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
 
-    // Ranking comes from the cached bridge lists, so make sure a cache exists
-    // and rebuild the list whenever the cache changes.
+    // Plain country list from the bundled table, alphabetical by name. Does not
+    // depend on the bridge cache, so it is available on the very first launch.
     LaunchedEffect(Unit) {
-        runCatching { BridgeStore.autoUpdateIfStale(context) }
-    }
-    LaunchedEffect(bridgeState.vanilla, bridgeState.obfs4, bridgeState.webtunnel, bridgeState.lastUpdateMillis) {
         countries = withContext(Dispatchers.IO) {
             runCatching { BridgeCountries.top(context) }.getOrDefault(emptyList())
         }
@@ -1549,7 +1553,7 @@ private fun SettingsScreen(
 
             Spacer(Modifier.height(22.dp))
 
-            SettingsCardHeader("EXIT NODE", "Optional exit country \u00b7 ranked by tested bridges")
+            SettingsCardHeader("EXIT NODE", "Optional exit country \u00b7 alphabetical")
             SettingsCard {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1580,7 +1584,7 @@ private fun SettingsScreen(
                 if (countries.isEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "No bridges cached yet \u00b7 connect once to build the ranking.",
+                        "Loading country list \u2026",
                         style = MaterialTheme.typography.bodySmall,
                         color = DeltaTor.Muted.copy(alpha = 0.75f)
                     )
@@ -1597,7 +1601,7 @@ private fun SettingsScreen(
                         ExitCountryRow(
                             emoji = "\uD83C\uDF10",
                             name = "Any location \u00b7 default",
-                            count = countries.sumOf { it.bridges },
+                            code = "--",
                             selected = exitCode.isBlank(),
                             onClick = { ExitNodes.clear() }
                         )
@@ -1605,7 +1609,7 @@ private fun SettingsScreen(
                             ExitCountryRow(
                                 emoji = flagEmoji(c.code),
                                 name = c.name,
-                                count = c.bridges,
+                                code = c.code,
                                 selected = c.code == exitCode,
                                 onClick = { ExitNodes.select(c.code, c.name) }
                             )

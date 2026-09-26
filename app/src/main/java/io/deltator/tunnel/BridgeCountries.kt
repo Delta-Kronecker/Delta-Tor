@@ -5,25 +5,17 @@ import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
-import java.io.File
 import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
 /**
- * One entry of the exit-country ranking: how many unique bridge IPs run in that
- * country (all mirrors are pre-tested, so the count doubles as the performance
- * proxy). Sorted by bridge count descending, then by name.
+ * One entry of the exit-country picker: an ISO country code and its name.
  */
 data class ExitCountry(
     val code: String,
     val name: String,
-    val bridges: Int
-) : Comparable<ExitCountry> {
-    override fun compareTo(other: ExitCountry): Int {
-        if (bridges != other.bridges) return other.bridges - bridges
-        return name.compareTo(other.name)
-    }
-}
+    val bridges: Int = 0
+)
 
 /**
  * Bundled db-ip country-lite (CC BY 4.0) dataset: sorted IP ranges -> country code.
@@ -88,8 +80,13 @@ private class CountryDb(
 }
 
 /**
- * Aggregates the cached bridge lists by ISO country code of the bridge IP and
- * exposes the ranking for the EXIT NODE settings card.
+ * Country list for the EXIT NODE picker, plus an offline IP -> country lookup
+ * used as a fallback when the online exit lookup is unavailable.
+ *
+ * The picker is a plain list of every country shipped in the GeoIP dataset,
+ * sorted alphabetically by name so it is easy to scan. It intentionally does
+ * not depend on the bridge cache: the list must always be there, even on a
+ * first run with no bridges downloaded yet.
  */
 object BridgeCountries {
     private const val TAG = "BridgeCountries"
@@ -125,38 +122,20 @@ object BridgeCountries {
             cc to (countryNames(context)[cc] ?: cc)
         }
 
-    /** Rank countries by unique bridge IP count, best first. */
+    /**
+     * Every selectable exit country, alphabetical by name. Cheap: the name table
+     * is a few kB asset, no GeoIP parse and no bridge cache needed.
+     */
     suspend fun top(context: Context): List<ExitCountry> = withContext(Dispatchers.IO) {
         try {
-            val geo = db ?: CountryDb.load(context).also { db = it }
-            val names = countryNames(context)
-            val perCountry = HashMap<String, HashSet<Long>>()
-            for ((name, _) in ParallelTorManager.BRIDGE_SOURCES) {
-                val f = File(context.filesDir, "bridges/$name.txt")
-                if (!f.exists()) continue
-                f.readLines().forEach { line ->
-                    val ip = bridgeIp(line) ?: return@forEach
-                    val cc = geo.country(ip) ?: return@forEach
-                    perCountry.getOrPut(cc) { HashSet() }.add(ip)
-                }
-            }
-            perCountry.map { (cc, set) ->
-                ExitCountry(cc, names[cc] ?: cc, set.size)
-            }.sorted().toList()
+            countryNames(context)
+                .filterKeys { it.length == 2 }
+                .map { (cc, name) -> ExitCountry(cc, name) }
+                .sortedBy { it.name.lowercase() }
         } catch (e: Exception) {
-            Log.w(TAG, "Exit ranking failed: ${e.message}")
+            Log.w(TAG, "Country list failed: ${e.message}")
             emptyList()
         }
-    }
-
-    /** Extract the IPv4 host from a bridge line token (ignores IPv6). */
-    private fun bridgeIp(line: String): Long? {
-        for (token in line.split(Regex("\\s+"))) {
-            if (token.isEmpty()) continue
-            val ip = ipv4ToLong(token.substringBefore(':'))
-            if (ip != null) return ip
-        }
-        return null
     }
 }
 
