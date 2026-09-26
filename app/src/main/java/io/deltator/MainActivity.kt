@@ -1716,6 +1716,13 @@ private fun levelLabel(level: Char): String = when (level) {
 
 private const val LOG_SEVERITY_ORDER = "EWIDV"
 
+private fun transportColor(transport: String): Color = when (transport) {
+    "vanilla" -> Color(0xFF5AC8FA)
+    "obfs4" -> Color(0xFFFF9F0A)
+    "webtunnel" -> Color(0xFF30D158)
+    else -> DeltaTor.Muted
+}
+
 private sealed interface LogNode {
     data class SessionHeader(val id: Int, val title: String, val count: Int) : LogNode
     data class Header(val level: Char, val count: Int, val owner: Int) : LogNode
@@ -1723,12 +1730,19 @@ private sealed interface LogNode {
 }
 
 /**
- * Chronological log, split into one section per connect attempt so failures can
- * be read per connection instead of being interleaved.
+ * Chronological log, split into one section per connect attempt and filterable
+ * per transport (vanilla / obfs4 / webtunnel) so each raced connection can be
+ * read on its own.
  */
-private fun groupLog(lines: List<LogEntry>, sessions: List<LogSession>, filter: Char?): List<LogNode> {
+private fun groupLog(
+    lines: List<LogEntry>,
+    sessions: List<LogSession>,
+    filter: Char?,
+    transport: String?
+): List<LogNode> {
     val out = ArrayList<LogNode>()
 
+    val visible = if (transport == null) lines else lines.filter { it.transport == transport }
     fun addSections(section: List<LogEntry>, sid: Int) {
         for (level in LOG_SEVERITY_ORDER) {
             if (filter != null && filter != level) continue
@@ -1739,15 +1753,15 @@ private fun groupLog(lines: List<LogEntry>, sessions: List<LogSession>, filter: 
         }
     }
 
-    if (lines.none { it.session != 0 }) {
-        addSections(lines, 0)
+    if (visible.none { it.session != 0 }) {
+        addSections(visible, 0)
         return out
     }
 
     // Oldest session first; the list is reverse-rendered so newest ends up on top.
-    val ids = lines.map { it.session }.distinct()
+    val ids = visible.map { it.session }.distinct()
     ids.forEach { sid ->
-        val section = lines.filter { it.session == sid }
+        val section = visible.filter { it.session == sid }
         if (filter != null && section.none { it.level == filter }) return@forEach
         val meta = sessions.firstOrNull { it.id == sid }
         val title = listOfNotNull(
@@ -1827,6 +1841,37 @@ private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifie
 }
 
 @Composable
+private fun TransportChip(
+    label: String,
+    color: Color,
+    selected: Boolean,
+    count: Int,
+    onSelect: () -> Unit
+) {
+    Text(
+        text = if (count > 0) "$label ($count)" else label,
+        style = MaterialTheme.typography.labelSmall.copy(
+            letterSpacing = 1.1.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        color = if (selected) Color.White else color,
+        modifier = Modifier
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (selected) color else color.copy(alpha = 0.10f),
+                RoundedCornerShape(50)
+            )
+            .border(
+                1.dp,
+                if (selected) color else color.copy(alpha = 0.5f),
+                RoundedCornerShape(50)
+            )
+            .clickable { onSelect() }
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    )
+}
+
+@Composable
 private fun LogSessionHeader(id: Int, title: String, count: Int, modifier: Modifier = Modifier) {
     Row(
         modifier = modifier
@@ -1878,7 +1923,11 @@ private fun LogScreen(onBack: () -> Unit) {
     val sessions by AppLog.sessions.collectAsStateWithLifecycle()
     var copied by remember { mutableStateOf(false) }
     var filter by remember { mutableStateOf<Char?>(null) }
-    val nodes = remember(lines, sessions, filter) { groupLog(lines, sessions, filter) }
+    var transport by remember { mutableStateOf<String?>(null) }
+    val nodes = remember(lines, sessions, filter, transport) { groupLog(lines, sessions, filter, transport) }
+    val transportCounts = remember(lines) {
+        AppLog.TRANSPORTS.associateWith { t -> lines.count { it.transport == t } }
+    }
 
     LaunchedEffect(Unit) {
         AppLog.addObserver()
@@ -1899,7 +1948,7 @@ private fun LogScreen(onBack: () -> Unit) {
     }
 
     fun copyLog() {
-        val text = lines.joinToString("\n") { it.raw }
+        val text = nodes.filterIsInstance<LogNode.Row>().joinToString("\n") { it.entry.raw }
         if (text.isBlank()) return
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("DeltaTor connection log", text))
@@ -1944,6 +1993,34 @@ private fun LogScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(4.dp))
 
+            Spacer(Modifier.height(6.dp))
+
+            // Transport picker: read one raced connection at a time.
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 22.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                TransportChip(
+                    label = "ALL",
+                    color = DeltaTor.AccentLight,
+                    selected = transport == null,
+                    count = 0
+                ) { transport = null }
+                AppLog.TRANSPORTS.forEach { t ->
+                    TransportChip(
+                        label = t.uppercase(),
+                        color = transportColor(t),
+                        selected = transport == t,
+                        count = transportCounts[t] ?: 0
+                    ) { transport = if (transport == t) null else t }
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1972,8 +2049,11 @@ private fun LogScreen(onBack: () -> Unit) {
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        if (lines.isEmpty()) "No log lines captured yet. Start a connection."
-                        else "No entries for this level.",
+                        when {
+                            lines.isEmpty() -> "No log lines captured yet. Start a connection."
+                            transport != null -> "No ${transport.uppercase()} lines captured yet."
+                            else -> "No entries for this level."
+                        },
                         style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.4.sp),
                         color = DeltaTor.Muted
                     )
