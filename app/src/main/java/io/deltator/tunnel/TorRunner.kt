@@ -301,8 +301,12 @@ class TorRunner(
         }
 
         val overrides = TorrcSettings.overrideLines()
-        val torrcContent = "$common\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n${overrides.joinToString("\n")}\n"
+        val custom = TorrcSettings.customLines()
+        val torrcContent = "$common\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n${overrides.joinToString("\n")}\n${custom.joinToString("\n")}\n"
         torrcFile.writeText(torrcContent)
+        try {
+            File(context.filesDir, "tor_last.torrc").writeText(torrcContent)
+        } catch (_: Exception) {}
 
         Log.d(tag, "--- Generated torrc ($name) ---")
         torrcContent.lines().forEach { line ->

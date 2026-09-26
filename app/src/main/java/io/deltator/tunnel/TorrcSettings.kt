@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 enum class TorrcOptionType { STRING, INT, BOOL }
 
@@ -137,5 +138,28 @@ object TorrcSettings {
             }
         }
         return out
+    }
+
+    // --- manual torrc file ---
+
+    fun customTorrc(): String = prefs.getString("torrc_custom", "") ?: ""
+
+    fun setCustomTorrc(text: String) {
+        prefs.edit().putString("torrc_custom", text.trim()).apply()
+    }
+
+    /** Non-blank, non-comment lines from the user-edited torrc block. */
+    fun customLines(): List<String> = customTorrc().lines()
+        .map { it.trim() }
+        .filter { it.isNotBlank() && !it.startsWith("#") }
+
+    /** Content of the last torrc actually generated, for read-only preview. */
+    fun readLastGenerated(context: Context): String {
+        val f = File(context.filesDir, "tor_last.torrc")
+        return try {
+            if (f.exists()) f.readText() else ""
+        } catch (e: Exception) {
+            ""
+        }
     }
 }
