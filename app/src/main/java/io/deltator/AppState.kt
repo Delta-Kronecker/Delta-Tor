@@ -23,7 +23,8 @@ object AppState {
         val rxSpeed: Float = 0f,
         val connectedAtMillis: Long = 0,
         val exitCode: String = "",
-        val exitName: String = ""
+        val exitName: String = "",
+        val exitIp: String = ""
     )
 
     data class BridgeState(

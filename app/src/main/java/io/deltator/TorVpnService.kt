@@ -186,7 +186,8 @@ class TorVpnService : VpnService() {
                 transports = mapOf(w.name to 100),
                 connectedAtMillis = System.currentTimeMillis(),
                 exitCode = "",
-                exitName = ""
+                exitName = "",
+                exitIp = ""
             )
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
@@ -328,14 +329,26 @@ class TorVpnService : VpnService() {
     private fun startExitLocator(proxyHost: String, proxyPort: Int) {
         serviceScope.launch {
             try {
-                val ip = ExitLocator.exitIp(proxyHost, proxyPort) ?: return@launch
-                val info = BridgeCountries.countryInfo(this@TorVpnService, ip)
-                if (info != null) {
-                    Log.i(TAG, "Exit located: $ip (${info.first})")
-                    AppState.update { it.copy(exitCode = info.first, exitName = info.second) }
+                val info = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort)
+                if (info == null) {
+                    Log.w(TAG, "Exit location lookup failed")
+                    return@launch
+                }
+                Log.i(
+                    TAG,
+                    "Exit located: ${info.ip} \u00b7 ${info.label()}" +
+                        (if (info.asn.isNotBlank()) " \u00b7 ${info.asn}" else "") +
+                        " (via ${if (info.fromNetwork) "ip2location" else "offline geoip"})"
+                )
+                AppState.update {
+                    it.copy(
+                        exitIp = info.ip,
+                        exitCode = info.countryCode,
+                        exitName = info.countryName.ifBlank { info.city }
+                    )
                 }
             } catch (e: Exception) {
-                Log.d(TAG, "Exit locator failed: ${e.message}")
+                Log.w(TAG, "Exit locator failed: ${e.message}")
             }
         }
     }

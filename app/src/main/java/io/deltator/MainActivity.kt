@@ -842,7 +842,8 @@ private fun BottomPanel(
             InfoPill(
                 label = "EXIT",
                 value = when {
-                    state.exitCode.isNotBlank() -> "${flagEmoji(state.exitCode)} ${state.exitName}"
+                    state.exitCode.isNotBlank() ->
+                        "${flagEmoji(state.exitCode)} ${state.exitName}".trim()
                     state.connected -> "Locating \u2026"
                     else -> "--"
                 },
