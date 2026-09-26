@@ -11,15 +11,23 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Races three Tor transports against each other:
+ * Races four Tor clients against each other:
  *
  *  - [TRANSPORT_VANILLA]: direct (no pluggable transport) bridges
  *  - [TRANSPORT_OBFS4]: obfs4 bridges via lyrebird
  *  - [TRANSPORT_WEBTUNNEL]: webtunnel (HTTP CONNECT over TLS) bridges via lyrebird
+ *  - [TRANSPORT_MEMORY]: the bridges that provably worked last time, in any
+ *    transport (see [BridgeMemory])
+ *
+ * The first three always start with their full bridge list. The memory runner
+ * only joins once something has been proven; from then on it usually wins in
+ * seconds because Tor tries bridges in roughly listed order and gives up fast on
+ * the dead ones. Whenever a runner reaches 100%, the bridges it proved are added
+ * to its pool so the next connect starts from them.
  *
  * Bridge lists are fetched from the Tor-Bridges-Collector repository at runtime.
- * The runner whose Tor reports "Bootstrapped 100%" first wins; the other two are
- * stopped immediately.
+ * The runner whose Tor reports "Bootstrapped 100%" first wins; the other three
+ * are stopped immediately.
  */
 object ParallelTorManager {
     private const val TAG = "ParallelTorManager"
@@ -27,6 +35,7 @@ object ParallelTorManager {
     const val TRANSPORT_VANILLA = "vanilla"
     const val TRANSPORT_OBFS4 = "obfs4"
     const val TRANSPORT_WEBTUNNEL = "webtunnel"
+    const val TRANSPORT_MEMORY = "memory"
 
     private const val BRIDGE_BASE_URL =
         "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
@@ -52,12 +61,12 @@ object ParallelTorManager {
     }
 
     /**
-     * Fetch bridge lists, launch all three runners and wait for the first to
-     * reach 100% bootstrap. Returns the winning [TorRunner]; the losers are
-     * stopped and their processes torn down.
+     * Fetch bridge lists, launch every runner and wait for the first to reach
+     * 100% bootstrap. Returns the winning [TorRunner]; the losers are stopped and
+     * their processes torn down.
      *
      * @param basePort the winner's Tor SOCKS5 port is derived from this
-     *        (vanilla=base, obfs4=base+1, webtunnel=base+2)
+     *        (vanilla=base, obfs4=base+1, webtunnel=base+2, memory=base+3)
      * @param onProgress called every [POLL_INTERVAL_MS] with a live snapshot,
      *        including runners that have not finished starting yet.
      */
@@ -71,16 +80,29 @@ object ParallelTorManager {
 
         val lines = withContext(Dispatchers.IO) { fetchBridgeLines(context) }
 
+        val memoryLines = BridgeMemory.bridgeLinesFor(context, lines)
+        if (memoryLines != null) {
+            val n = memoryLines.lines().count { it.isNotBlank() }
+            Log.i(TAG, "Memory runner: $n proven bridge(s) available")
+            Log.transport(sessionId, TRANSPORT_MEMORY, 'I', TAG, "reusing $n previously proven bridge(s)")
+        } else {
+            Log.i(TAG, "Memory runner: nothing proven yet, racing 3 transports only")
+        }
+
         val ports = mapOf(
             TRANSPORT_VANILLA to basePort,
             TRANSPORT_OBFS4 to basePort + 1,
-            TRANSPORT_WEBTUNNEL to basePort + 2
+            TRANSPORT_WEBTUNNEL to basePort + 2,
+            TRANSPORT_MEMORY to basePort + 3
         )
+        val plans = buildList {
+            BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
+            memoryLines?.let { add(TRANSPORT_MEMORY to it) }
+        }
 
         synchronized(runnersLock) { runners = mutableMapOf() }
 
-        BRIDGE_SOURCES.forEach { (name, _) ->
-            val bridgeLines = lines[name] ?: ""
+        plans.forEach { (name, bridgeLines) ->
             val runner = TorRunner(context, name, ports[name] ?: basePort, bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
@@ -95,6 +117,10 @@ object ParallelTorManager {
                 Log.transport(sessionId, name, 'I', TAG, "tor + transport started")
             }
         }
+
+        // Runners already proven in an earlier poll, so two runners finishing in
+        // the same tick both contribute their bridges to the memory.
+        val recorded = mutableSetOf<String>()
 
         val deadline = System.currentTimeMillis() + RACE_TIMEOUT_MS
         while (true) {
@@ -111,6 +137,10 @@ object ParallelTorManager {
                     Log.transport(sessionId, r.name, 'E', TAG, "tor died: $reason")
                 }
             }
+
+            // Every runner that reached 100% teaches the memory its working bridges.
+            snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+                .forEach { recordMemory(context, sessionId, it) }
 
             val winner = snapshot.values.firstOrNull { it.isReady() }
             if (winner != null) {
@@ -146,6 +176,24 @@ object ParallelTorManager {
 
             delay(POLL_INTERVAL_MS)
         }
+    }
+
+    /**
+     * Store the bridges a 100% runner proved and, when it is the memory runner,
+     * drop the ones that just died so the pool cannot lock onto a dead set.
+     */
+    private fun recordMemory(context: Context, sessionId: Int, runner: TorRunner) {
+        val proven = runner.healthyBridges()
+        if (proven.isEmpty()) {
+            Log.transport(sessionId, runner.name, 'I', TAG, "100% but no bridge descriptor seen, memory unchanged")
+            return
+        }
+        val added = BridgeMemory.remember(context, runner.name, proven)
+        Log.transport(
+            sessionId, runner.name, 'I', TAG,
+            "memory updated: ${runner.healthyBridges().size} working bridge(s), +$added new " +
+                "(pool ${BridgeMemory.count(context, runner.name)})"
+        )
     }
 
     /** Stop and discard every runner. */
