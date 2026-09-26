@@ -47,7 +47,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -193,6 +196,7 @@ fun DeltaTorScreen(
     onUpdateBridges: () -> Unit
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
+    val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
 
     Crossfade(targetState = screen, label = "screen") { s ->
         when (s) {
@@ -200,10 +204,11 @@ fun DeltaTorScreen(
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
-                onUpdateBridges = onUpdateBridges,
                 onOpenSettings = { screen = Screen.Settings }
             )
             Screen.Settings -> SettingsScreen(
+                bridges = bridges,
+                onUpdateBridges = onUpdateBridges,
                 onBack = { screen = Screen.Main },
                 onOpenLog = { screen = Screen.Log }
             )
@@ -217,11 +222,9 @@ private fun MainScreen(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
-    onUpdateBridges: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
-    val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
     val context = LocalContext.current
@@ -242,7 +245,6 @@ private fun MainScreen(
         Header(
             statusColor = scAnimated,
             statusLabel = statusLabel(connecting, connected, torRunning),
-            onOpenSettings = onOpenSettings,
             modifier = Modifier.align(Alignment.TopCenter)
         )
 
@@ -295,12 +297,10 @@ private fun MainScreen(
 
         BottomPanel(
             state = state,
-            sc = scAnimated,
-            bridges = bridges,
             onPrimary = onPrimary,
             onStopVpn = onStopVpn,
             onDisconnect = onDisconnect,
-            onUpdateBridges = onUpdateBridges,
+            onOpenSettings = onOpenSettings,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
@@ -439,7 +439,6 @@ private fun AirBackground(glow: Color) {
 private fun Header(
     statusColor: Color,
     statusLabel: String,
-    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -467,18 +466,6 @@ private fun Header(
                 color = DeltaTor.AccentLight
             )
             Spacer(Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
-                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
-                    .clickable { onOpenSettings() },
-                contentAlignment = Alignment.Center
-            ) {
-                GearIcon(Modifier.size(20.dp), DeltaTor.Muted)
-            }
-            Spacer(Modifier.width(10.dp))
             StatusChip(color = statusColor, label = statusLabel)
         }
         Spacer(Modifier.height(14.dp))
@@ -764,12 +751,10 @@ private fun RingButton(
 @Composable
 private fun BottomPanel(
     state: AppState.VpnState,
-    sc: Color,
-    bridges: AppState.BridgeState,
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
-    onUpdateBridges: () -> Unit,
+    onOpenSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -833,7 +818,28 @@ private fun BottomPanel(
 
         Spacer(Modifier.height(12.dp))
 
-        BridgeCard(bridges = bridges, sc = sc, onUpdate = onUpdateBridges)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(DeltaTor.Surface, RoundedCornerShape(16.dp))
+                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(16.dp))
+                .clickable { onOpenSettings() },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            GearIcon(Modifier.size(18.dp), DeltaTor.AccentLight)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "ADVANCED",
+                style = MaterialTheme.typography.titleMedium.copy(
+                    letterSpacing = 1.6.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.AccentLight
+            )
+        }
     }
 }
 
@@ -937,10 +943,15 @@ private fun ArrowIcon(accent: Color, up: Boolean) {
 }
 
 @Composable
-private fun BridgeCard(bridges: AppState.BridgeState, sc: Color, onUpdate: () -> Unit) {
+private fun BridgeCard(
+    bridges: AppState.BridgeState,
+    sc: Color,
+    onUpdate: () -> Unit,
+    modifier: Modifier = Modifier
+) {
     val shape = RoundedCornerShape(18.dp)
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(shape)
             .background(
@@ -1331,7 +1342,18 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
+private fun SettingsScreen(
+    bridges: AppState.BridgeState,
+    onUpdateBridges: () -> Unit,
+    onBack: () -> Unit,
+    onOpenLog: () -> Unit
+) {
+    val values by TorrcSettings.values.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    var customText by remember { mutableStateOf(TorrcSettings.customTorrc()) }
+    var preview by remember { mutableStateOf(TorrcSettings.readLastGenerated(context)) }
+    var saved by remember { mutableStateOf(false) }
+
     val tfColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = DeltaTor.AccentLight,
         unfocusedBorderColor = DeltaTor.BorderLight,
@@ -1351,6 +1373,13 @@ private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
         uncheckedBorderColor = DeltaTor.BorderLight
     )
 
+    LaunchedEffect(saved) {
+        if (saved) {
+            delay(1500)
+            saved = false
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
@@ -1360,11 +1389,11 @@ private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
             )
     ) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            ScreenTopBar("SETTINGS", onBack)
+            ScreenTopBar("ADVANCED", onBack)
 
             Spacer(Modifier.height(10.dp))
 
-            SettingsCardHeader("TORRC", "Basic tor configuration \u00b7 applied on next connect") {
+            SettingsCardHeader("TORRC OPTIONS", "Basic tor configuration \u00b7 applied on next connect") {
                 Text(
                     "RESET",
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -1383,12 +1412,128 @@ private fun SettingsScreen(onBack: () -> Unit, onOpenLog: () -> Unit) {
                     if (index > 0) DividerInCard()
                     TorrcOptionRow(
                         option = option,
-                        value = TorrcSettings.valueOf(option.key),
+                        value = values[option.key] ?: "",
                         tfColors = tfColors,
                         switchColors = switchColors
                     )
                 }
             }
+
+            Spacer(Modifier.height(22.dp))
+
+            SettingsCardHeader("TORRC FILE", "Manual torrc block \u00b7 merged on next connect") {
+                Text(
+                    "REFRESH",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.AccentLight,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { preview = TorrcSettings.readLastGenerated(context) }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+            SettingsCard {
+                OutlinedTextField(
+                    value = customText,
+                    onValueChange = { customText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    minLines = 6,
+                    maxLines = 9,
+                    textStyle = TextStyle(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        color = DeltaTor.Text
+                    ),
+                    placeholder = {
+                        Text(
+                            "# One torrc directive per line, e.g.\nExcludeNodes {ir},{cn}\nStrictNodes 0",
+                            style = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 11.sp, color = DeltaTor.Muted)
+                        )
+                    },
+                    colors = tfColors
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (saved) "SAVED \u2713" else "Write directly to torrc \u00b7 overrides the options above",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = if (saved) DeltaTor.GreenLight else DeltaTor.Muted,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                Brush.horizontalGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent)),
+                                RoundedCornerShape(12.dp)
+                            )
+                            .clickable {
+                                TorrcSettings.setCustomTorrc(customText)
+                                saved = true
+                                preview = TorrcSettings.readLastGenerated(context)
+                            }
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            "SAVE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.2.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = Color.White
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                DividerInCard()
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "LAST GENERATED TORRC (READ-ONLY)",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.Muted
+                )
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(DeltaTor.Bg, RoundedCornerShape(12.dp))
+                        .border(1.dp, DeltaTor.Border, RoundedCornerShape(12.dp))
+                        .verticalScroll(rememberScrollState())
+                        .padding(10.dp)
+                ) {
+                    Text(
+                        preview.ifBlank { "No torrc generated yet \u2014 connect once to populate this preview." },
+                        style = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 9.sp,
+                            lineHeight = 12.sp,
+                            color = DeltaTor.Muted
+                        )
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
+            SettingsCardHeader("BRIDGES", "Bridge mirror counts \u00b7 live cache")
+            Spacer(Modifier.height(6.dp))
+            BridgeCard(
+                bridges = bridges,
+                sc = DeltaTor.Accent,
+                onUpdate = onUpdateBridges
+            )
 
             Spacer(Modifier.height(22.dp))
 
@@ -1528,24 +1673,17 @@ private fun logLevelColor(level: Char): Color = when (level) {
 private fun LogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val lines by AppLog.lines.collectAsStateWithLifecycle()
-    val scroll = rememberScrollState()
     var copied by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         AppLog.addObserver()
         while (true) {
             AppLog.flushIfDirty()
-            delay(120)
+            delay(250)
         }
     }
     DisposableEffect(Unit) {
         onDispose { AppLog.removeObserver() }
-    }
-
-    LaunchedEffect(lines.size) {
-        if (lines.isNotEmpty()) {
-            scroll.animateScrollTo(scroll.maxValue)
-        }
     }
 
     LaunchedEffect(copied) {
@@ -1613,14 +1751,15 @@ private fun LogScreen(onBack: () -> Unit) {
                     )
                 }
             } else {
-                Column(
-                    Modifier
+                LazyColumn(
+                    modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .verticalScroll(scroll)
-                        .padding(horizontal = 22.dp, vertical = 10.dp)
+                        .padding(horizontal = 22.dp, vertical = 10.dp),
+                    reverseLayout = true,
+                    state = rememberLazyListState()
                 ) {
-                    lines.forEach { entry ->
+                    items(items = lines.asReversed(), key = { it.id }) { entry ->
                         Text(
                             entry.raw,
                             style = TextStyle(
@@ -1632,7 +1771,7 @@ private fun LogScreen(onBack: () -> Unit) {
                             modifier = Modifier.padding(bottom = 3.dp)
                         )
                     }
-                    Spacer(Modifier.height(18.dp))
+                    item { Spacer(Modifier.height(18.dp)) }
                 }
             }
         }
