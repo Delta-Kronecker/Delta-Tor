@@ -64,6 +64,7 @@ object ParallelTorManager {
     suspend fun race(
         context: Context,
         basePort: Int,
+        sessionId: Int,
         onProgress: (Map<String, TorRunner>) -> Unit
     ): TorRunner {
         stopAll()
@@ -82,10 +83,16 @@ object ParallelTorManager {
             val bridgeLines = lines[name] ?: ""
             val runner = TorRunner(context, name, ports[name] ?: basePort, bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
+            val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
+            Log.session(sessionId, 'I', TAG, "--- $name: starting ($bridgeCount bridges) ---")
             val result = runner.start()
             if (result.isFailure) {
-                runner.failed = result.exceptionOrNull()?.message ?: "failed to start"
-                Log.e(TAG, "$name failed to start: ${runner.failed}")
+                val reason = result.exceptionOrNull()?.message ?: "failed to start"
+                runner.failed = reason
+                Log.session(sessionId, 'E', TAG, "$name failed: $reason")
+                Log.e(TAG, "$name failed to start: $reason")
+            } else {
+                Log.session(sessionId, 'I', TAG, "$name started (tor + transport up)")
             }
         }
 
@@ -94,19 +101,26 @@ object ParallelTorManager {
             val snapshot = synchronized(runnersLock) { runners.toMap() }
             onProgress(snapshot)
 
-            // Mark runners whose Tor process died before completing
+            // Mark runners whose Tor process died before completing. Read the
+            // real reason from their own per-transport log tail first.
             snapshot.values.forEach { r ->
                 if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
-                    r.failed = "process exited"
-                    Log.w(TAG, "${r.name} exited early")
+                    val reason = r.failureSummary()
+                    r.failed = reason
+                    Log.w(TAG, "${r.name} exited early: $reason")
+                    Log.session(sessionId, 'E', TAG, "--- ${r.name} died: $reason ---")
                 }
             }
 
             val winner = snapshot.values.firstOrNull { it.isReady() }
             if (winner != null) {
                 Log.i(TAG, "Winner: ${winner.name} at ${winner.progress()}%")
+                Log.session(sessionId, 'I', TAG, "--- winner: ${winner.name} (100%) ---")
                 snapshot.values.filter { it !== winner }.forEach {
                     Log.i(TAG, "Stopping losing transport: ${it.name}")
+                    if (it.failed != null) {
+                        Log.session(sessionId, 'E', TAG, "--- ${it.name} failed: ${it.failed} ---")
+                    }
                     it.stop()
                 }
                 return winner
@@ -115,6 +129,12 @@ object ParallelTorManager {
             val live = snapshot.values.count { it.failed == null }
             if (live == 0) {
                 val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
+                snapshot.values.forEach {
+                    Log.session(sessionId, 'E', TAG, "--- ${it.name} final: ${it.failed} ---")
+                    it.logLines().takeLast(12).forEach { line ->
+                        Log.session(sessionId, 'D', TAG, "    ${it.name} | $line")
+                    }
+                }
                 stopAll()
                 throw RuntimeException("All transports failed ($details)")
             }
