@@ -24,7 +24,6 @@ object ReleaseChecker {
     private const val API_LATEST = "https://api.github.com/repos/$REPO/releases/latest"
     private const val GITHUB_URL = "https://github.com/$REPO"
     private const val PREFS = "deltator"
-    private const val KEY_DISMISSED = "release_dismissed_v"
     private const val KEY_NOTIFIED = "release_notified_v"
 
     private lateinit var prefs: SharedPreferences
@@ -33,13 +32,6 @@ object ReleaseChecker {
         if (!::prefs.isInitialized) {
             prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         }
-    }
-
-    fun dismissedVersion(): String = prefs.getString(KEY_DISMISSED, null) ?: ""
-
-    fun dismiss() {
-        val v = AppState.releaseState.value?.latestVersion ?: return
-        prefs.edit().putString(KEY_DISMISSED, v).apply()
     }
 
     fun openInBrowser(context: Context, url: String) {
@@ -87,7 +79,8 @@ object ReleaseChecker {
     }
 
     private fun notify(context: Context, version: String, url: String) {
-        // Notify once per release version (still shown in-app if not dismissed).
+        // System notification fires once per release version; the in-app banner
+        // is re-shown on every app launch until the user taps DISMISS.
         val prev = prefs.getString(KEY_NOTIFIED, null)
         if (prev == version) return
         prefs.edit().putString(KEY_NOTIFIED, version).apply()
