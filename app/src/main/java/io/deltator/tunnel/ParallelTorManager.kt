@@ -67,7 +67,6 @@ object ParallelTorManager {
      * 100% bootstrap. Returns the winning [TorRunner]; the losers are stopped and
      * their processes torn down.
      *
-    /**
      * @param basePort the app's own TUN<->Tor bridge port. It is reserved and NOT
      *        handed to any runner: the runners take basePort+1 .. basePort+4, so a
      *        runner that wins can never hold the port the bridge needs to bind.
