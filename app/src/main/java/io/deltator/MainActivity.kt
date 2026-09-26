@@ -224,6 +224,7 @@ private fun MainScreen(
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
+    val context = LocalContext.current
     var dismissedRelease by remember { mutableStateOf(ReleaseChecker.dismissedVersion()) }
 
     val connecting = state.connecting
@@ -248,7 +249,7 @@ private fun MainScreen(
         if (release.newer && release.latestVersion.isNotBlank() && release.latestVersion != dismissedRelease) {
             UpdateBanner(
                 version = release.latestVersion,
-                onOpen = { ReleaseChecker.openInBrowser(LocalContext.current, release.latestUrl) },
+                onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
                 onDismiss = {
                     dismissedRelease = release.latestVersion
                     ReleaseChecker.dismiss()
