@@ -13,8 +13,7 @@ import java.util.zip.GZIPInputStream
  */
 data class ExitCountry(
     val code: String,
-    val name: String,
-    val bridges: Int = 0
+    val name: String
 )
 
 /**
