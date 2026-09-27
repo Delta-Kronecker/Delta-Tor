@@ -68,23 +68,39 @@ jobs:
           ANDROID_KEYSTORE_STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_STORE_TYPE }}
         run: ./gradlew assembleRelease --no-daemon
 
-      - name: Verify APK signature
+      - name: Collect per-ABI release APKs
+        env:
+          TAG_NAME: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
+        run: |
+          mkdir -p dist
+          shopt -s nullglob
+          for apk in app/build/outputs/apk/release/app-*-release.apk; do
+            abi="$(basename "$apk" | sed -E 's/^app-(.+)-release\.apk$/\1/')"
+            cp "$apk" "dist/deltator-$TAG_NAME-$abi.apk"
+          done
+          ls -l dist
+          test -f "dist/deltator-$TAG_NAME-arm64-v8a.apk"
+          test -f "dist/deltator-$TAG_NAME-armeabi-v7a.apk"
+
+      - name: Verify APK signatures
         run: |
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           echo "Using apksigner: $APKSIGNER"
-          cp app/build/outputs/apk/release/app-release.apk "deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk"
-          "$APKSIGNER" verify --verbose --print-certs "deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk"
+          for apk in dist/*.apk; do
+            echo "== $apk"
+            "$APKSIGNER" verify --verbose --print-certs "$apk"
+          done
 
-      - name: Upload release APK
+      - name: Upload release APKs
         uses: actions/upload-artifact@v4
         with:
-          name: deltator-release-apk
-          path: deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk
+          name: deltator-release-apks
+          path: dist/*.apk
           if-no-files-found: error
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
-          files: deltator-${{ inputs.tag != '' && inputs.tag || github.ref_name }}.apk
+          files: dist/*.apk
           generate_release_notes: true
