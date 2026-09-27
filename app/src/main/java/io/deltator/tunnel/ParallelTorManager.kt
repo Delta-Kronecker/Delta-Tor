@@ -346,7 +346,7 @@ object ParallelTorManager {
                 val (line, fp) = list.getOrNull(i) ?: return@forEach
                 val key = fp ?: line
                 val kept = merged[key]
-                if (kept == null || webtunnelVersion(line) > webtunnelVersion(kept)) {
+                if (kept == null || newerWebtunnelVersion(line, kept)) {
                     // A re-published line replaces the older one in place, so the
                     // order the bridges were first seen in is preserved.
                     merged[key] = line
@@ -358,8 +358,20 @@ object ParallelTorManager {
     }
 
     /**
-     * The `ver=` of a webtunnel line as a comparable triple. Returns null for
-     * every other transport, which then keeps first-seen wins.
+     * True when [candidate] carries a webtunnel protocol version newer than the one
+     * in [kept]. Lines without a `ver=` never replace a kept line, so every other
+     * transport keeps the first-seen-wins behaviour.
+     */
+    private fun newerWebtunnelVersion(candidate: String, kept: String): Boolean {
+        val a = webtunnelVersion(candidate) ?: return false
+        val b = webtunnelVersion(kept) ?: return false
+        if (a.first != b.first) return a.first > b.first
+        if (a.second != b.second) return a.second > b.second
+        return a.third > b.third
+    }
+
+    /**
+     * The `ver=` of a webtunnel line, or null when the line has none.
      */
     private fun webtunnelVersion(line: String): Triple<Int, Int, Int>? {
         val raw = line.split(' ').firstOrNull { it.startsWith("ver=") }
