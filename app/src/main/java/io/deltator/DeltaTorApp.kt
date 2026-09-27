@@ -26,6 +26,7 @@ class DeltaTorApp : Application() {
         BridgeStore.refreshState(this)
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
         appScope.launch { ReleaseChecker.check(this@DeltaTorApp) }
+        appScope.launch { InstallCounter.countInstall(this@DeltaTorApp) }
     }
 
     private fun createNotificationChannels() {
