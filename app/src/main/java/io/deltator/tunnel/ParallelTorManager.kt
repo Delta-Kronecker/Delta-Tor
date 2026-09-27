@@ -325,6 +325,10 @@ object ParallelTorManager {
      * (identified by its fingerprint) and alternating between the sources so a
      * transport backed by two files still draws from both once Tor's per-runner
      * line cap is applied. Comment and blank lines are dropped.
+     *
+     * A bridge is republished whenever the client protocol changes, so the same
+     * fingerprint shows up with an older and a newer `ver=`. The newest one wins,
+     * because a stale protocol version is rejected during the handshake.
      */
     fun mergeBridgeLists(bodies: List<String>): String {
         val lists = bodies.map { body ->
@@ -335,19 +339,34 @@ object ParallelTorManager {
         if (lists.isEmpty()) return ""
         if (lists.size == 1) return lists[0].joinToString("\n") { it.first }
 
-        val seen = HashSet<String>()
-        val merged = mutableListOf<String>()
+        val merged = LinkedHashMap<String, String>()
         val longest = lists.maxOf { it.size }
         for (i in 0 until longest) {
             lists.forEach { list ->
                 val (line, fp) = list.getOrNull(i) ?: return@forEach
-                if (fp != null && !seen.add(fp)) return@forEach
-                if (fp == null && !seen.add(line)) return@forEach
-                merged += line
+                val key = fp ?: line
+                val kept = merged[key]
+                if (kept == null || webtunnelVersion(line) > webtunnelVersion(kept)) {
+                    // A re-published line replaces the older one in place, so the
+                    // order the bridges were first seen in is preserved.
+                    merged[key] = line
+                }
             }
         }
         Log.i(TAG, "merged ${lists.size} bridge files into ${merged.size} unique bridge(s)")
-        return merged.joinToString("\n")
+        return merged.values.joinToString("\n")
+    }
+
+    /**
+     * The `ver=` of a webtunnel line as a comparable triple. Returns null for
+     * every other transport, which then keeps first-seen wins.
+     */
+    private fun webtunnelVersion(line: String): Triple<Int, Int, Int>? {
+        val raw = line.split(' ').firstOrNull { it.startsWith("ver=") }
+            ?: return null
+        val parts = raw.removePrefix("ver=").split('.').mapNotNull { it.toIntOrNull() }
+        if (parts.isEmpty()) return null
+        return Triple(parts.getOrElse(0) { 0 }, parts.getOrElse(1) { 0 }, parts.getOrElse(2) { 0 })
     }
 
 
