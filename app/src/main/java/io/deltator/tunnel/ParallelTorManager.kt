@@ -46,11 +46,11 @@ object ParallelTorManager {
      * to Tor.
      */
     val BRIDGE_SOURCES: Map<String, List<String>> = mapOf(
-        TRANSPORT_VANILLA to listOf("$BRIDGE_BASE_URL/vanilla_tested.txt"),
-        TRANSPORT_OBFS4 to listOf("$BRIDGE_BASE_URL/obfs4_tested.txt"),
+        TRANSPORT_VANILLA to listOf("$BRIDGE_BASE_URL/vanilla.txt"),
+        TRANSPORT_OBFS4 to listOf("$BRIDGE_BASE_URL/obfs4.txt"),
         TRANSPORT_WEBTUNNEL to listOf(
-            "$BRIDGE_BASE_URL/webtunnel_tested.txt",
-            "$BRIDGE_BASE_URL/webtunnel_ipv6_tested.txt"
+            "$BRIDGE_BASE_URL/webtunnel.txt",
+            "$BRIDGE_BASE_URL/webtunnel_ipv6.txt"
         )
     )
 

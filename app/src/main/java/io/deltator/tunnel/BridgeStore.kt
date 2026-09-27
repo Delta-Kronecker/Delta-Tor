@@ -26,11 +26,10 @@ object BridgeStore {
     private const val READ_TIMEOUT_MS = 20_000
 
     /**
-     * Bumped when the shape of the sources changed (webtunnel became two merged
-     * files), so an upgrade refreshes the cache once instead of keeping a list
-     * written by the old code.
+     * Bumped when the shape or the names of the sources changed, so an upgrade
+     * refreshes the cache once instead of keeping a list written by older code.
      */
-    private const val KEY_LAST_UPDATE = "bridges_last_update_v2"
+    private const val KEY_LAST_UPDATE = "bridges_last_update_v3"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var updateInProgress = false
