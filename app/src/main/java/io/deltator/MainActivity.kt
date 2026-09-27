@@ -745,7 +745,7 @@ private fun BottomPanel(
                 GradientPill(
                     modifier = Modifier.weight(1f),
                     label = "START VPN",
-                    filled = true,
+                    filled = false,
                     onClick = onPrimary
                 )
                 GradientPill(
