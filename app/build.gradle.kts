@@ -77,6 +77,18 @@ android {
         }
     }
 
+    // Per-ABI APKs. libtor/libobfs4proxy only exist for the two ARM ABIs, so a
+    // single universal APK would carry unusable x86 payloads and waste ~18 MB
+    // on every download. Each release therefore ships one APK per ABI.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
+        }
+    }
+
     // Build hev-socks5-tunnel (tun2socks) with ndk-build
     externalNativeBuild {
         ndkBuild {
