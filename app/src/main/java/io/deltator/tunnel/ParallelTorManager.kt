@@ -63,7 +63,7 @@ object ParallelTorManager {
     const val BUNDLED_ASSET_DIR = "bridges"
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
-    private const val RACE_TIMEOUT_MS = 300_000L
+    private const val RACE_TIMEOUT_MS = 1_800_000L
     private const val POLL_INTERVAL_MS = 1_000L
     private const val PORT_FREE_TIMEOUT_MS = 15_000L
     private const val PORT_FREE_POLL_MS = 250L
@@ -194,7 +194,8 @@ object ParallelTorManager {
 
             if (System.currentTimeMillis() >= deadline) {
                 stopAll()
-                throw RuntimeException("No transport reached 100% within ${RACE_TIMEOUT_MS / 1000}s")
+                val minutes = RACE_TIMEOUT_MS / 60_000
+                throw RuntimeException("No transport reached 100% within $minutes min")
             }
 
             delay(POLL_INTERVAL_MS)
