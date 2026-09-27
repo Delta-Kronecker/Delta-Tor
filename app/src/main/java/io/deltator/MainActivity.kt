@@ -1024,6 +1024,12 @@ private fun BridgeCard(
             StatCell("WEBTUNNEL", bridges.webtunnel, DeltaTor.Amber, Modifier.weight(1f))
         }
 
+        Spacer(Modifier.height(6.dp))
+
+        Row(modifier = Modifier.fillMaxWidth()) {
+            StatCell("SNOWFLAKE", bridges.snowflake, Color(0xFF64D2FF), Modifier.weight(1f))
+        }
+
         Spacer(Modifier.height(12.dp))
 
         val err = bridges.error != null
@@ -1484,8 +1490,7 @@ private fun flagEmoji(code: String): String {
 }
 
 @Composable
-private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
-    Column(
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 22.dp)
@@ -1511,6 +1516,8 @@ private fun SettingsScreen(
     var saved by remember { mutableStateOf(false) }
     val context = LocalContext.current
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
+    var transportMode by remember { mutableStateOf(Config.transportMode) }
+    var customBridges by remember { mutableStateOf(Config.customBridges) }
 
     // Plain country list from the bundled table. Recommended countries first,
     // then the rest alphabetically. Does not depend on the bridge cache, so it
@@ -1552,6 +1559,94 @@ private fun SettingsScreen(
             ScreenTopBar("ADVANCED", onBack)
 
             Spacer(Modifier.height(10.dp))
+
+            SettingsCardHeader("TRANSPORT", "Which way Tor connects \u00b7 applied on next connect")
+            SettingsCard {
+                val modes = listOf(
+                    "auto" to "AUTO",
+                    "vanilla" to "VANILLA",
+                    "obfs4" to "OBFS4",
+                    "webtunnel" to "WEBTUNNEL",
+                    "snowflake" to "SNOWFLAKE",
+                    "direct" to "DIRECT",
+                    "custom" to "CUSTOM"
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    modes.chunked(2).forEach { rowModes ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowModes.forEach { (value, label) ->
+                                TransportChip(
+                                    label = label,
+                                    color = DeltaTor.Accent,
+                                    selected = transportMode == value,
+                                    count = 0,
+                                    onSelect = {
+                                        transportMode = value
+                                        Config.transportMode = value
+                                    },
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (rowModes.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+                Text(
+                    when (transportMode) {
+                        "auto" -> "Races vanilla, obfs4, webtunnel and the previously working bridges at the same time."
+                        "vanilla" -> "Plain bridges, no pluggable transport."
+                        "obfs4" -> "obfs4 only, via lyrebird."
+                        "webtunnel" -> "webtunnel only, via lyrebird. Needs IPv6."
+                        "snowflake" -> "Snowflake only, via lyrebird. Uses the bundled two bridges."
+                        "direct" -> "No bridges at all \u2014 connects straight to a guard."
+                        else -> "Uses only the bridge lines you paste below."
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+                )
+            }
+
+            if (transportMode == "custom") {
+                SettingsCardHeader("CUSTOM BRIDGES", "One bridge per line \u00b7 applied on next connect")
+                SettingsCard {
+                    OutlinedTextField(
+                        value = customBridges,
+                        onValueChange = {
+                            customBridges = it
+                            Config.customBridges = it
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        minLines = 4,
+                        maxLines = 12,
+                        textStyle = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            color = DeltaTor.Text
+                        ),
+                        colors = tfColors,
+                        placeholder = {
+                            Text(
+                                "snowflake 192.0.2.3:80 FINGERPRINT url=... \nobfs4 1.2.3.4:443 FINGERPRINT cert=...",
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp
+                            )
+                        }
+                    )
+                    val customCount = customBridges.lines().count {
+                        it.isNotBlank() && !it.trim().startsWith("#")
+                    }
+                    Text(
+                        if (customCount == 0) "No bridges yet \u2014 paste at least one line."
+                        else "$customCount bridge line(s) saved",
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
+                        color = if (customCount == 0) DeltaTor.Amber else DeltaTor.Green,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
 
             SettingsCardHeader("TORRC TEMPLATE", "The full torrc, editable here") {
                 Text(
@@ -1720,6 +1815,9 @@ private fun transportColor(transport: String): Color = when (transport) {
     "vanilla" -> Color(0xFF5AC8FA)
     "obfs4" -> Color(0xFFFF9F0A)
     "webtunnel" -> Color(0xFF30D158)
+    "snowflake" -> Color(0xFF64D2FF)
+    "direct" -> Color(0xFFAC8E68)
+    "custom" -> Color(0xFFFF375F)
     else -> DeltaTor.Muted
 }
 
@@ -1846,16 +1944,11 @@ private fun TransportChip(
     color: Color,
     selected: Boolean,
     count: Int,
-    onSelect: () -> Unit
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    Text(
-        text = if (count > 0) "$label ($count)" else label,
-        style = MaterialTheme.typography.labelSmall.copy(
-            letterSpacing = 1.1.sp,
-            fontWeight = FontWeight.Bold
-        ),
-        color = if (selected) Color.White else color,
-        modifier = Modifier
+    Box(
+        modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(
                 if (selected) color else color.copy(alpha = 0.10f),
@@ -1867,8 +1960,19 @@ private fun TransportChip(
                 RoundedCornerShape(50)
             )
             .clickable { onSelect() }
-            .padding(horizontal = 14.dp, vertical = 7.dp)
-    )
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = if (count > 0) "$label ($count)" else label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.1.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = if (selected) Color.White else color,
+            textAlign = TextAlign.Center
+        )
+    }
 }
 
 @Composable

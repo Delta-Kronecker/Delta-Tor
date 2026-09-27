@@ -35,6 +35,8 @@ object ParallelTorManager {
     const val TRANSPORT_VANILLA = "vanilla"
     const val TRANSPORT_OBFS4 = "obfs4"
     const val TRANSPORT_WEBTUNNEL = "webtunnel"
+    const val TRANSPORT_SNOWFLAKE = "snowflake"
+    const val TRANSPORT_DIRECT = "direct"
     const val TRANSPORT_MEMORY = "memory"
 
     private const val BRIDGE_BASE_URL =
@@ -43,7 +45,7 @@ object ParallelTorManager {
     /**
      * Remote bridge lists per transport. webtunnel is published as two files and
      * both are used: they are merged into a single list before anything is handed
-     * to Tor.
+     * to Tor. Snowflake has no collector file, so its list is bundled only.
      */
     val BRIDGE_SOURCES: Map<String, List<String>> = mapOf(
         TRANSPORT_VANILLA to listOf("$BRIDGE_BASE_URL/vanilla.txt"),
@@ -53,6 +55,12 @@ object ParallelTorManager {
             "$BRIDGE_BASE_URL/webtunnel_ipv6.txt"
         )
     )
+
+    /**
+     * Snowflake is not published by the collector, so the bundled asset is the
+     * only source. The name is the asset file name, used directly.
+     */
+    const val BUNDLED_SNOWFLAKE_ASSET = "$BUNDLED_ASSET_DIR/snowflake.txt"
 
     /**
      * The same files are bundled in the APK under assets/bridges/, so a connect
@@ -96,13 +104,25 @@ object ParallelTorManager {
         context: Context,
         basePort: Int,
         sessionId: Int,
+        transportMode: String,
+        customBridges: String,
         onProgress: (Map<String, TorRunner>) -> Unit
     ): TorRunner {
         stopAll()
 
-        val lines = withContext(Dispatchers.IO) { fetchBridgeLines(context) }
+        val mode = transportMode.lowercase()
+        val lines = if (mode == "custom") {
+            val trimmed = customBridges.trim()
+            if (trimmed.isEmpty()) mapOf() else mapOf("custom" to trimmed)
+        } else {
+            withContext(Dispatchers.IO) { fetchBridgeLines(context) }
+        }
 
-        val memoryLines = BridgeMemory.bridgeLinesFor(context, lines)
+        val memoryLines = if (mode == "auto" || mode == "custom") {
+            BridgeMemory.bridgeLinesFor(context, lines)
+        } else {
+            null
+        }
         if (memoryLines != null) {
             val n = memoryLines.lines().count { it.isNotBlank() }
             Log.i(TAG, "Memory runner: $n proven bridge(s) available")
@@ -116,11 +136,30 @@ object ParallelTorManager {
             TRANSPORT_VANILLA to basePort + 1,
             TRANSPORT_OBFS4 to basePort + 2,
             TRANSPORT_WEBTUNNEL to basePort + 3,
+            TRANSPORT_SNOWFLAKE to basePort + 5,
+            "custom" to basePort + 6,
             TRANSPORT_MEMORY to basePort + 4
         )
         val plans = buildList {
-            BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
-            memoryLines?.let { add(TRANSPORT_MEMORY to it) }
+            when (mode) {
+                "auto" -> BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
+                "vanilla" -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
+                "obfs4" -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
+                "webtunnel" -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))
+                "snowflake" -> add(TRANSPORT_SNOWFLAKE to (lines[TRANSPORT_SNOWFLAKE] ?: ""))
+                "direct" -> add(TRANSPORT_DIRECT to "")
+                "custom" -> add("custom" to (lines["custom"] ?: ""))
+            }
+            if ((mode == "auto" || mode == "custom") && memoryLines != null) {
+                add(TRANSPORT_MEMORY to memoryLines)
+            }
+        }
+
+        if (plans.isEmpty()) {
+            stopAll()
+            throw RuntimeException(
+                if (mode == "custom") "No custom bridges provided" else "No bridges available for $mode"
+            )
         }
 
         synchronized(runnersLock) { runners = mutableMapOf() }
@@ -268,7 +307,8 @@ object ParallelTorManager {
      * disconnect so a following connect never races the previous teardown.
      */
     fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
-        val ports = (basePort..basePort + 4).toList()
+        // basePort itself is the app's own TUN bridge; runners take +1 .. +6.
+        val ports = (basePort..basePort + 6).toList()
         stopAll()
         return ports.all { awaitPortFree(host, it) }
     }
@@ -289,6 +329,12 @@ object ParallelTorManager {
             }
             lines[name] = content
         }
+        // Snowflake: bundled asset only, cached so it survives a reinstall-free update.
+        val sfCached = BridgeStore.lines(context, TRANSPORT_SNOWFLAKE)
+        val sf = if (!sfCached.isNullOrBlank()) sfCached
+        else readBundledAsset(context, BUNDLED_SNOWFLAKE_ASSET)
+            ?.also { BridgeStore.saveLines(context, TRANSPORT_SNOWFLAKE, it) }
+        if (sf != null) lines[TRANSPORT_SNOWFLAKE] = sf
         // Let the UI (exit-node ranking, bridge counts) see the cache we just wrote.
         BridgeStore.refreshState(context)
         return lines
@@ -297,17 +343,19 @@ object ParallelTorManager {
     /** The bundled copies of every file this transport is built from. */
     private fun readBundled(context: Context, urls: List<String>): String? {
         val bodies = urls.mapNotNull { url ->
-            val asset = "$BUNDLED_ASSET_DIR/${bundledAssetName(url)}"
-            try {
-                context.assets.open(asset).use { it.readBytes().toString(Charsets.UTF_8) }
-                    .takeIf { it.isNotBlank() }
-                    ?.also { Log.i(TAG, "bundled $asset (${it.length} chars)") }
-            } catch (e: Exception) {
-                Log.w(TAG, "no bundled $asset: ${e.message}")
-                null
-            }
+            readBundledAsset(context, "$BUNDLED_ASSET_DIR/${bundledAssetName(url)}")
         }
         return mergeBridgeLists(bodies).ifBlank { null }
+    }
+
+    /** One bundled asset file, or null when it is missing or empty. */
+    private fun readBundledAsset(context: Context, asset: String): String? = try {
+        context.assets.open(asset).use { it.readBytes().toString(Charsets.UTF_8) }
+            .takeIf { it.isNotBlank() }
+            ?.also { Log.i(TAG, "bundled $asset (${it.length} chars)") }
+    } catch (e: Exception) {
+        Log.w(TAG, "no bundled $asset: ${e.message}")
+        null
     }
 
     private fun downloadLists(urls: List<String>): String {

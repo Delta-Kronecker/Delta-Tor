@@ -149,11 +149,12 @@ class TorRunner(
                 .map { if (it.lowercase().startsWith("bridge ")) it.substring(7).trim() else it }
                 .take(MAX_BRIDGE_LINES)
 
-            if (cleanLines.isEmpty()) {
+            val isDirect = name == "direct"
+            if (cleanLines.isEmpty() && !isDirect) {
                 return Result.failure(RuntimeException("$tag: no bridge lines available"))
             }
 
-            val isVanilla = name == "vanilla"
+            val isVanilla = name == "vanilla" || isDirect
             // Only real pluggable-transport names count. The memory runner mixes
             // plain `ip:port fp` lines with prefixed ones, and a bare address as
             // the first token must not be mistaken for a CMETHOD.
@@ -185,7 +186,7 @@ class TorRunner(
 
             extractGeoIpFiles()
 
-            val torrcPath = writeTorrc(cleanLines, isVanilla)
+            val torrcPath = writeTorrc(cleanLines, isVanilla, isDirect)
             val torBinary = context.applicationInfo.nativeLibraryDir + "/libtor.so"
             if (!File(torBinary).exists()) {
                 return Result.failure(RuntimeException("$tag: Tor binary not found at $torBinary"))
@@ -339,7 +340,7 @@ class TorRunner(
 
     // --- torrc ---
 
-    private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean): String {
+    private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
         val hasSlowTransport = name == "webtunnel"
         val transports = cleanLines.map { it.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: "" }
             .filter { it.isNotEmpty() }
@@ -349,7 +350,7 @@ class TorRunner(
         val common = buildString {
             appendLine("SocksPort $listenHost:$torSocksPort")
             appendLine("DataDirectory ${dataDir.absolutePath}")
-            appendLine("UseBridges 1")
+            appendLine("UseBridges ${if (isDirect) 0 else 1}")
             val geoipFile = File(dataDir, "geoip")
             val geoip6File = File(dataDir, "geoip6")
             if (geoipFile.exists()) appendLine("GeoIPFile ${geoipFile.absolutePath}")
