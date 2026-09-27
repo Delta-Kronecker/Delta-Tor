@@ -33,6 +33,7 @@ object AppState {
         val vanilla: Int = 0,
         val obfs4: Int = 0,
         val webtunnel: Int = 0,
+        val snowflake: Int = 0,
         val error: String? = null
     )
 

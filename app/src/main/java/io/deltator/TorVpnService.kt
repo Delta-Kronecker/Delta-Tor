@@ -120,7 +120,13 @@ class TorVpnService : VpnService() {
         updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
 
         val w = try {
-            ParallelTorManager.race(applicationContext, basePort = proxyPort, sessionId = currentSession) { snapshot ->
+            ParallelTorManager.race(
+                context = applicationContext,
+                basePort = proxyPort,
+                sessionId = currentSession,
+                transportMode = Config.transportMode,
+                customBridges = Config.customBridges
+            ) { snapshot ->
                 val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
                 AppState.update { it.copy(transports = progress) }
                 val maxProg = (progress.values.maxOrNull() ?: 0).coerceAtLeast(0)

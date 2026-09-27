@@ -76,4 +76,13 @@ object Config {
     var debugMode: Boolean
         get() = prefs.getBoolean("debug_mode", false)
         set(value) = prefs.edit().putBoolean("debug_mode", value).apply()
+
+    var transportMode: String
+        // "auto","vanilla","obfs4","webtunnel","snowflake","direct","custom"
+        get() = prefs.getString("transport_mode", "auto") ?: "auto"
+        set(value) = prefs.edit().putString("transport_mode", value).apply()
+
+    var customBridges: String
+        get() = prefs.getString("custom_bridges", "") ?: ""
+        set(value) = prefs.edit().putString("custom_bridges", value).apply()
 }

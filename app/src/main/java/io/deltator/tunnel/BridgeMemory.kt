@@ -119,6 +119,7 @@ object BridgeMemory {
         ParallelTorManager.TRANSPORT_VANILLA,
         ParallelTorManager.TRANSPORT_OBFS4,
         ParallelTorManager.TRANSPORT_WEBTUNNEL,
+        ParallelTorManager.TRANSPORT_SNOWFLAKE,
         ParallelTorManager.TRANSPORT_MEMORY
     )
 }

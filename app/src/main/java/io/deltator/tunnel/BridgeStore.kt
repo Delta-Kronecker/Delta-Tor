@@ -120,6 +120,7 @@ object BridgeStore {
                 vanilla = stats(context)[ParallelTorManager.TRANSPORT_VANILLA] ?: 0,
                 obfs4 = stats(context)[ParallelTorManager.TRANSPORT_OBFS4] ?: 0,
                 webtunnel = stats(context)[ParallelTorManager.TRANSPORT_WEBTUNNEL] ?: 0,
+                snowflake = stats(context)[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
                 error = null
             )
         }
