@@ -1580,11 +1580,11 @@ private fun SettingsScreen(
                                     color = DeltaTor.Accent,
                                     selected = transportMode == value,
                                     count = 0,
+                                    modifier = Modifier.weight(1f),
                                     onSelect = {
                                         transportMode = value
                                         Config.transportMode = value
                                     },
-                                    modifier = Modifier.weight(1f)
                                 )
                             }
                             if (rowModes.size == 1) Spacer(Modifier.weight(1f))
@@ -1944,8 +1944,8 @@ private fun TransportChip(
     color: Color,
     selected: Boolean,
     count: Int,
-    onSelect: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSelect: () -> Unit
 ) {
     Box(
         modifier = modifier

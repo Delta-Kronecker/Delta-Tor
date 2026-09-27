@@ -57,18 +57,18 @@ object ParallelTorManager {
     )
 
     /**
-     * Snowflake is not published by the collector, so the bundled asset is the
-     * only source. The name is the asset file name, used directly.
-     */
-    const val BUNDLED_SNOWFLAKE_ASSET = "$BUNDLED_ASSET_DIR/snowflake.txt"
-
-    /**
      * The same files are bundled in the APK under assets/bridges/, so a connect
      * works on the first launch and while the network is unavailable. The asset
      * name is the last path segment of its URL, so the two lists can never drift
      * apart.
      */
     const val BUNDLED_ASSET_DIR = "bridges"
+
+    /**
+     * Snowflake is not published by the collector, so the bundled asset is the
+     * only source. The name is the asset file name, used directly.
+     */
+    const val BUNDLED_SNOWFLAKE_ASSET = "$BUNDLED_ASSET_DIR/snowflake.txt"
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
     private const val RACE_TIMEOUT_MS = 1_800_000L
