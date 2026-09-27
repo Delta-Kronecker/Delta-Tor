@@ -16,4 +16,5 @@ Thumbs.db
 # Signing
 *.jks
 *.keystore
-keystore.properties
+keystore.propertiesrel.json
+runs.json
