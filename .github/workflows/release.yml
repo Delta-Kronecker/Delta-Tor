@@ -81,6 +81,7 @@ jobs:
           ls -l dist
           test -f "dist/deltator-$TAG_NAME-arm64-v8a.apk"
           test -f "dist/deltator-$TAG_NAME-armeabi-v7a.apk"
+          test -f "dist/deltator-$TAG_NAME-universal.apk"
 
       - name: Verify APK signatures
         run: |

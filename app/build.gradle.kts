@@ -77,15 +77,16 @@ android {
         }
     }
 
-    // Per-ABI APKs. libtor/libobfs4proxy only exist for the two ARM ABIs, so a
-    // single universal APK would carry unusable x86 payloads and waste ~18 MB
-    // on every download. Each release therefore ships one APK per ABI.
+    // Per-ABI APKs. libtor/libobfs4proxy only exist for the two ARM ABIs, so each
+    // ARM release APK carries only its own native libraries and stays ~22 MB.
+    // A universal APK is built alongside them as a fallback for devices whose
+    // ABI Gradle does not know about; it ships every ABI and is therefore larger.
     splits {
         abi {
             isEnable = true
             reset()
             include("arm64-v8a", "armeabi-v7a")
-            isUniversalApk = false
+            isUniversalApk = true
         }
     }
 
