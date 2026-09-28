@@ -9,7 +9,8 @@ import kotlinx.coroutines.flow.asStateFlow
 /**
  * User-selected exit countries (optional, any number of them). Persisted and
  * applied in the generated torrc as a single `ExitNodes {us},{nl},...` line plus
- * `StrictNodes 1`. Selecting nothing means "any country".
+ * `StrictNodes 0`, so the list steers the exit country but can never make a
+ * circuit impossible to build. Selecting nothing means "any country".
  */
 object ExitNodes {
     private const val PREFS = "deltator"

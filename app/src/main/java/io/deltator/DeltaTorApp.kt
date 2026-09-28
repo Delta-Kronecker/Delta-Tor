@@ -85,4 +85,27 @@ object Config {
     var customBridges: String
         get() = prefs.getString("custom_bridges", "") ?: ""
         set(value) = prefs.edit().putString("custom_bridges", value).apply()
+
+    /**
+     * Which transports take part in auto mode. Stored as a comma separated set so
+     * an older install that never wrote the key falls back to the full default.
+     * The memory runner is not listed: it only ever joins auto, and only when it
+     * has bridges that provably worked.
+     */
+    val AUTO_TRANSPORT_CHOICES = listOf("vanilla", "obfs4", "webtunnel", "snowflake")
+    val AUTO_TRANSPORT_DEFAULTS: Set<String> = AUTO_TRANSPORT_CHOICES.toSet()
+
+    var autoTransports: Set<String>
+        get() {
+            val raw = prefs.getString("auto_transports", null) ?: return AUTO_TRANSPORT_DEFAULTS
+            val stored = raw.split(',').map { it.trim() }.filter { it in AUTO_TRANSPORT_CHOICES }
+            // An empty or fully invalid value must not leave auto with nothing to race.
+            return stored.toSet().ifEmpty { AUTO_TRANSPORT_DEFAULTS }
+        }
+        set(value) {
+            val clean = value.filter { it in AUTO_TRANSPORT_CHOICES }.toSet()
+            prefs.edit()
+                .putString("auto_transports", clean.joinToString(","))
+                .apply()
+        }
 }

@@ -120,8 +120,11 @@ class TorVpnService : VpnService() {
         val mode = ParallelTorManager.MODES
             .firstOrNull { it == Config.transportMode }
             ?: ParallelTorManager.TRANSPORT_AUTO
+        val autoNames = Config.autoTransports
+            .filter { it in ParallelTorManager.BRIDGE_SOURCES }
+            .ifEmpty { ParallelTorManager.BRIDGE_SOURCES.keys.toList() }
         val modeLabel = if (mode == ParallelTorManager.TRANSPORT_AUTO) {
-            "vanilla / obfs4 / webtunnel" +
+            autoNames.joinToString(" / ") +
                 if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""
         } else {
             mode
@@ -135,7 +138,8 @@ class TorVpnService : VpnService() {
                 basePort = proxyPort,
                 sessionId = currentSession,
                 transportMode = Config.transportMode,
-                customBridges = Config.customBridges
+                customBridges = Config.customBridges,
+                autoTransports = Config.autoTransports
             ) { snapshot ->
                 val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
                 AppState.update { it.copy(transports = progress) }

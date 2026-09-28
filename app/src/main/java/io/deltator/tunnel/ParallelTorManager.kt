@@ -58,7 +58,8 @@ object ParallelTorManager {
     /**
      * Remote bridge lists per transport. webtunnel is published as two files and
      * both are used: they are merged into a single list before anything is handed
-     * to Tor. Snowflake has no collector file, so its list is bundled only.
+     * to Tor. Every list is also bundled in the APK, so the bundled copy is the
+     * first fallback before the network is tried.
      */
     val BRIDGE_SOURCES: Map<String, List<String>> = mapOf(
         TRANSPORT_VANILLA to listOf("$BRIDGE_BASE_URL/vanilla.txt"),
@@ -66,7 +67,8 @@ object ParallelTorManager {
         TRANSPORT_WEBTUNNEL to listOf(
             "$BRIDGE_BASE_URL/webtunnel.txt",
             "$BRIDGE_BASE_URL/webtunnel_ipv6.txt"
-        )
+        ),
+        TRANSPORT_SNOWFLAKE to listOf("$BRIDGE_BASE_URL/snowflake.txt")
     )
 
     /**
@@ -77,11 +79,6 @@ object ParallelTorManager {
      */
     const val BUNDLED_ASSET_DIR = "bridges"
 
-    /**
-     * Snowflake is not published by the collector, so the bundled asset is the
-     * only source. The name is the asset file name, used directly.
-     */
-    const val BUNDLED_SNOWFLAKE_ASSET = "$BUNDLED_ASSET_DIR/snowflake.txt"
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
     private const val RACE_TIMEOUT_MS = 1_800_000L
@@ -108,8 +105,10 @@ object ParallelTorManager {
      * their processes torn down.
      *
      * @param basePort the app's own TUN<->Tor bridge port. It is reserved and NOT
-     *        handed to any runner: the runners take basePort+1 .. basePort+4, so a
+     *        handed to any runner: the runners take basePort+1 .. basePort+7, so a
      *        runner that wins can never hold the port the bridge needs to bind.
+     * @param autoTransports the transports the user allows in auto mode. Ignored by
+     *        every other mode, which always runs exactly one transport.
      * @param onProgress called every [POLL_INTERVAL_MS] with a live snapshot,
      *        including runners that have not finished starting yet.
      */
@@ -119,6 +118,7 @@ object ParallelTorManager {
         sessionId: Int,
         transportMode: String,
         customBridges: String,
+        autoTransports: Set<String>,
         onProgress: (Map<String, TorRunner>) -> Unit
     ): TorRunner {
         stopAll()
@@ -138,15 +138,28 @@ object ParallelTorManager {
             throw RuntimeException("No custom bridges provided")
         }
 
+        // Auto races exactly what the user ticked. A blank or fully stale set
+        // falls back to the full list so auto can never end up with nothing.
+        val autoNames = autoTransports.filter { it in BRIDGE_SOURCES }.toList()
+            .ifEmpty { BRIDGE_SOURCES.keys.toList() }
+
+        // Only the lists this mode actually needs are resolved, which keeps a
+        // direct connect from waiting on any download at all.
+        val needed = when (mode) {
+            TRANSPORT_AUTO -> autoNames.toSet()
+            TRANSPORT_DIRECT -> emptySet()
+            TRANSPORT_CUSTOM -> emptySet()
+            else -> setOf(mode)
+        }
         val lines = if (mode == TRANSPORT_CUSTOM) {
             mapOf(TRANSPORT_CUSTOM to customLines.joinToString("\n"))
         } else {
-            withContext(Dispatchers.IO) { fetchBridgeLines(context) }
+            withContext(Dispatchers.IO) { fetchBridgeLines(context, needed) }
         }
 
         // Only auto races the memory runner. In custom mode the user asked for one
         // exact set of bridges, and memory would just repeat the same lines.
-        val memoryLines = if (mode == TRANSPORT_AUTO) {
+        val memoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1) {
             BridgeMemory.bridgeLinesFor(context, lines)
         } else {
             null
@@ -171,8 +184,7 @@ object ParallelTorManager {
         )
         val plans = buildList {
             when (mode) {
-                TRANSPORT_AUTO ->
-                    BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
+                TRANSPORT_AUTO -> autoNames.forEach { name -> add(name to (lines[name] ?: "")) }
                 TRANSPORT_VANILLA -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
                 TRANSPORT_OBFS4 -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
                 TRANSPORT_WEBTUNNEL -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))
@@ -346,9 +358,10 @@ object ParallelTorManager {
      * disk cache -> bundled assets -> network. A transport may be backed by
      * several files, which are merged by [mergeBridgeLists] into one list.
      */
-    private fun fetchBridgeLines(context: Context): Map<String, String> {
+    private fun fetchBridgeLines(context: Context, only: Set<String>? = null): Map<String, String> {
         val lines = LinkedHashMap<String, String>()
         BRIDGE_SOURCES.forEach { (name, urls) ->
+            if (only != null && name !in only) return@forEach
             val cached = BridgeStore.lines(context, name)
             val content = when {
                 !cached.isNullOrBlank() -> cached
@@ -357,12 +370,6 @@ object ParallelTorManager {
             }
             lines[name] = content
         }
-        // Snowflake: bundled asset only, cached so it survives a reinstall-free update.
-        val sfCached = BridgeStore.lines(context, TRANSPORT_SNOWFLAKE)
-        val sf = if (!sfCached.isNullOrBlank()) sfCached
-        else readBundledAsset(context, BUNDLED_SNOWFLAKE_ASSET)
-            ?.also { BridgeStore.saveLines(context, TRANSPORT_SNOWFLAKE, it) }
-        if (sf != null) lines[TRANSPORT_SNOWFLAKE] = sf
         // Let the UI (exit-node ranking, bridge counts) see the cache we just wrote.
         BridgeStore.refreshState(context)
         return lines
