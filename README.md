@@ -174,6 +174,11 @@ Pinned checksums (`scripts/fetch-official-tor.ps1` for tor, `build-lyrebird.yml`
 Because they are official builds, the fork-only `ConfluxEnabled`/`ConfluxClientUX` knobs the old
 custom tor added are gone from the torrc template (official Tor would refuse to start on them).
 
+The checksums pin the *source* artifacts as committed here. When Gradle packages the APK its
+`strip` task rewrites the ELF headers of each `libobfs4proxy.so` (objcopy-style: section-header
+table moved to EOF, empty Go runtime sections dropped), so the bytes inside the APK differ from
+the committed file while the code is identical; `libtor.so` ships byte-for-byte.
+
 ## CI
 
 | Workflow | Trigger | Does |
