@@ -204,21 +204,28 @@ fun DeltaTorScreen(
     var screen by remember { mutableStateOf(Screen.Main) }
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
 
+    // Stable navigation callbacks. Written inline they are a new lambda on every
+    // recomposition, which makes them unequal params and re-runs the whole screen
+    // body each time AppState ticks (the speed counter does, once a second).
+    val goMain = remember { { screen = Screen.Main } }
+    val goSettings = remember { { screen = Screen.Settings } }
+    val goLog = remember { { screen = Screen.Log } }
+
     Crossfade(targetState = screen, label = "screen") { s ->
         when (s) {
             Screen.Main -> MainScreen(
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
-                onOpenSettings = { screen = Screen.Settings }
+                onOpenSettings = goSettings
             )
             Screen.Settings -> SettingsScreen(
                 bridges = bridges,
                 onUpdateBridges = onUpdateBridges,
-                onBack = { screen = Screen.Main },
-                onOpenLog = { screen = Screen.Log }
+                onBack = goMain,
+                onOpenLog = goLog
             )
-            Screen.Log -> LogScreen(onBack = { screen = Screen.Settings })
+            Screen.Log -> LogScreen(onBack = goSettings)
         }
     }
 }
@@ -1930,36 +1937,56 @@ private fun groupLog(
 ): List<LogNode> {
     val out = ArrayList<LogNode>()
 
-    val visible = if (transport == null) lines else lines.filter { it.transport == transport }
-    fun addSections(section: List<LogEntry>, sid: Int) {
+    // One pass over the buffer into session -> level -> rows. The list is re-grouped
+    // on every log flush, so scanning it once per session and once per level (what
+    // this did before) turned a few thousand lines into tens of thousands of
+    // intermediate lists, several times a second, which is what made the screen
+    // stutter while a connection was running.
+    val bySession = LinkedHashMap<Int, HashMap<Char, ArrayList<LogEntry>>>()
+    for (entry in lines) {
+        if (transport != null && entry.transport != transport) continue
+        val levels = bySession.getOrPut(entry.session) { HashMap() }
+        levels.getOrPut(entry.level) { ArrayList() }.add(entry)
+    }
+    if (bySession.isEmpty()) return out
+
+    fun addSections(levels: HashMap<Char, ArrayList<LogEntry>>, sid: Int) {
         for (level in LOG_SEVERITY_ORDER) {
             if (filter != null && filter != level) continue
-            val sel = section.filter { it.level == level }
-            if (sel.isEmpty()) continue
+            val sel = levels[level] ?: continue
             out.add(LogNode.Header(level, sel.size, sid))
             sel.forEach { out.add(LogNode.Row(it)) }
         }
     }
 
-    if (visible.none { it.session != 0 }) {
-        addSections(visible, 0)
+    if (bySession.keys.all { it == 0 }) {
+        addSections(bySession.getValue(0), 0)
         return out
     }
 
     // Oldest session first; the list is reverse-rendered so newest ends up on top.
-    val ids = visible.map { it.session }.distinct()
-    ids.forEach { sid ->
-        val section = visible.filter { it.session == sid }
-        if (filter != null && section.none { it.level == filter }) return@forEach
+    bySession.forEach { (sid, levels) ->
+        if (filter != null && !levels.containsKey(filter)) return@forEach
         val meta = sessions.firstOrNull { it.id == sid }
+        val section = levels.values.sumOf { it.size }
         val title = listOfNotNull(
             meta?.label,
             meta?.outcome
         ).joinToString(" \u00b7 ").ifBlank { if (sid == 0) "startup" else "session $sid" }
-        out.add(LogNode.SessionHeader(sid, title, section.size))
-        addSections(section, sid)
+        out.add(LogNode.SessionHeader(sid, title, section))
+        addSections(levels, sid)
     }
     return out
+}
+
+/** Per-transport line counts, in one pass instead of one pass per transport. */
+private fun transportCountsOf(lines: List<LogEntry>): Map<String, Int> {
+    val counts = HashMap<String, Int>()
+    for (entry in lines) {
+        val t = entry.transport ?: continue
+        counts[t] = (counts[t] ?: 0) + 1
+    }
+    return counts
 }
 
 @Composable
@@ -2197,9 +2224,7 @@ private fun LogScreen(onBack: () -> Unit) {
     var filter by remember { mutableStateOf<Char?>(null) }
     var transport by remember { mutableStateOf<String?>(null) }
     val nodes = remember(lines, sessions, filter, transport) { groupLog(lines, sessions, filter, transport) }
-    val transportCounts = remember(lines) {
-        AppLog.TRANSPORTS.associateWith { t -> lines.count { it.transport == t } }
-    }
+    val transportCounts = remember(lines) { transportCountsOf(lines) }
 
     LaunchedEffect(Unit) {
         AppLog.addObserver()
