@@ -39,6 +39,19 @@ object ParallelTorManager {
     const val TRANSPORT_DIRECT = "direct"
     const val TRANSPORT_MEMORY = "memory"
 
+    /** Selectable connect modes. [TRANSPORT_MEMORY] is a runner, not a mode. */
+    const val TRANSPORT_AUTO = "auto"
+    const val TRANSPORT_CUSTOM = "custom"
+    val MODES = listOf(
+        TRANSPORT_AUTO,
+        TRANSPORT_VANILLA,
+        TRANSPORT_OBFS4,
+        TRANSPORT_WEBTUNNEL,
+        TRANSPORT_SNOWFLAKE,
+        TRANSPORT_DIRECT,
+        TRANSPORT_CUSTOM
+    )
+
     private const val BRIDGE_BASE_URL =
         "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
 
@@ -110,15 +123,30 @@ object ParallelTorManager {
     ): TorRunner {
         stopAll()
 
-        val mode = transportMode.lowercase()
-        val lines = if (mode == "custom") {
-            val trimmed = customBridges.trim()
-            if (trimmed.isEmpty()) mapOf() else mapOf("custom" to trimmed)
+        // Unknown or missing values fall back to auto, so a stale preference can
+        // never leave the user with no way to connect.
+        val mode = transportMode.lowercase().let {
+            if (it in MODES) it else TRANSPORT_AUTO
+        }
+        val customLines = customBridges.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .toList()
+
+        if (mode == TRANSPORT_CUSTOM && customLines.isEmpty()) {
+            stopAll()
+            throw RuntimeException("No custom bridges provided")
+        }
+
+        val lines = if (mode == TRANSPORT_CUSTOM) {
+            mapOf(TRANSPORT_CUSTOM to customLines.joinToString("\n"))
         } else {
             withContext(Dispatchers.IO) { fetchBridgeLines(context) }
         }
 
-        val memoryLines = if (mode == "auto" || mode == "custom") {
+        // Only auto races the memory runner. In custom mode the user asked for one
+        // exact set of bridges, and memory would just repeat the same lines.
+        val memoryLines = if (mode == TRANSPORT_AUTO) {
             BridgeMemory.bridgeLinesFor(context, lines)
         } else {
             null
@@ -136,30 +164,30 @@ object ParallelTorManager {
             TRANSPORT_VANILLA to basePort + 1,
             TRANSPORT_OBFS4 to basePort + 2,
             TRANSPORT_WEBTUNNEL to basePort + 3,
+            TRANSPORT_MEMORY to basePort + 4,
             TRANSPORT_SNOWFLAKE to basePort + 5,
-            "custom" to basePort + 6,
-            TRANSPORT_MEMORY to basePort + 4
+            TRANSPORT_CUSTOM to basePort + 6,
+            TRANSPORT_DIRECT to basePort + 7
         )
         val plans = buildList {
             when (mode) {
-                "auto" -> BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
-                "vanilla" -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
-                "obfs4" -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
-                "webtunnel" -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))
-                "snowflake" -> add(TRANSPORT_SNOWFLAKE to (lines[TRANSPORT_SNOWFLAKE] ?: ""))
-                "direct" -> add(TRANSPORT_DIRECT to "")
-                "custom" -> add("custom" to (lines["custom"] ?: ""))
+                TRANSPORT_AUTO ->
+                    BRIDGE_SOURCES.forEach { (name, _) -> add(name to (lines[name] ?: "")) }
+                TRANSPORT_VANILLA -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
+                TRANSPORT_OBFS4 -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
+                TRANSPORT_WEBTUNNEL -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))
+                TRANSPORT_SNOWFLAKE -> add(TRANSPORT_SNOWFLAKE to (lines[TRANSPORT_SNOWFLAKE] ?: ""))
+                TRANSPORT_DIRECT -> add(TRANSPORT_DIRECT to "")
+                TRANSPORT_CUSTOM -> add(TRANSPORT_CUSTOM to (lines[TRANSPORT_CUSTOM] ?: ""))
             }
-            if ((mode == "auto" || mode == "custom") && memoryLines != null) {
+            if (mode == TRANSPORT_AUTO && memoryLines != null) {
                 add(TRANSPORT_MEMORY to memoryLines)
             }
         }
 
         if (plans.isEmpty()) {
             stopAll()
-            throw RuntimeException(
-                if (mode == "custom") "No custom bridges provided" else "No bridges available for $mode"
-            )
+            throw RuntimeException("No bridges available for $mode")
         }
 
         synchronized(runnersLock) { runners = mutableMapOf() }
@@ -307,8 +335,8 @@ object ParallelTorManager {
      * disconnect so a following connect never races the previous teardown.
      */
     fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
-        // basePort itself is the app's own TUN bridge; runners take +1 .. +6.
-        val ports = (basePort..basePort + 6).toList()
+        // basePort itself is the app's own TUN bridge; runners take +1 .. +7.
+        val ports = (basePort..basePort + 7).toList()
         stopAll()
         return ports.all { awaitPortFree(host, it) }
     }

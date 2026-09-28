@@ -112,12 +112,22 @@ class TorVpnService : VpnService() {
         TorSocksBridge.debugLogging = Config.debugMode
         TorSocksBridge.domainRouter = io.deltator.tunnel.DomainRouter.DISABLED
 
-        // Step 1: Fetch bridge lists and race vanilla / obfs4 / webtunnel, plus a
-        // fourth "memory" runner on the bridges that provably worked last time.
+        // Step 1: Resolve the bridge lists for the selected mode and start its
+        // runner(s). In auto mode vanilla / obfs4 / webtunnel race together, plus
+        // a fourth "memory" runner on the bridges that provably worked last time.
         // Monitor each transport's bootstrap progress; the first to reach 100%
         // wins and the losing transports are stopped by the manager.
-        Log.i(TAG, "Racing vanilla / obfs4 / webtunnel${if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""} transports")
-        updateNotification("Fetching bridges and racing transports \u2026", progress = true, progressValue = 0)
+        val mode = ParallelTorManager.MODES
+            .firstOrNull { it == Config.transportMode }
+            ?: ParallelTorManager.TRANSPORT_AUTO
+        val modeLabel = if (mode == ParallelTorManager.TRANSPORT_AUTO) {
+            "vanilla / obfs4 / webtunnel" +
+                if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""
+        } else {
+            mode
+        }
+        Log.i(TAG, "Transport mode: $modeLabel")
+        updateNotification("Connecting via $modeLabel \u2026", progress = true, progressValue = 0)
 
         val w = try {
             ParallelTorManager.race(

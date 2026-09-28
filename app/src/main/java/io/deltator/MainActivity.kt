@@ -55,6 +55,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -91,6 +94,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeStore
+import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.ExitCountry
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
@@ -1024,12 +1028,6 @@ private fun BridgeCard(
             StatCell("WEBTUNNEL", bridges.webtunnel, DeltaTor.Amber, Modifier.weight(1f))
         }
 
-        Spacer(Modifier.height(6.dp))
-
-        Row(modifier = Modifier.fillMaxWidth()) {
-            StatCell("SNOWFLAKE", bridges.snowflake, Color(0xFF64D2FF), Modifier.weight(1f))
-        }
-
         Spacer(Modifier.height(12.dp))
 
         val err = bridges.error != null
@@ -1555,240 +1553,258 @@ private fun SettingsScreen(
                 Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
             )
     ) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            ScreenTopBar("ADVANCED", onBack)
-
-            Spacer(Modifier.height(10.dp))
-
-            SettingsCardHeader("TRANSPORT", "Which way Tor connects \u00b7 applied on next connect")
-            SettingsCard {
-                val modes = listOf(
-                    "auto" to "AUTO",
-                    "vanilla" to "VANILLA",
-                    "obfs4" to "OBFS4",
-                    "webtunnel" to "WEBTUNNEL",
-                    "snowflake" to "SNOWFLAKE",
-                    "direct" to "DIRECT",
-                    "custom" to "CUSTOM"
-                )
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    modes.chunked(2).forEach { rowModes ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            rowModes.forEach { (value, label) ->
-                                TransportChip(
-                                    label = label,
-                                    color = DeltaTor.Accent,
-                                    selected = transportMode == value,
-                                    count = 0,
-                                    modifier = Modifier.weight(1f),
-                                    onSelect = {
-                                        transportMode = value
-                                        Config.transportMode = value
-                                    },
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 24.dp)
+        ) {
+            item {
+                ScreenTopBar("ADVANCED", onBack)
+            }
+            item {
+                Spacer(Modifier.height(10.dp))
+            }
+            item {
+                SettingsCardHeader("TRANSPORT", "Which way Tor connects \u00b7 applied on next connect")
+            }
+            item {
+                SettingsCard {
+                    val modes = listOf(
+                        ParallelTorManager.TRANSPORT_AUTO to "Auto \u00b7 race all",
+                        ParallelTorManager.TRANSPORT_VANILLA to "Vanilla \u00b7 plain bridges",
+                        ParallelTorManager.TRANSPORT_OBFS4 to "obfs4 \u00b7 obfuscated",
+                        ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel \u00b7 needs IPv6",
+                        ParallelTorManager.TRANSPORT_SNOWFLAKE to "Snowflake \u00b7 the two bundled bridges",
+                        ParallelTorManager.TRANSPORT_DIRECT to "Direct \u00b7 no bridge at all",
+                        ParallelTorManager.TRANSPORT_CUSTOM to "Custom \u00b7 my own bridge lines"
+                    )
+                    SettingsDropdown(
+                        label = "CONNECT VIA",
+                        value = transportMode,
+                        options = modes,
+                        onSelect = {
+                            transportMode = it
+                            Config.transportMode = it
+                        }
+                    )
+                    Text(
+                        when (transportMode) {
+                            ParallelTorManager.TRANSPORT_AUTO ->
+                                "Races vanilla, obfs4, webtunnel and the previously working bridges at the same time."
+                            ParallelTorManager.TRANSPORT_VANILLA -> "Plain bridges, no pluggable transport."
+                            ParallelTorManager.TRANSPORT_OBFS4 -> "obfs4 only, via lyrebird."
+                            ParallelTorManager.TRANSPORT_WEBTUNNEL -> "webtunnel only, via lyrebird. Needs IPv6."
+                            ParallelTorManager.TRANSPORT_SNOWFLAKE ->
+                                "Snowflake only, via lyrebird. Uses the bundled two bridges."
+                            ParallelTorManager.TRANSPORT_DIRECT ->
+                                "No bridges at all \u2014 connects straight to a guard."
+                            else -> "Uses only the bridge lines you paste below."
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted,
+                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                    )
+                }
+            }
+            item {
+                if (transportMode == ParallelTorManager.TRANSPORT_CUSTOM) {
+                    SettingsCardHeader("CUSTOM BRIDGES", "One bridge per line \u00b7 applied on next connect")
+                    SettingsCard {
+                        OutlinedTextField(
+                            value = customBridges,
+                            onValueChange = {
+                                customBridges = it
+                                Config.customBridges = it
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            minLines = 4,
+                            maxLines = 12,
+                            textStyle = TextStyle(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                color = DeltaTor.Text
+                            ),
+                            colors = tfColors,
+                            placeholder = {
+                                Text(
+                                    "snowflake 192.0.2.3:80 FINGERPRINT url=... \nobfs4 1.2.3.4:443 FINGERPRINT cert=...",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp
                                 )
                             }
-                            if (rowModes.size == 1) Spacer(Modifier.weight(1f))
+                        )
+                        val customCount = customBridges.lines().count {
+                            it.isNotBlank() && !it.trim().startsWith("#")
                         }
+                        Text(
+                            if (customCount == 0) "No bridges yet \u2014 paste at least one line."
+                            else "$customCount bridge line(s) saved",
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
+                            color = if (customCount == 0) DeltaTor.Amber else DeltaTor.Green,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
                     }
                 }
-                Text(
-                    when (transportMode) {
-                        "auto" -> "Races vanilla, obfs4, webtunnel and the previously working bridges at the same time."
-                        "vanilla" -> "Plain bridges, no pluggable transport."
-                        "obfs4" -> "obfs4 only, via lyrebird."
-                        "webtunnel" -> "webtunnel only, via lyrebird. Needs IPv6."
-                        "snowflake" -> "Snowflake only, via lyrebird. Uses the bundled two bridges."
-                        "direct" -> "No bridges at all \u2014 connects straight to a guard."
-                        else -> "Uses only the bridge lines you paste below."
-                    },
-                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                    color = DeltaTor.Muted,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
-                )
             }
-
-            if (transportMode == "custom") {
-                SettingsCardHeader("CUSTOM BRIDGES", "One bridge per line \u00b7 applied on next connect")
+            item {
+                SettingsCardHeader("TORRC TEMPLATE", "The full torrc, editable here") {
+                    Text(
+                        "RESET",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.1.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                TorrcSettings.resetTemplate()
+                                templateText = TorrcSettings.template()
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+            item {
                 SettingsCard {
+                    Text(
+                        "A ready-made torrc template. Bridges and pluggable transports are appended automatically \u00b7 applied on next connect.",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted,
+                        modifier = Modifier.padding(vertical = 4.dp)
+                    )
                     OutlinedTextField(
-                        value = customBridges,
-                        onValueChange = {
-                            customBridges = it
-                            Config.customBridges = it
-                        },
+                        value = templateText,
+                        onValueChange = { templateText = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 4.dp),
-                        minLines = 4,
-                        maxLines = 12,
+                        minLines = 10,
+                        maxLines = 18,
                         textStyle = TextStyle(
                             fontFamily = FontFamily.Monospace,
                             fontSize = 10.sp,
+                            lineHeight = 13.sp,
                             color = DeltaTor.Text
                         ),
-                        colors = tfColors,
-                        placeholder = {
-                            Text(
-                                "snowflake 192.0.2.3:80 FINGERPRINT url=... \nobfs4 1.2.3.4:443 FINGERPRINT cert=...",
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp
-                            )
-                        }
+                        colors = tfColors
                     )
-                    val customCount = customBridges.lines().count {
-                        it.isNotBlank() && !it.trim().startsWith("#")
-                    }
-                    Text(
-                        if (customCount == 0) "No bridges yet \u2014 paste at least one line."
-                        else "$customCount bridge line(s) saved",
-                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
-                        color = if (customCount == 0) DeltaTor.Amber else DeltaTor.Green,
-                        modifier = Modifier.padding(top = 4.dp)
-                    )
-                }
-            }
-
-            SettingsCardHeader("TORRC TEMPLATE", "The full torrc, editable here") {
-                Text(
-                    "RESET",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.AccentLight,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            TorrcSettings.resetTemplate()
-                            templateText = TorrcSettings.template()
-                        }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-            SettingsCard {
-                Text(
-                    "A ready-made torrc template. Bridges and pluggable transports are appended automatically \u00b7 applied on next connect.",
-                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                    color = DeltaTor.Muted,
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-                OutlinedTextField(
-                    value = templateText,
-                    onValueChange = { templateText = it },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    minLines = 10,
-                    maxLines = 18,
-                    textStyle = TextStyle(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = 10.sp,
-                        lineHeight = 13.sp,
-                        color = DeltaTor.Text
-                    ),
-                    colors = tfColors
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        if (saved) "SAVED \u2713" else "One directive per line \u00b7 lines starting with # are ignored",
-                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                        color = if (saved) DeltaTor.GreenLight else DeltaTor.Muted,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                Brush.horizontalGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent)),
-                                RoundedCornerShape(12.dp)
-                            )
-                            .clickable {
-                                TorrcSettings.setTemplate(templateText)
-                                saved = true
-                            }
-                            .padding(horizontal = 18.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "SAVE",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.2.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(22.dp))
-
-            SettingsCardHeader("BRIDGES", "Bridge mirror counts \u00b7 live cache")
-            Spacer(Modifier.height(6.dp))
-            BridgeCard(
-                bridges = bridges,
-                sc = DeltaTor.Accent,
-                onUpdate = onUpdateBridges,
-                modifier = Modifier.padding(horizontal = 22.dp)
-            )
-
-            Spacer(Modifier.height(22.dp))
-
-            ExitNodeCard(countries)
-
-            Spacer(Modifier.height(22.dp))
-
-            SettingsCardHeader("CONNECTION LOG", "Exact Tor bootstrap output \u00b7 copy with one tap")
-            SettingsCard {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(64.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "View connection log",
-                            style = MaterialTheme.typography.bodyLarge.copy(
-                                fontWeight = FontWeight.SemiBold,
-                                letterSpacing = 0.3.sp
-                            ),
-                            color = DeltaTor.Text
-                        )
-                        Spacer(Modifier.height(3.dp))
-                        Text(
-                            "Shows the live bootstrap; press COPY to share it.",
+                            if (saved) "SAVED \u2713" else "One directive per line \u00b7 lines starting with # are ignored",
                             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                            color = DeltaTor.Muted
+                            color = if (saved) DeltaTor.GreenLight else DeltaTor.Muted,
+                            modifier = Modifier.weight(1f)
                         )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(DeltaTor.AccentDark, DeltaTor.Accent)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.horizontalGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent)),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .clickable {
+                                    TorrcSettings.setTemplate(templateText)
+                                    saved = true
+                                }
+                                .padding(horizontal = 18.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "SAVE",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    letterSpacing = 1.2.sp,
+                                    fontWeight = FontWeight.Bold
                                 ),
-                                RoundedCornerShape(12.dp)
+                                color = Color.White
                             )
-                            .clickable { onOpenLog() }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "VIEW LOG",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.2.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = Color.White
-                        )
+                        }
                     }
                 }
             }
-
-            Spacer(Modifier.height(22.dp))
+            item {
+                Spacer(Modifier.height(22.dp))
+            }
+            item {
+                SettingsCardHeader("BRIDGES", "Bridge mirror counts \u00b7 live cache")
+            }
+            item {
+                Spacer(Modifier.height(6.dp))
+            }
+            item {
+                BridgeCard(
+                    bridges = bridges,
+                    sc = DeltaTor.Accent,
+                    onUpdate = onUpdateBridges,
+                    modifier = Modifier.padding(horizontal = 22.dp)
+                )
+            }
+            item {
+                Spacer(Modifier.height(22.dp))
+            }
+            item {
+                ExitNodeCard(countries)
+            }
+            item {
+                Spacer(Modifier.height(22.dp))
+            }
+            item {
+                SettingsCardHeader("CONNECTION LOG", "Exact Tor bootstrap output \u00b7 copy with one tap")
+            }
+            item {
+                SettingsCard {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "View connection log",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 0.3.sp
+                                ),
+                                color = DeltaTor.Text
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "Shows the live bootstrap; press COPY to share it.",
+                                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                                color = DeltaTor.Muted
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(DeltaTor.AccentDark, DeltaTor.Accent)
+                                    ),
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .clickable { onOpenLog() }
+                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "VIEW LOG",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    letterSpacing = 1.2.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                Spacer(Modifier.height(22.dp))
+            }
         }
     }
 }
@@ -1972,6 +1988,84 @@ private fun TransportChip(
             color = if (selected) Color.White else color,
             textAlign = TextAlign.Center
         )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun SettingsDropdown(
+    label: String,
+    value: String,
+    options: List<Pair<String, String>>,
+    onSelect: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = options.firstOrNull { it.first == value }?.second ?: value
+    Box(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(DeltaTor.Surface)
+                .border(
+                    1.dp,
+                    if (expanded) DeltaTor.AccentLight else DeltaTor.BorderLight,
+                    RoundedCornerShape(12.dp)
+                )
+                .clickable { expanded = true }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.1.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.Muted
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                selectedLabel,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 0.2.sp
+                ),
+                color = DeltaTor.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (expanded) "\u25B2" else "\u25BC",
+                fontSize = 9.sp,
+                color = DeltaTor.AccentLight
+            )
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { (optionValue, optionLabel) ->
+                val isSelected = optionValue == value
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            optionLabel,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                letterSpacing = 0.2.sp
+                            ),
+                            color = if (isSelected) DeltaTor.AccentLight else DeltaTor.Text
+                        )
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(optionValue)
+                    }
+                )
+            }
+        }
     }
 }
 
