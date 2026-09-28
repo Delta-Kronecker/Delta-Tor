@@ -94,10 +94,22 @@ Any number of countries can be selected; the app writes them as `ExitNodes` with
 The most used countries are offered first. After connecting, the app resolves the real exit IP
 through Tor and shows the country and the address, so a bad exit is visible at a glance.
 
-`StrictNodes 0` is deliberate. With `StrictNodes 1` Tor refuses to build any circuit that does not
-exit through one of the selected nodes, so when those relays are slow, guarded or unreachable no
-circuit can ever complete and bootstrap stops at 50%. With `0` the list is a strong preference: Tor
-still steers into those countries, but a circuit can always be finished.
+Three things make a pinned exit country actually work, and all three are needed:
+
+- `StrictNodes 0`, not `1`. With `1` Tor refuses to build any circuit that does not exit through
+  one of the selected nodes, so when those relays are slow, guarded or unreachable no circuit can
+  ever complete and bootstrap stops at 50%. With `0` the list is a strong preference: Tor still
+  steers into those countries, but a circuit can always be finished.
+- A geoip database. Tor can only resolve `ExitNodes {us}` if it knows which country a relay is in,
+  and the bundled Tor binary ships no geoip, so the rule used to match nothing and the selection was
+  ignored in silence. The database is generated on demand from the range table the APK already
+  carries (`assets/geoip/country.csv.gz`), converted to Tor's `low,high,CC` format, for the selected
+  countries only. Both `geoip` and `geoip6` are written, and they are rebuilt when the selection
+  changes.
+- `LearnCircuitBuildTimeout 1` with a 180 second `CircuitBuildTimeout`, appended after the template
+  so they win. A circuit whose exit has to come from a chosen country is a much narrower draw than
+  a random one, and the shipped template ends with a 20 second timeout and learning switched off,
+  which abandoned every attempt before it could finish.
 
 ## Using it
 

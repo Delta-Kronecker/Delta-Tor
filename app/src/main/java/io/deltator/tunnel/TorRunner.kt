@@ -143,11 +143,18 @@ class TorRunner(
         synchronized(healthyBridges) { healthyBridges.clear() }
 
         try {
-            val cleanLines = bridgeLines.lines()
+            val rawLines = bridgeLines.lines()
                 .map { it.trim() }
-                .filter { it.isNotBlank() }
+                .filter { it.isNotBlank() && !it.startsWith("#") }
                 .map { if (it.lowercase().startsWith("bridge ")) it.substring(7).trim() else it }
-                .take(MAX_BRIDGE_LINES)
+            // Tor aborts on the FIRST bad Bridge line, so a single malformed entry
+            // from a collector would take the whole transport down. Drop them here
+            // and say so, instead of losing the runner.
+            val (wellFormed, malformed) = rawLines.partition { isValidBridgeLine(it) }
+            if (malformed.isNotEmpty()) {
+                Log.w(tag, "dropped ${malformed.size} malformed bridge line(s), first: ${malformed.first().take(70)}")
+            }
+            val cleanLines = wellFormed.take(MAX_BRIDGE_LINES)
 
             val isDirect = name == "direct"
             if (cleanLines.isEmpty() && !isDirect) {
@@ -184,7 +191,7 @@ class TorRunner(
                 }
             }
 
-            extractGeoIpFiles()
+            prepareGeoIp()
 
             val torrcPath = writeTorrc(cleanLines, isVanilla, isDirect)
             val torBinary = context.applicationInfo.nativeLibraryDir + "/libtor.so"
@@ -402,6 +409,13 @@ class TorRunner(
                 // preference: Tor still steers into those countries, but a circuit
                 // can always be completed when they are unreachable.
                 appendLine("StrictNodes 0")
+                // A circuit whose exit has to come from a chosen country is a much
+                // narrower draw than a random one, and the shipped template ends
+                // with CircuitBuildTimeout 20 and learning off, so every attempt
+                // was abandoned before it could finish. These two lines come after
+                // the template, so they are the ones Tor keeps.
+                appendLine("LearnCircuitBuildTimeout 1")
+                appendLine("CircuitBuildTimeout 180")
             }
         }
 
@@ -427,18 +441,25 @@ class TorRunner(
         return if (File(binaryPath).exists()) binaryPath else null
     }
 
-    private fun extractGeoIpFiles() {
-        for (name in listOf("geoip", "geoip6")) {
-            val destFile = File(dataDir, name)
-            if (destFile.exists()) continue
-            try {
-                context.assets.open(name).use { input ->
-                    destFile.outputStream().use { output -> input.copyTo(output) }
-                }
-                Log.d(tag, "Extracted $name to ${destFile.absolutePath}")
-            } catch (e: Exception) {
-                Log.w(tag, "Failed to extract $name (may not be bundled): ${e.message}")
-            }
+    /**
+     * Tor resolves an `ExitNodes {cc}` rule only through its geoip database, and the
+     * bundled binary has none, so the database is generated here from the range
+     * table the APK already carries. Without it the selected countries are ignored
+     * without a word, so say so instead of pretending the exit is pinned.
+     */
+    private fun prepareGeoIp() {
+        val codes = ExitNodes.currentCodes()
+            .map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        if (codes.isEmpty()) {
+            // No country chosen: drop a stale database so nothing points at it.
+            GeoIpFile.discard(dataDir)
+            return
+        }
+        val built = GeoIpFile.ensure(context, dataDir, codes.toSet())
+        if (!built) {
+            Log.w(tag, "no geoip database: the exit country cannot be enforced, Tor will pick any exit")
         }
     }
 
@@ -482,6 +503,29 @@ class TorRunner(
     }
 
     private fun describe(p: Process): String = runCatching { p.toString() }.getOrDefault("pid ?")
+
+    /**
+     * True when Tor will accept this as a `Bridge` line.
+     *
+     * Tor refuses the whole configuration on the first bridge it cannot parse, and
+     * the usual offender is a fingerprint that is not exactly 40 hex characters, so
+     * that is checked here before anything reaches torrc. The shape is either
+     * `addr:port FINGERPRINT ...` (vanilla) or
+     * `obfs4|webtunnel|snowflake|meek addr:port FINGERPRINT ...`.
+     */
+    private fun isValidBridgeLine(line: String): Boolean {
+        val parts = line.split(WHITESPACE).filter { it.isNotBlank() }
+        if (parts.size < 2) return false
+        val fpIndex = if (parts[0].lowercase() in PLUGGABLE_TRANSPORTS) 2 else 1
+        if (parts.size <= fpIndex) return false
+        val addr = parts[fpIndex - 1]
+        if (!addr.contains(':') || addr.startsWith(":")) return false
+        return isFingerprint(parts[fpIndex])
+    }
+
+    /** A bridge identity digest is always 40 hex characters. */
+    private fun isFingerprint(token: String): Boolean =
+        token.length == 40 && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     companion object {
         private const val MAX_BRIDGE_LINES = 100
