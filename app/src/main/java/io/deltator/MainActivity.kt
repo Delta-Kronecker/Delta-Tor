@@ -1382,7 +1382,7 @@ private fun ExitNodeCard(countries: List<ExitCountry>) {
         Spacer(Modifier.height(4.dp))
         Text(
             "Tap to add or remove a country \u00b7 written to torrc as " +
-                "ExitNodes {us},{nl},\u2026 with StrictNodes 1.",
+                "ExitNodes {us},{nl},\u2026 \u00b7 steered, never forced.",
             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
             color = DeltaTor.Muted
         )
@@ -1516,6 +1516,7 @@ private fun SettingsScreen(
     var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
     var transportMode by remember { mutableStateOf(Config.transportMode) }
     var customBridges by remember { mutableStateOf(Config.customBridges) }
+    var autoTransports by remember { mutableStateOf(Config.autoTransports) }
 
     // Plain country list from the bundled table. Recommended countries first,
     // then the rest alphabetically. Does not depend on the bridge cache, so it
@@ -1603,6 +1604,79 @@ private fun SettingsScreen(
                         color = DeltaTor.Muted,
                         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                     )
+                }
+            }
+            item {
+                if (transportMode == ParallelTorManager.TRANSPORT_AUTO) {
+                    SettingsCardHeader("AUTO RACERS", "What auto races \u00b7 at least one")
+                    SettingsCard {
+                        Config.AUTO_TRANSPORT_CHOICES.forEach { choice ->
+                            val on = choice in autoTransports
+                            val only = on && autoTransports.size == 1
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !only) {
+                                        autoTransports = when {
+                                            on -> autoTransports - choice
+                                            else -> autoTransports + choice
+                                        }
+                                        Config.autoTransports = autoTransports
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    Modifier
+                                        .size(18.dp)
+                                        .clip(RoundedCornerShape(5.dp))
+                                        .background(
+                                            if (on) DeltaTor.Accent else Color.Transparent
+                                        )
+                                        .border(
+                                            1.dp,
+                                            if (on) DeltaTor.Accent else DeltaTor.BorderLight,
+                                            RoundedCornerShape(5.dp)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (on) {
+                                        Text(
+                                            "\u2713",
+                                            fontSize = 11.sp,
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    choice.uppercase(),
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        letterSpacing = 1.2.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = if (on) DeltaTor.Text else DeltaTor.Muted,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                if (only) {
+                                    Text(
+                                        "only one left",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            letterSpacing = 0.6.sp
+                                        ),
+                                        color = DeltaTor.Amber
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            "Auto starts every ticked transport at once and keeps the first that reaches 100%.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
                 }
             }
             item {

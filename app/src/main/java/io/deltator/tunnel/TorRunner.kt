@@ -395,7 +395,13 @@ class TorRunner(
                 .distinct()
             if (ccs.isNotEmpty()) {
                 appendLine("ExitNodes " + ccs.joinToString(",") { "{$it}" })
-                appendLine("StrictNodes 1")
+                // StrictNodes 0, not 1. With 1 Tor refuses to build any circuit
+                // that does not leave through one of these nodes, so a list whose
+                // relays are slow, guarded or simply unreachable never completes a
+                // circuit and bootstrap hangs at 50%. With 0 the list is a strong
+                // preference: Tor still steers into those countries, but a circuit
+                // can always be completed when they are unreachable.
+                appendLine("StrictNodes 0")
             }
         }
 

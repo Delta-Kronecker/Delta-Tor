@@ -64,6 +64,9 @@ and are resolved in this order:
 2. the copy bundled inside the APK (so a fresh install works before the first download),
 3. the network.
 
+`snowflake` comes from the collector's `snowflake.txt`, like the others, with a bundled copy as the
+offline fallback.
+
 `webtunnel` is assembled from two files, `webtunnel.txt` and `webtunnel_ipv6.txt`. They are merged
 by fingerprint, alternating between the two so both sources are represented once Tor's per-runner
 line cap applies. A bridge that is republished with a newer `ver=` replaces its older twin in
@@ -72,25 +75,40 @@ place, because a stale webtunnel protocol version is rejected during the handsha
 Bridge counts in the app are therefore the number of *distinct* bridges, not the number of lines
 in the files.
 
+### Transport selection
+
+`ADVANCED` has a **CONNECT VIA** dropdown: `auto`, `vanilla`, `obfs4`, `webtunnel`, `snowflake`,
+`direct` (no bridge at all, straight to a guard) or `custom`, where you paste your own bridge
+lines. Every mode except `auto` runs exactly one transport.
+
+`auto` races several transports at once and keeps the first that reaches 100%. The **AUTO RACERS**
+list below the dropdown decides which ones take part, so you can, for example, drop `webtunnel` on
+a network without IPv6. At least one must stay ticked. The `memory` runner joins automatically once
+it has bridges that provably worked, and it is not part of that list.
+
+The selection is applied on the next connect.
+
 ### Exit country
 
-Any number of countries can be selected; the app writes them as `ExitNodes` and enables
-`StrictNodes`. The most used countries are offered first. After connecting, the app resolves the
-real exit IP through Tor and shows the country and the address, so a bad exit is visible at a
-glance.
+Any number of countries can be selected; the app writes them as `ExitNodes` with `StrictNodes 0`.
+The most used countries are offered first. After connecting, the app resolves the real exit IP
+through Tor and shows the country and the address, so a bad exit is visible at a glance.
 
-Note that strict exit nodes make bootstrapping noticeably slower, because Tor has to find a usable
-guard in the selected countries.
+`StrictNodes 0` is deliberate. With `StrictNodes 1` Tor refuses to build any circuit that does not
+exit through one of the selected nodes, so when those relays are slow, guarded or unreachable no
+circuit can ever complete and bootstrap stops at 50%. With `0` the list is a strong preference: Tor
+still steers into those countries, but a circuit can always be finished.
 
 ## Using it
 
 - **Ring button** — connect, or reconnect. It is the only thing you need for day to day use.
 - **Live speed** — shown in the notification, together with the running totals. Swipe the app away
   and you still see the throughput.
-- **ADVANCED** — exit countries, bridge counts, an in-app log with per-transport filters, and a
-  manual bridge refresh.
-- **Log filters** — `ALL`, `VANILLA`, `OBFS4`, `WEBTUNNEL` and `MEMORY`; the last one shows what
-  the memory runner was given and whether it updated.
+- **ADVANCED** — transport mode, the auto racer list, custom bridges, exit countries, bridge
+  counts, an in-app log with per-transport filters, and a manual bridge refresh. The screen is a
+  lazy list, so it opens without waiting on the country list or the torrc editor.
+- **Log filters** — `ALL`, `VANILLA`, `OBFS4`, `WEBTUNNEL`, `SNOWFLAKE`, `MEMORY`, `DIRECT` and
+  `CUSTOM`; `MEMORY` shows what the memory runner was given and whether it updated.
 
 Stopping the VPN and disconnecting are separate actions: stopping tears the tunnel down but keeps
 Tor alive, disconnecting starts a fresh race.
