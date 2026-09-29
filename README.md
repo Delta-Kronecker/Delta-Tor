@@ -164,12 +164,12 @@ builds, not a fork:
   because Go requires cgo there, so the `.github/workflows/build-lyrebird.yml` workflow rebuilds
   both ABIs in CI. Run it after bumping lyrebird and commit the new binaries.
 
-Pinned checksums (`scripts/fetch-official-tor.ps1` for tor, `build-lyrebird.yml` run logs for lyrebird):
+Pinned checksums (`scripts/fetch-official-tor.ps1` for tor, workflow logs for lyrebird):
 
-| ABI | libtor.so 0.4.9.13 | libobfs4proxy.so lyrebird (v0.8.1) |
-|---|---|---|
-| arm64-v8a | `59398e39a1332608fc87660b233dddd88e0792fc7b58724338d9df36bac82fb2` | `c17f92e833bb71786a385e57d1afb694e8973e2f1e7b12d49233d145e5b40d6f` |
-| armeabi-v7a | `8948b5e5d94f5332c0d5ffa223c06a6614001dc4289cf4d4c63488700445f341` | `0624128f07b5d0a3f5045f1394b5fb9ce8cf73b4a9d111526e5ef699b1ad1a96` |
+| ABI | libtor.so 0.4.9.13 |
+|---|---|
+| arm64-v8a | `59398e39a1332608fc87660b233dddd88e0792fc7b58724338d9df36bac82fb2` |
+| armeabi-v7a | `8948b5e5d94f5332c0d5ffa223c06a6614001dc4289cf4d4c63488700445f341` |
 
 Because they are official builds, the fork-only `ConfluxEnabled`/`ConfluxClientUX` knobs the old
 custom tor added are gone from the torrc template (official Tor would refuse to start on them).
