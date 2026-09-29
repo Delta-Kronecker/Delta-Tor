@@ -71,20 +71,32 @@ object BridgeMemory {
     }
 
     /**
-     * Bridge lines for the memory runner: the full lists filtered down to the
-     * fingerprints that worked before, remembered bridges first. Returns null
-     * when nothing has been proven yet, so the runner is skipped entirely
-     * instead of racing with an empty bridge set.
+     * Bridge lines for a memory runner.
+     *
+     * With [transport] the pool and the source list are both restricted to that
+     * one transport, which is what a `webtunnel-memory` twin needs: it must only
+     * carry webtunnel lines, otherwise the runner would start a pluggable
+     * transport the user did not ask for. Without it every remembered bridge from
+     * every transport is merged, which is what the auto-mode runner wants.
+     *
+     * Returns null when nothing has been proven yet, so the runner is skipped
+     * entirely instead of racing with an empty bridge set.
      */
-    fun bridgeLinesFor(context: Context, sources: Map<String, String>): String? {
-        val remembered = allHealthy(context)
+    fun bridgeLinesFor(context: Context, sources: Map<String, String>, transport: String? = null): String? {
+        val remembered = if (transport != null) healthy(context, transport) else allHealthy(context)
         if (remembered.isEmpty()) return null
         val order = remembered.withIndex().associate { (i, fp) -> fp to i }
         val kept = mutableListOf<Pair<Int, String>>()
-        sources.forEach { (_, content) ->
+        val scan = if (transport != null) {
+            sources[transport]?.let { mapOf(transport to it) } ?: emptyMap()
+        } else {
+            sources
+        }
+        scan.forEach { (_, content) ->
             content.lines().forEach { raw ->
                 val line = raw.trim()
                 if (line.isEmpty() || line.startsWith("#")) return@forEach
+                if (transport != null && !matchesTransport(line, transport)) return@forEach
                 val fp = fingerprintOf(line) ?: return@forEach
                 val rank = order[fp] ?: return@forEach
                 kept += rank to line
@@ -92,6 +104,19 @@ object BridgeMemory {
         }
         if (kept.isEmpty()) return null
         return kept.sortedBy { it.first }.map { it.second }.joinToString("\n")
+    }
+
+    /**
+     * True when [line] is a bridge line for [transport]. Plain `ip:port fp` lines
+     * belong to the vanilla transport and carry no pluggable-transport prefix.
+     */
+    private fun matchesTransport(line: String, transport: String): Boolean {
+        val first = line.split(WHITESPACE).firstOrNull { it.isNotEmpty() }?.lowercase() ?: return false
+        return if (transport == ParallelTorManager.TRANSPORT_VANILLA) {
+            first !in PLUGGABLE_PREFIXES
+        } else {
+            first == transport.lowercase()
+        }
     }
 
     private fun isFingerprint(s: String) = s.length in 32..40 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }

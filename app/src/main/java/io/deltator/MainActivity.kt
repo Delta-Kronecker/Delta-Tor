@@ -95,6 +95,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -257,8 +258,8 @@ private fun MainScreen(
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val openDrawer = remember { { scope.launch { drawerState.open() } } }
-    val closeDrawer = remember { { scope.launch { drawerState.close() } } }
+    val openDrawer: () -> Unit = remember { { scope.launch { drawerState.open() }; Unit } }
+    val closeDrawer: () -> Unit = remember { { scope.launch { drawerState.close() }; Unit } }
     BackHandler(enabled = drawerState.isOpen) { closeDrawer() }
 
     ModalNavigationDrawer(
@@ -1208,8 +1209,8 @@ private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun ArrowIcon(accent: Color, up: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp) {
-    Canvas(Modifier.size(size)) {
+private fun ArrowIcon(accent: Color, up: Boolean, iconSize: Dp = 20.dp) {
+    Canvas(Modifier.size(iconSize)) {
         val stroke = 2.dp.toPx()
         val w = size.width
         val h = size.height
@@ -1763,6 +1764,18 @@ private fun SettingsScreen(
                         color = DeltaTor.Muted,
                         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                     )
+                    if (transportMode in ParallelTorManager.BRIDGE_SOURCES) {
+                        // Single-transport modes are not single-runner modes: the
+                        // memory twin races next to them, so say that up front.
+                        Text(
+                            "Every bridge list also gets a memory twin: the bridges " +
+                                "that worked in this transport are pulled from the log and " +
+                                "race beside it, e.g. ${transportMode}-memory.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted.copy(alpha = 0.85f),
+                            modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
+                        )
+                    }
                 }
             }
             item {
@@ -2054,7 +2067,7 @@ private fun levelLabel(level: Char): String = when (level) {
 
 private const val LOG_SEVERITY_ORDER = "EWIDV"
 
-private fun transportColor(transport: String): Color = when (transport) {
+private fun transportColor(transport: String): Color = when (ParallelTorManager.baseTransportOf(transport)) {
     "vanilla" -> Color(0xFF5AC8FA)
     "obfs4" -> Color(0xFFFF9F0A)
     "webtunnel" -> Color(0xFF30D158)
