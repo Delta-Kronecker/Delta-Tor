@@ -301,6 +301,7 @@ private fun MainScreen(
                 connecting = connecting,
                 torRunning = torRunning,
                 connected = connected,
+                reconnecting = state.reconnecting,
                 transport = state.transport,
                 peak = peakPct(state.connecting, state.torRunning, state.transports),
                 sc = scAnimated,
@@ -572,6 +573,7 @@ private fun LocationDrawer(onClose: () -> Unit) {
 
 private fun stateColor(state: AppState.VpnState): Color = when {
     state.connecting -> DeltaTor.Amber
+    state.reconnecting -> DeltaTor.AmberLight
     state.connected -> DeltaTor.Green
     state.torRunning -> DeltaTor.Amber
     else -> DeltaTor.Muted
@@ -598,9 +600,16 @@ private fun labelText(state: AppState.VpnState): String = when {
     else -> "CONNECT"
 }
 
-private fun wordFor(connecting: Boolean, torRunning: Boolean, connected: Boolean, hasError: Boolean): String = when {
+private fun wordFor(
+    connecting: Boolean,
+    torRunning: Boolean,
+    connected: Boolean,
+    reconnecting: Boolean,
+    hasError: Boolean
+): String = when {
     hasError -> "ERROR"
     connecting -> "CONNECTING"
+    reconnecting -> "LINK LOST"
     connected -> "CONNECTED"
     torRunning -> "READY"
     else -> "OFFLINE"
@@ -610,12 +619,14 @@ private fun sublineFor(
     connecting: Boolean,
     torRunning: Boolean,
     connected: Boolean,
+    reconnecting: Boolean,
     transport: String,
     peak: Int,
     hasError: Boolean
 ): String = when {
     hasError -> "BOOTSTRAP FAILED"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
+    reconnecting -> "RESTORING THE TUNNEL"
     connected -> "${transport.uppercase()} \u00b7 GATEWAY ACTIVE"
     torRunning -> "TOR RUNNING \u00b7 VPN PAUSED"
     else -> "YOUR PRIVATE GATEWAY"
@@ -793,16 +804,17 @@ private fun StateBlock(
     connecting: Boolean,
     torRunning: Boolean,
     connected: Boolean,
+    reconnecting: Boolean,
     transport: String,
     peak: Int,
     sc: Color,
     hasError: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val word = wordFor(connecting, torRunning, connected, hasError)
-    val sub = sublineFor(connecting, torRunning, connected, transport, peak, hasError)
+    val word = wordFor(connecting, torRunning, connected, reconnecting, hasError)
+    val sub = sublineFor(connecting, torRunning, connected, reconnecting, transport, peak, hasError)
     val subColor by animateColorAsState(
-        if (connected) DeltaTor.GreenLight else DeltaTor.Muted,
+        if (reconnecting) DeltaTor.AmberLight else if (connected) DeltaTor.GreenLight else DeltaTor.Muted,
         tween(450),
         label = "sub"
     )

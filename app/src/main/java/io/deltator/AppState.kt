@@ -14,6 +14,8 @@ object AppState {
         val connecting: Boolean = false,
         val torRunning: Boolean = false,
         val connected: Boolean = false,
+        /** Up but carrying nothing: the link or the circuits are being restored. */
+        val reconnecting: Boolean = false,
         val transports: Map<String, Int> = emptyMap(),
         val transport: String = "",
         val error: String? = null,
