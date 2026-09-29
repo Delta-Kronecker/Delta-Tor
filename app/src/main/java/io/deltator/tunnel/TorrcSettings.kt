@@ -19,7 +19,7 @@ object TorrcSettings {
     private lateinit var prefs: SharedPreferences
 
     val defaultTemplate: String = """
-        # DeltaTor (Android) - speed-optimized torrc template (tor 0.4.9.13, official)
+        # DeltaTor (Android) - speed-optimized torrc template (tor 0.4.9.11)
         # Adapted from the portable Windows DeltaTor config. All parameters are
         # kept, except lines that must be Android-managed:
         #   - DataDirectory / GeoIP* : absolute paths are set by the app.
@@ -70,6 +70,18 @@ object TorrcSettings {
         DisableDebuggerAttachment 1
         AvoidDiskWrites 1
         SafeLogging 1
+
+        # --- EXPERIMENT: Conflux (split traffic across circuits) ---
+        # This Android tor build supports ConfluxEnabled + ConfluxClientUX only.
+        # The fork-only knobs below are NOT in the Android binary and would abort
+        # startup, so they are preserved as comments.
+        ConfluxEnabled 1
+        ConfluxClientUX throughput
+        # ConfluxNumSets 32
+        # ConfluxNumLinkedSets 32
+        # ConfluxNumLegs 1
+        # ConfluxSetSelection 1
+        # ConfluxSetRttPct 15
 
         # --- strategy: ultimate (later values win over the tuning above) ---
         MaxCircuitDirtiness 86400

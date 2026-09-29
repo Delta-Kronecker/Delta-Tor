@@ -147,33 +147,6 @@ The bridge list files are plain text, one bridge per line, in Tor's own format, 
 committed under `app/src/main/assets/bridges/` so the app has something to work with before its
 first download.
 
-### Official Tor and lyrebird binaries
-
-The Tor core and the pluggable transports in `app/src/main/jniLibs/` come from official upstream
-builds, not a fork:
-
-- **`libtor.so` — tor 0.4.9.13**, the official Tor Project Android build shipped by Guardian
-  Project as `info.guardianproject:tor-android` (compiled from unmodified Tor). OpenSSL,
-  libevent, zlib and zstd are linked in statically; the binary only needs Android's `libc`,
-  `libm`, `liblog`, `libdl`, so the app can `exec` it the same way it always has.
-  Update with `powershell -File scripts/fetch-official-tor.ps1` — the script downloads the AAR
-  from `gpmaven`, extracts `jni/<abi>/libtor.so`, and verifies the pinned SHA-256 below.
-- **`libobfs4proxy.so` — official lyrebird** (obfs4 + webtunnel + snowflake transports) built
-  straight from `gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/lyrebird`
-  (v0.8.1) with `go build` for each ABI. arm64 is a pure-Go static binary; armv7 needs the NDK
-  because Go requires cgo there, so the `.github/workflows/build-lyrebird.yml` workflow rebuilds
-  both ABIs in CI. Run it after bumping lyrebird and commit the new binaries.
-
-Pinned checksums (`scripts/fetch-official-tor.ps1` for tor, workflow logs for lyrebird):
-
-| ABI | libtor.so 0.4.9.13 |
-|---|---|
-| arm64-v8a | `59398e39a1332608fc87660b233dddd88e0792fc7b58724338d9df36bac82fb2` |
-| armeabi-v7a | `8948b5e5d94f5332c0d5ffa223c06a6614001dc4289cf4d4c63488700445f341` |
-
-Because they are official builds, the fork-only `ConfluxEnabled`/`ConfluxClientUX` knobs the old
-custom tor added are gone from the torrc template (official Tor would refuse to start on them).
-
 ## CI
 
 | Workflow | Trigger | Does |
