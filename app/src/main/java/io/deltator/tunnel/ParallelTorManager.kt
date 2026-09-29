@@ -260,8 +260,9 @@ object ParallelTorManager {
             throw RuntimeException("No bridges available for $mode")
         }
 
+        val planNames = plans.map { it.first }.toSet()
         lastPlans = plans.toMap()
-        lastPorts = ports.filterKeys { it in plans }
+        lastPorts = ports.filterKeys { it in planNames }
 
         synchronized(runnersLock) { runners = mutableMapOf() }
 
