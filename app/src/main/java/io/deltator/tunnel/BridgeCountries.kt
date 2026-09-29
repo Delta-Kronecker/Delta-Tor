@@ -136,8 +136,8 @@ object BridgeCountries {
      * Every selectable exit country, alphabetical by name. Cheap: the name table
      * is a few kB asset, no GeoIP parse and no bridge cache needed.
      */
-    suspend fun top(context: Context): List<ExitCountry> = withContext(Dispatchers.IO) {
-        try {
+    fun topSync(context: Context): List<ExitCountry> {
+        return try {
             countryNames(context)
                 .filterKeys { it.length == 2 }
                 .map { (cc, name) -> ExitCountry(cc, name) }

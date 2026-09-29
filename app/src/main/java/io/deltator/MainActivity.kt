@@ -97,14 +97,13 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeStore
 import io.deltator.tunnel.ParallelTorManager
-import io.deltator.tunnel.ExitCountry
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
@@ -112,13 +111,8 @@ import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
 import io.deltator.util.LogEntry
 import io.deltator.util.LogSession
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
 
@@ -137,6 +131,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
+        ExitNodes.loadDirectory(this)
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
@@ -395,12 +390,6 @@ private fun WarnIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Ambe
 
 private const val REPO_URL = "https://github.com/Delta-Kronecker/Delta-Tor"
 
-/**
- * The one drawer: exit country, the whole advanced setup and the repository.
- * Both long sections start closed, so opening the drawer shows a short summary
- * and a button instead of dumping a wall of rows, and pinning a country keeps
- * its warning visible while the list is hidden.
- */
 @Composable
 private fun ControlDrawer(
     onClose: () -> Unit,
@@ -412,22 +401,26 @@ private fun ControlDrawer(
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
     val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
+    val countries by ExitNodes.directory.collectAsStateWithLifecycle()
 
-    var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
     var showCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
     var repoCopied by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        countries = withContext(Dispatchers.IO) {
-            runCatching { ExitNodes.order(BridgeCountries.top(context)) }.getOrDefault(emptyList())
-        }
-    }
     LaunchedEffect(repoCopied) {
         if (repoCopied) {
             delay(1500)
             repoCopied = false
         }
+    }
+
+    val selection = when {
+        selectedCodes.isEmpty() -> "Any location \u00b7 default"
+        selectedCodes.size == 1 -> {
+            val only = selectedCodes.first()
+            "${flagEmoji(only)}  ${exitNames[only].orEmpty()}".trim()
+        }
+        else -> "${selectedCodes.size} countries selected"
     }
 
     Column(
@@ -438,92 +431,64 @@ private fun ControlDrawer(
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(start = 18.dp, end = 12.dp, top = 14.dp),
+                .padding(start = 20.dp, end = 16.dp, top = 18.dp, bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
                     "CONTROLS",
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        letterSpacing = 1.6.sp,
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        letterSpacing = 2.4.sp,
+                        fontSize = 19.sp,
                         fontWeight = FontWeight.Bold
                     ),
-                    color = DeltaTor.AccentLight
+                    color = DeltaTor.Text
                 )
-                Spacer(Modifier.height(2.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
-                    "Location, transport and torrc \u00b7 applied on next connect",
-                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+                    "Everything here applies on the next connect",
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                     color = DeltaTor.Muted
                 )
             }
+            Spacer(Modifier.width(12.dp))
             Box(
                 Modifier
-                    .size(32.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(DeltaTor.Surface, RoundedCornerShape(10.dp))
-                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(10.dp))
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null
                     ) { onClose() },
                 contentAlignment = Alignment.Center
             ) {
-                CloseIcon(Modifier.size(12.dp), DeltaTor.Text)
+                CloseIcon(Modifier.size(13.dp), DeltaTor.Text)
             }
         }
+        DividerLine()
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp)
+            contentPadding = PaddingValues(bottom = 32.dp)
         ) {
             item(key = "loc-head") {
-                SettingsCardHeader("LOCATION", "Which country the exit relay is in")
+                DrawerSection(
+                    title = "LOCATION",
+                    summary = selection,
+                    expanded = showCountries,
+                    onClick = { showCountries = !showCountries }
+                )
             }
-            item(key = "loc-card") {
+            item(key = "loc-warn") {
                 SettingsCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            when {
-                                selectedCodes.isEmpty() -> "Any location \u00b7 default"
-                                selectedCodes.size == 1 -> {
-                                    val only = selectedCodes.first()
-                                    "${flagEmoji(only)}  ${exitNames[only].orEmpty()}".trim()
-                                }
-                                else -> "${selectedCodes.size} countries selected"
-                            },
-                            style = MaterialTheme.typography.bodyMedium.copy(
-                                fontWeight = FontWeight.SemiBold
-                            ),
-                            color = DeltaTor.Text,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (selectedCodes.isNotEmpty()) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "CLEAR",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    letterSpacing = 1.1.sp,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = DeltaTor.Red,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .clickable { ExitNodes.clear() }
-                                    .padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(10.dp))
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(12.dp))
                             .background(DeltaTor.Amber.copy(alpha = 0.10f))
-                            .border(1.dp, DeltaTor.Amber.copy(alpha = 0.32f), RoundedCornerShape(14.dp))
-                            .padding(horizontal = 12.dp, vertical = 10.dp)
+                            .padding(horizontal = 12.dp, vertical = 11.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             WarnIcon(color = DeltaTor.Amber)
@@ -531,11 +496,26 @@ private fun ControlDrawer(
                             Text(
                                 "USE ONLY WHEN NEEDED",
                                 style = MaterialTheme.typography.labelSmall.copy(
-                                    letterSpacing = 1.1.sp,
+                                    letterSpacing = 1.2.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = DeltaTor.Amber
+                                color = DeltaTor.Amber,
+                                modifier = Modifier.weight(1f)
                             )
+                            if (selectedCodes.isNotEmpty()) {
+                                Text(
+                                    "CLEAR",
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        letterSpacing = 1.2.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = DeltaTor.Red,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable { ExitNodes.clear() }
+                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                )
+                            }
                         }
                         Spacer(Modifier.height(6.dp))
                         Text(
@@ -550,53 +530,48 @@ private fun ControlDrawer(
                     }
                 }
             }
-            item(key = "loc-toggle") {
-                SectionToggle(
-                    label = "COUNTRIES",
-                    expanded = showCountries,
-                    onClick = { showCountries = !showCountries }
-                )
-            }
             if (showCountries) {
-                item(key = "loc-list") {
-                    SettingsCard {
-                        if (countries.isEmpty()) {
-                            Text(
-                                "Loading country list \u2026",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = DeltaTor.Muted.copy(alpha = 0.75f),
-                                modifier = Modifier.padding(vertical = 10.dp)
+                item(key = "any") {
+                    DrawerRow(last = countries.isEmpty()) {
+                        CountryRow(
+                            emoji = "\uD83C\uDF10",
+                            name = "Any location \u00b7 default",
+                            code = "--",
+                            selected = selectedCodes.isEmpty(),
+                            onClick = { ExitNodes.clear() }
+                        )
+                    }
+                }
+                if (countries.isEmpty()) {
+                    item(key = "loading") {
+                        Text(
+                            "Reading country list \u2026",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = DeltaTor.Muted.copy(alpha = 0.75f),
+                            modifier = Modifier.padding(start = 26.dp, end = 20.dp, top = 12.dp, bottom = 12.dp)
+                        )
+                    }
+                } else {
+                    items(countries.size, key = { "cc-" + countries[it].code }) { i ->
+                        val c = countries[i]
+                        DrawerRow(last = i == countries.size - 1) {
+                            CountryRow(
+                                emoji = remember(c.code) { flagEmoji(c.code) },
+                                name = c.name,
+                                code = c.code,
+                                selected = c.code in selectedCodes,
+                                onClick = { ExitNodes.toggle(c.code, c.name) }
                             )
-                        } else {
-                            ExitNodeRow(
-                                emoji = "\uD83C\uDF10",
-                                name = "Any location \u00b7 default",
-                                code = "--",
-                                selected = selectedCodes.isEmpty(),
-                                onClick = { ExitNodes.clear() }
-                            )
-                            for (c in countries) {
-                                ExitNodeRow(
-                                    emoji = remember(c.code) { flagEmoji(c.code) },
-                                    name = c.name,
-                                    code = c.code,
-                                    selected = c.code in selectedCodes,
-                                    onClick = { ExitNodes.toggle(c.code, c.name) }
-                                )
-                            }
                         }
                     }
                 }
             }
+            item(key = "div-adv") { DividerLine() }
             item(key = "adv-head") {
-                DividerLine()
-                SettingsCardHeader("ADVANCED", "Transport, bridges, torrc and the log")
-            }
-            item(key = "adv-toggle") {
-                SectionToggle(
-                    label = "ADVANCED SETUP",
+                DrawerSection(
+                    title = "ADVANCED",
+                    summary = "Transport, bridges, torrc and the log",
                     expanded = showAdvanced,
-                    icon = { GearIcon(Modifier.size(14.dp), DeltaTor.AccentLight) },
                     onClick = { showAdvanced = !showAdvanced }
                 )
             }
@@ -609,9 +584,12 @@ private fun ControlDrawer(
                     )
                 }
             }
+            item(key = "div-repo") { DividerLine() }
             item(key = "repo-head") {
-                DividerLine()
-                SettingsCardHeader("REPOSITORY", "Source, issues and releases")
+                DrawerSection(
+                    title = "REPOSITORY",
+                    summary = "Source, issues and releases"
+                )
             }
             item(key = "repo-card") {
                 SettingsCard {
@@ -619,15 +597,11 @@ private fun ControlDrawer(
                         REPO_URL,
                         style = TextStyle(
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
                             color = DeltaTor.Text
-                        )
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "Read the source, report a problem or grab a new build.",
-                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                        color = DeltaTor.Muted
+                        ),
+                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)
                     )
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -635,12 +609,14 @@ private fun ControlDrawer(
                             modifier = Modifier.weight(1f),
                             label = "OPEN REPOSITORY",
                             filled = true,
+                            labelSize = 12.sp,
                             onClick = { runCatching { uriHandler.openUri(REPO_URL) } }
                         )
                         GradientPill(
                             modifier = Modifier.weight(1f),
                             label = if (repoCopied) "COPIED \u2713" else "COPY LINK",
                             filled = false,
+                            labelSize = 12.sp,
                             onClick = {
                                 val clipboard = context
                                     .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -658,51 +634,56 @@ private fun ControlDrawer(
 }
 
 @Composable
-private fun SectionToggle(
-    label: String,
-    expanded: Boolean,
-    onClick: () -> Unit,
-    icon: (@Composable () -> Unit)? = null
+private fun DrawerSection(
+    title: String,
+    summary: String,
+    expanded: Boolean? = null,
+    onClick: (() -> Unit)? = null
 ) {
     val turn by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        animationSpec = tween(220),
+        targetValue = if (expanded == true) 180f else 0f,
+        animationSpec = tween(200),
         label = "chevron"
     )
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp)
-            .height(44.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(DeltaTor.Surface, RoundedCornerShape(14.dp))
-            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick),
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(start = 20.dp, end = 20.dp, top = 18.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        if (icon != null) {
-            icon()
-            Spacer(Modifier.width(9.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleSmall.copy(
+                    letterSpacing = 2.sp,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                summary,
+                style = MaterialTheme.typography.bodyMedium.copy(letterSpacing = 0.2.sp),
+                color = DeltaTor.Muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
         }
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge.copy(
-                letterSpacing = 1.4.sp,
-                fontWeight = FontWeight.Bold
-            ),
-            color = DeltaTor.AccentLight,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            if (expanded) "HIDE" else "SHOW",
-            style = MaterialTheme.typography.labelSmall.copy(
-                letterSpacing = 1.2.sp,
-                fontWeight = FontWeight.Bold
-            ),
-            color = DeltaTor.Muted
-        )
-        Spacer(Modifier.width(8.dp))
-        ChevronIcon(Modifier.size(12.dp), DeltaTor.AccentLight, turn)
+        if (onClick != null) {
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (expanded == true) "HIDE" else "SHOW",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.2.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = if (expanded == true) DeltaTor.AccentLight else DeltaTor.Muted
+            )
+            Spacer(Modifier.width(8.dp))
+            ChevronIcon(Modifier.size(12.dp), DeltaTor.AccentLight, turn)
+        }
     }
 }
 
@@ -1292,6 +1273,7 @@ private fun GradientPill(
     label: String,
     filled: Boolean,
     enabled: Boolean = true,
+    labelSize: TextUnit = 14.sp,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(20.dp)
@@ -1313,10 +1295,13 @@ private fun GradientPill(
         Text(
             label,
             style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = labelSize,
                 letterSpacing = 1.2.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = if (filled) Color.White else DeltaTor.Text
+            color = if (filled) Color.White else DeltaTor.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
@@ -1611,30 +1596,6 @@ private fun relativeTime(ms: Long): String {
 // ---- settings & log screens -------------------------------------------------
 
 @Composable
-private fun GearIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Muted) {
-    Canvas(modifier) {
-        val c = center
-        val r = size.minDimension / 2f
-        val inner = r * 0.58f
-        val tooth = r * 0.20f
-        val teeth = 8
-        for (i in 0 until teeth) {
-            val a = 2.0 * PI * i / teeth
-            val dx = cos(a).toFloat()
-            val dy = sin(a).toFloat()
-            drawLine(
-                color,
-                Offset(c.x + dx * inner, c.y + dy * inner),
-                Offset(c.x + dx * (inner + tooth), c.y + dy * (inner + tooth)),
-                r * 0.22f,
-                StrokeCap.Round
-            )
-        }
-        drawCircle(color, radius = r * 0.34f, center = c)
-        drawCircle(DeltaTor.Bg, radius = r * 0.13f, center = c)
-    }
-}
-
 @Composable
 private fun BackArrowIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
     Canvas(modifier) {
@@ -1659,7 +1620,7 @@ private fun ScreenTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 22.dp, vertical = 16.dp),
+                .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -1699,7 +1660,7 @@ private fun UpdateBanner(
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp)
+            .padding(horizontal = 20.dp)
             .clip(shape)
             .background(
                 Brush.horizontalGradient(listOf(Color(0xFF2A2140), DeltaTor.Surface)),
@@ -1750,6 +1711,25 @@ private fun DividerLine() {
 }
 
 @Composable
+private fun DrawerRow(last: Boolean = false, content: @Composable () -> Unit) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+    ) {
+        content()
+        if (!last) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(DeltaTor.BorderLight.copy(alpha = 0.6f))
+            )
+        }
+    }
+}
+
+@Composable
 private fun SettingsCardHeader(
     title: String,
     subtitle: String,
@@ -1758,7 +1738,7 @@ private fun SettingsCardHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp, vertical = 8.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
@@ -1783,7 +1763,7 @@ private fun SettingsCardHeader(
 
 
 @Composable
-private fun ExitNodeRow(
+private fun CountryRow(
     emoji: String,
     name: String,
     code: String,
@@ -1793,37 +1773,61 @@ private fun ExitNodeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp)
             .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) DeltaTor.Accent.copy(alpha = 0.12f) else Color.Transparent)
             .clickable { onClick() }
-            .padding(vertical = 7.dp),
+            .padding(start = 8.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(emoji, fontSize = 16.sp)
-        Spacer(Modifier.width(9.dp))
+        Text(emoji, fontSize = 19.sp)
+        Spacer(Modifier.width(12.dp))
         Text(
             name,
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-            color = DeltaTor.Text,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            ),
+            color = if (selected) DeltaTor.Text else DeltaTor.Muted,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
-        Spacer(Modifier.width(6.dp))
+        Spacer(Modifier.width(10.dp))
         Text(
             code,
             style = MaterialTheme.typography.labelSmall.copy(
                 letterSpacing = 1.sp,
-                color = DeltaTor.Muted
+                color = DeltaTor.Muted.copy(alpha = 0.8f)
             )
         )
-        Spacer(Modifier.width(9.dp))
+        Spacer(Modifier.width(10.dp))
         Box(
             Modifier
-                .size(8.dp)
+                .size(16.dp)
                 .clip(RoundedCornerShape(50))
-                .background(if (selected) DeltaTor.Green else DeltaTor.Border)
-        )
+                .background(if (selected) DeltaTor.AccentLight else Color.Transparent)
+                .border(
+                    1.dp,
+                    if (selected) DeltaTor.AccentLight else DeltaTor.Border,
+                    RoundedCornerShape(50)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) {
+                CheckIcon(Modifier.size(10.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CheckIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF14171F)) {
+    Canvas(modifier) {
+        val stroke = 1.7.dp.toPx()
+        val p = Path()
+        p.moveTo(size.width * 0.14f, size.height * 0.52f)
+        p.lineTo(size.width * 0.40f, size.height * 0.78f)
+        p.lineTo(size.width * 0.86f, size.height * 0.22f)
+        drawPath(p, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
 }
 
@@ -1840,7 +1844,7 @@ private fun flagEmoji(code: String): String {
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp)
+            .padding(horizontal = 20.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
@@ -2118,16 +2122,16 @@ private fun AdvancedContent(
                 }
             }
         }
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(20.dp))
         SettingsCardHeader("BRIDGES", "Bridge mirror counts \u00b7 live cache")
         Spacer(Modifier.height(6.dp))
         BridgeCard(
             bridges = bridges,
             sc = DeltaTor.Accent,
             onUpdate = onUpdateBridges,
-            modifier = Modifier.padding(horizontal = 22.dp)
+            modifier = Modifier.padding(horizontal = 20.dp)
         )
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(20.dp))
         SettingsCardHeader("CONNECTION LOG", "Exact Tor bootstrap output \u00b7 copy with one tap")
         SettingsCard {
             Row(
@@ -2176,7 +2180,7 @@ private fun AdvancedContent(
                 }
             }
         }
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(20.dp))
     }
 }
 
@@ -2565,7 +2569,7 @@ private fun LogScreen(onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp),
+                    .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 TransportChip(
@@ -2588,7 +2592,7 @@ private fun LogScreen(onBack: () -> Unit) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 22.dp),
+                    .padding(horizontal = 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 SeverityChip("ALL", selected = filter == null, onSelect = { filter = null })
@@ -2627,7 +2631,7 @@ private fun LogScreen(onBack: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
-                        .padding(horizontal = 22.dp),
+                        .padding(horizontal = 20.dp),
                     reverseLayout = true,
                     state = rememberLazyListState()
                 ) {

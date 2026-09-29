@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * User-selected exit countries (optional, any number of them). Persisted and
@@ -98,5 +99,20 @@ object ExitNodes {
         val head = RECOMMENDED.mapNotNull { byCode[it] }
         val rest = all.filter { it.code !in RECOMMENDED }.sortedBy { it.name.lowercase() }
         return head + rest
+    }
+
+    private val _directory = MutableStateFlow<List<ExitCountry>>(emptyList())
+    private val directoryLoaded = AtomicBoolean(false)
+
+    /** The ordered picker list, loaded once and then just read. */
+    val directory: StateFlow<List<ExitCountry>> = _directory.asStateFlow()
+
+    fun loadDirectory(context: Context) {
+        if (!directoryLoaded.compareAndSet(false, true)) return
+        val app = context.applicationContext
+        Thread({
+            _directory.value = runCatching { order(BridgeCountries.topSync(app)) }
+                .getOrDefault(emptyList())
+        }, "deltator-countries").apply { isDaemon = true }.start()
     }
 }
