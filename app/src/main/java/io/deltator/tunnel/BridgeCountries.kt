@@ -78,6 +78,18 @@ private class CountryDb(
 }
 
 /**
+ * Open the bundled country range table, gzip or plain, whichever the APK ships.
+ * Top level so both the picker database and the geo builder can use it.
+ */
+private fun countryTable(context: Context): InputStream {
+    return try {
+        GZIPInputStream(context.assets.open("geoip/country.csv.gz"))
+    } catch (e: Exception) {
+        context.assets.open("geoip/country.csv")
+    }
+}
+
+/**
  * Country list for the EXIT NODE picker, plus an offline IP -> country lookup
  * used as a fallback when the online exit lookup is unavailable.
  *
@@ -109,17 +121,6 @@ object BridgeCountries {
         }
         cachedNames = map
         return map
-    }
-
-    /**
-     * Open the bundled country range table, gzip or plain, whichever the APK ships.
-     */
-    private fun countryTable(context: Context): InputStream {
-        return try {
-            GZIPInputStream(context.assets.open("geoip/country.csv.gz"))
-        } catch (e: Exception) {
-            context.assets.open("geoip/country.csv")
-        }
     }
 
     /** Country (code, name) for an IP that exited through the tunnel. */
