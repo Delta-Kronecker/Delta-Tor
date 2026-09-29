@@ -5,6 +5,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.Network
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
@@ -30,6 +32,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.util.concurrent.atomic.AtomicBoolean
 
 class TorVpnService : VpnService() {
 
@@ -47,13 +52,40 @@ class TorVpnService : VpnService() {
         private const val VPN_ADDRESS = "10.255.255.1"
         private const val VPN_ROUTE = "0.0.0.0"
         private const val DEFAULT_DNS = "8.8.8.8"
+
+        /** How often the connected tunnel is asked whether Tor can still carry traffic. */
+        private const val PROBE_INTERVAL_MS = 5_000L
+
+        /** The same check while nothing is wrong, to keep the request itself rare. */
+        private const val PROBE_INTERVAL_HEALTHY_MS = 20_000L
+
+        /**
+         * Consecutive failed probes before the transport is rebuilt. Two is one
+         * full interval of grace: long enough that a single dropped request does
+         * not throw away a working circuit, short enough that a real outage is
+         * noticed while the user is still looking at the screen.
+         */
+        private const val PROBES_BEFORE_RECOVERY = 2
+
+        /** Upper bound on one liveness probe; a dead Tor would otherwise hang it. */
+        private const val PROBE_TIMEOUT_MS = 6_000
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var vpnInterface: ParcelFileDescriptor? = null
     private var activeRunner: TorRunner? = null
     private var statsJob: Job? = null
+    private var linkWatchJob: Job? = null
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    /**
+     * Liveness of the link, kept by a [ConnectivityManager.NetworkCallback] so a
+     * dropped connection is known without waiting for a request to time out.
+     */
+    @Volatile private var linkUp = true
+    private val recovering = AtomicBoolean(false)
+    private var failedProbes = 0
 
     /** Id of the connect session whose lines this service emits. */
     @Volatile private var currentSession: Int = 0
@@ -85,7 +117,7 @@ class TorVpnService : VpnService() {
         }
         AppState.markStarted()
         currentSession = Log.beginSession("connect")
-        AppState.update { it.copy(connecting = true, connected = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
+        AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
@@ -216,6 +248,7 @@ class TorVpnService : VpnService() {
             it.copy(
                 connecting = false,
                 connected = true,
+                reconnecting = false,
                 error = null,
                 transports = mapOf(w.name to 100),
                 connectedAtMillis = System.currentTimeMillis(),
@@ -226,6 +259,7 @@ class TorVpnService : VpnService() {
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         startStatsPolling()
+        startLinkWatch()
         startExitLocator(proxyHost, proxyPort)
         Log.i(TAG, "DeltaTor connected. Winner: ${w.name}, SOCKS5 at $proxyHost:$proxyPort")
         Log.endSession("connected via ${w.name}")
@@ -323,9 +357,13 @@ class TorVpnService : VpnService() {
                     }
                     val notif = NotificationCompat.Builder(this@TorVpnService, CHANNEL_VPN_STATUS)
                         .setSmallIcon(R.drawable.ic_tor)
-                        .setContentTitle("DeltaTor \u2014 Connected")
+                        .setContentTitle(
+                            if (AppState.state.value.reconnecting) "DeltaTor \u2014 Reconnecting"
+                            else "DeltaTor \u2014 Connected"
+                        )
                         .setContentText(
-                            "\u2191 ${formatBytes(upSpeed)}/s  \u2193 ${formatBytes(downSpeed)}/s\n" +
+                            if (AppState.state.value.reconnecting) "Restoring the tunnel\u2026"
+                            else "\u2191 ${formatBytes(upSpeed)}/s  \u2193 ${formatBytes(downSpeed)}/s\n" +
                                 "Total: \u2191 ${formatBytes(stats.txBytes)}  \u2193 ${formatBytes(stats.rxBytes)}"
                         )
                         .setStyle(NotificationCompat.BigTextStyle())
@@ -341,6 +379,215 @@ class TorVpnService : VpnService() {
                 }
                 delay(1000)
             }
+        }
+    }
+
+    // --- Link loss and recovery ------------------------------------------------
+
+    /**
+     * Watch the link while the tunnel is up.
+     *
+     * A dropped connection used to be invisible: the Tor process keeps printing
+     * 100%, the interface keeps claiming to be connected, and the wait for Tor to
+     * retry its guard connections on its own schedule was as long as Tor decided
+     * it should be. This loop asks the tunnel every few seconds whether Tor can
+     * still complete a request, and repairs it when the answer stays no.
+     */
+    private fun startLinkWatch() {
+        registerNetworkCallback()
+        linkWatchJob?.cancel()
+        linkWatchJob = serviceScope.launch {
+            while (isActive) {
+                val before = AppState.state.value
+                // A healthy tunnel is only checked now and then, since the probe
+                // is a real (if tiny) request through Tor; a link that is down or
+                // already failing is watched closely.
+                val urgent = before.reconnecting || !linkUp || failedProbes > 0
+                delay(if (urgent) PROBE_INTERVAL_MS else PROBE_INTERVAL_HEALTHY_MS)
+
+                val state = AppState.state.value
+                if (!state.connected || recovering.get()) continue
+
+                if (!linkUp) {
+                    // Nothing can pass until the link is back; only say so.
+                    if (!state.reconnecting) markReconnecting("network down")
+                    continue
+                }
+
+                if (probeTunnelUsable()) {
+                    if (state.reconnecting || failedProbes > 0) {
+                        Log.i(TAG, "Tunnel usable again after $failedProbes failed probe(s)")
+                        clearReconnecting()
+                    }
+                    failedProbes = 0
+                    continue
+                }
+
+                failedProbes++
+                Log.w(TAG, "Tunnel probe failed ($failedProbes/$PROBES_BEFORE_RECOVERY)")
+                if (failedProbes >= PROBES_BEFORE_RECOVERY) {
+                    failedProbes = 0
+                    recoverTransport()
+                }
+            }
+        }
+    }
+
+    /**
+     * Ask the live tunnel whether Tor can still complete a request.
+     *
+     * A SOCKS5 CONNECT to a fixed address is the honest test: the reply only
+     * turns into 0x00 once Tor has a built circuit, and the socket is closed
+     * right after, so a probe costs one circuit check and no payload. Bootstrap
+     * percentage cannot be used for this, it is printed once and never revoked
+     * when the network disappears.
+     */
+    private fun probeTunnelUsable(): Boolean {
+        return try {
+            Socket().use { s ->
+                s.connect(InetSocketAddress("127.0.0.1", Config.proxyPort), PROBE_TIMEOUT_MS)
+                s.soTimeout = PROBE_TIMEOUT_MS
+                val out = s.getOutputStream()
+                val input = s.getInputStream()
+                out.write(byteArrayOf(0x05, 0x01, 0x00)) // greeting, no auth
+                out.flush()
+                if (input.read() != 0x05 || input.read() != 0x00) return false
+                // CONNECT 1.1.1.1:80, then close without sending a byte.
+                out.write(byteArrayOf(0x05, 0x01, 0x00, 0x01, 1, 1, 1, 1, 0x00, 0x50))
+                out.flush()
+                input.read() == 0x00
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "probe failed: ${e.message}")
+            false
+        }
+    }
+
+    /**
+     * Rebuild the transport that was carrying traffic, keeping the tunnel up.
+     *
+     * The replacement runs on the same port with the same bridge lines, so the
+     * app's SOCKS bridge only needs a repoint and every app connection survives
+     * the swap; nothing on the TUN side is torn down. If even that cannot
+     * bootstrap, the ordinary connect flow takes over, which is slower but
+     * re-races every transport from scratch.
+     */
+    private suspend fun recoverTransport() {
+        if (!recovering.compareAndSet(false, true)) return
+        val startedAt = System.currentTimeMillis()
+        try {
+            val previous = activeRunner
+            if (previous == null) {
+                escalateToFullReconnect("no active transport")
+                return
+            }
+            markReconnecting("rebuilding ${previous.name}")
+            val winner = try {
+                ParallelTorManager.restartTransport(
+                    context = applicationContext,
+                    sessionId = currentSession,
+                    name = previous.name
+                ) { snapshot ->
+                    AppState.update {
+                        it.copy(
+                            transports = snapshot.mapValues { (n, r) ->
+                                if (r.failed != null) -1 else r.progress()
+                            }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Transport rebuild failed: ${e.message}")
+                escalateToFullReconnect(e.message ?: "transport rebuild failed")
+                return
+            }
+
+            TorSocksBridge.repoint(winner.torSocksPort)
+            activeRunner = winner
+            AppState.update {
+                it.copy(
+                    transports = mapOf(winner.name to 100),
+                    transport = winner.name,
+                    reconnecting = false
+                )
+            }
+            val seconds = (System.currentTimeMillis() - startedAt) / 1000
+            Log.i(TAG, "Recovered via ${winner.name} in ${seconds}s (SOCKS5 ${winner.torSocksPort})")
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Reconnected via ${winner.name} \u00b7 ${seconds}s", progress = false)
+            )
+            // The new Tor has its own exit circuits, so the reported country is
+            // stale until it is looked up again.
+            startExitLocator("127.0.0.1", Config.proxyPort)
+        } catch (e: Exception) {
+            Log.e(TAG, "Recovery failed", e)
+            escalateToFullReconnect(e.message ?: "recovery failed")
+        } finally {
+            recovering.set(false)
+        }
+    }
+
+    /**
+     * Hand over to the normal connect flow. The teardown runs in a fresh job so
+     * the cancellation inside [teardown] cannot abort the handover itself.
+     */
+    private fun escalateToFullReconnect(reason: String) {
+        Log.w(TAG, "Falling back to a full reconnect ($reason)")
+        markReconnecting("reconnecting")
+        serviceScope.launch {
+            teardown()
+            connect()
+        }
+    }
+
+    private fun markReconnecting(reason: String) {
+        Log.w(TAG, "Reconnecting: $reason")
+        AppState.update { it.copy(reconnecting = true) }
+        updateNotification("Reconnecting\u2026", progress = false, progressValue = 0)
+    }
+
+    private fun clearReconnecting() {
+        AppState.update { it.copy(reconnecting = false) }
+    }
+
+    private fun registerNetworkCallback() {
+        if (networkCallback != null) return
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onLost(network: Network) {
+                // Losing one network is routine when the system moves between
+                // Wi-Fi and cellular, so only a real absence of any counts.
+                if (cm.activeNetwork != null) return
+                linkUp = false
+                Log.w(TAG, "Network lost")
+                if (AppState.state.value.connected) markReconnecting("network down")
+            }
+
+            override fun onAvailable(network: Network) {
+                if (linkUp) return
+                linkUp = true
+                failedProbes = 0
+                Log.i(TAG, "Network available again")
+            }
+        }
+        try {
+            cm.registerDefaultNetworkCallback(callback)
+            networkCallback = callback
+            linkUp = cm.activeNetwork != null
+        } catch (e: Exception) {
+            Log.w(TAG, "Network callback unavailable: ${e.message}")
+        }
+    }
+
+    private fun unregisterNetworkCallback() {
+        val callback = networkCallback ?: return
+        networkCallback = null
+        try {
+            (getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager)
+                ?.unregisterNetworkCallback(callback)
+        } catch (e: Exception) {
+            Log.d(TAG, "unregisterNetworkCallback: ${e.message}")
         }
     }
 
@@ -411,7 +658,7 @@ class TorVpnService : VpnService() {
     private fun fail(message: String) {
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
-        AppState.update { it.copy(connecting = false, connected = false, torRunning = false, error = message) }
+        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, error = message) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -432,6 +679,9 @@ class TorVpnService : VpnService() {
     private fun teardown() {
         statsJob?.cancel()
         statsJob = null
+        linkWatchJob?.cancel()
+        linkWatchJob = null
+        unregisterNetworkCallback()
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null

@@ -100,6 +100,9 @@ object ParallelTorManager {
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
     private const val RACE_TIMEOUT_MS = 1_800_000L
+
+    /** A recovery restart is expected to be quick: proven bridges, same port. */
+    private const val RECOVERY_TIMEOUT_MS = 120_000L
     private const val POLL_INTERVAL_MS = 1_000L
     private const val PORT_FREE_TIMEOUT_MS = 15_000L
     private const val PORT_FREE_POLL_MS = 250L
@@ -110,6 +113,13 @@ object ParallelTorManager {
 
     private val runnersLock = Any()
     @Volatile private var runners = mutableMapOf<String, TorRunner>()
+
+    /**
+     * Bridge lines and ports of the last race, kept so a recovery can rebuild the
+     * winning transport without going back to the network for its bridge list.
+     */
+    @Volatile private var lastPlans: Map<String, String> = emptyMap()
+    @Volatile private var lastPorts: Map<String, Int> = emptyMap()
 
     /** Current bootstrap % per transport (-1 = failed). Safe for UI reads. */
     fun progressSnapshot(): Map<String, Int> = synchronized(runnersLock) {
@@ -250,6 +260,9 @@ object ParallelTorManager {
             throw RuntimeException("No bridges available for $mode")
         }
 
+        lastPlans = plans.toMap()
+        lastPorts = ports.filterKeys { it in plans }
+
         synchronized(runnersLock) { runners = mutableMapOf() }
 
         plans.forEach { (name, bridgeLines) ->
@@ -357,6 +370,110 @@ object ParallelTorManager {
      * are really gone, so this returns with no Tor/lyrebird process of ours left
      * holding a socket.
      */
+    /**
+     * Bring one transport back after the network dropped under it.
+     *
+     * A full [race] is the wrong tool for a link that just blipped: it would go
+     * back to the bridge lists, race every transport again and hand the caller a
+     * new port. This re-runs just the transport that was carrying traffic, on the
+     * port it already had, with the same lines it had, plus its memory twin when
+     * the pool has something proven. Nothing else is touched, so the caller's
+     * listener (the app's fixed SOCKS bridge) survives and only needs a repoint.
+     *
+     * Returns the new winner, or throws if it cannot bootstrap in
+     * [RECOVERY_TIMEOUT_MS]; the caller then falls back to a full reconnect.
+     */
+    suspend fun restartTransport(
+        context: Context,
+        sessionId: Int,
+        name: String,
+        onProgress: (Map<String, TorRunner>) -> Unit = {}
+    ): TorRunner {
+        val cached = lastPlans[name]
+        if (cached == null) {
+            throw RuntimeException("No cached bridges for $name")
+        }
+
+        // The twin is looked up fresh: the pool may have grown since the race,
+        // and a transport that had no twin then can have one now. The mixed
+        // auto-mode memory runner is skipped, it already carries every pool and
+        // has no twin of its own.
+        val base = baseTransportOf(name)
+        val twin = memoryNameFor(base)
+        val twinLines = if (twin == name || name == TRANSPORT_MEMORY) {
+            null
+        } else {
+            BridgeMemory.bridgeLinesFor(context, mapOf(base to cached), base) ?: lastPlans[twin]
+        }
+        val plans = buildList {
+            add(name to cached)
+            if (twinLines != null) add(twin to twinLines)
+        }
+        val ports = plans.associate { (planName, _) -> planName to (lastPorts[planName] ?: 0) }
+        if (ports.values.any { it <= 0 }) {
+            throw RuntimeException("No cached port for $name")
+        }
+
+        Log.i(TAG, "Recovery: restarting $name on port ${ports.getValue(name)}" +
+            if (twinLines != null) " with $twin" else "")
+
+        // The dying processes still hold their listeners, and a replacement that
+        // binds too early just fails to start, so wait the ports out.
+        stopAll()
+        withContext(Dispatchers.IO) {
+            ports.values.forEach { awaitPortFree("127.0.0.1", it) }
+        }
+
+        synchronized(runnersLock) { runners = mutableMapOf() }
+        val recorded = mutableSetOf<String>()
+        plans.forEach { (planName, bridgeLines) ->
+            val runner = TorRunner(context, planName, ports.getValue(planName), bridgeLines)
+            synchronized(runnersLock) { runners[planName] = runner }
+            val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
+            Log.transport(sessionId, planName, 'I', TAG, "recovery restart ($bridgeCount bridges)")
+            val result = runner.start()
+            if (result.isFailure) {
+                val reason = result.exceptionOrNull()?.message ?: "failed to start"
+                runner.failed = reason
+                Log.transport(sessionId, planName, 'E', TAG, "recovery start failed: $reason")
+            }
+        }
+
+        val deadline = System.currentTimeMillis() + RECOVERY_TIMEOUT_MS
+        while (true) {
+            val snapshot = synchronized(runnersLock) { runners.toMap() }
+            onProgress(snapshot)
+            snapshot.values.forEach { r ->
+                if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
+                    r.failed = r.failureSummary()
+                    Log.transport(sessionId, r.name, 'E', TAG, "recovery: tor died: ${r.failed}")
+                }
+            }
+            snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+                .forEach { recordMemory(context, sessionId, it) }
+
+            snapshot.values.firstOrNull { it.isReady() }?.let { winner ->
+                snapshot.values.filter { it !== winner }.forEach {
+                    Log.i(TAG, "Recovery: stopping ${it.name}")
+                    it.stop()
+                }
+                Log.transport(sessionId, winner.name, 'I', TAG, "*** RECOVERED *** 100% on port ${winner.torSocksPort}")
+                return winner
+            }
+
+            if (snapshot.values.all { it.failed != null }) {
+                val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
+                stopAll()
+                throw RuntimeException("Recovery failed ($details)")
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                stopAll()
+                throw RuntimeException("Recovery of $name did not bootstrap in ${RECOVERY_TIMEOUT_MS / 1000}s")
+            }
+            delay(POLL_INTERVAL_MS)
+        }
+    }
+
     fun stopAll() {
         val list = synchronized(runnersLock) {
             val copy = runners.values.toList()

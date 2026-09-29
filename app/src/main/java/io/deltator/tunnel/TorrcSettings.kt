@@ -11,11 +11,14 @@ import android.content.SharedPreferences
  * plus the selected bridge lines (Bridge ...) are appended automatically so bridges
  * are always part of the generated file. Later lines win in torrc, so the template
  * overrides the forced defaults in [TorRunner] when it declares them.
+ *
+ * The prefs key carries a version suffix: bumping it hands every existing install
+ * the new default template instead of leaving it on the values it was shipped with.
  */
 object TorrcSettings {
 
     private const val PREFS = "deltator"
-    private const val KEY_TEMPLATE = "torrc_template_v3"
+    private const val KEY_TEMPLATE = "torrc_template_v4"
     private lateinit var prefs: SharedPreferences
 
     val defaultTemplate: String = """
@@ -51,7 +54,6 @@ object TorrcSettings {
         NumDirectoryGuards 6
         MaxClientCircuitsPending 64
         SocksTimeout 60
-        KeepalivePeriod 3600
 
         # --- Faster start from a clean state (lower directory download delays) ---
         ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
@@ -84,7 +86,16 @@ object TorrcSettings {
         # ConfluxSetRttPct 15
 
         # --- strategy: ultimate (later values win over the tuning above) ---
-        MaxCircuitDirtiness 86400
+        # Reconnect tuning: these three decide how fast traffic flows again after
+        # the network drops. 24h circuits (the old value) kept feeding a circuit
+        # Tor had not noticed was dead, and a 2 minute SocksTimeout held stalled
+        # tun2socks connections; 10 min turnover plus a 30s client timeout let the
+        # first request after the link returns find a usable circuit.
+        MaxCircuitDirtiness 600
+        # Always build one spare circuit ahead, so a returning network is a warm
+        # circuit instead of a cold start (default is 30).
+        NewCircuitPeriod 10
+        SocksTimeout 30
         CircuitsAvailableTimeout 4320
         CircuitStreamTimeout 10
         CircuitBuildTimeout 20
@@ -92,7 +103,6 @@ object TorrcSettings {
         Schedulers Vanilla
         MaxClientCircuitsPending 128
         CircuitPriorityHalflife 5
-        SocksTimeout 120
     """.trimIndent()
 
     fun init(context: Context) {

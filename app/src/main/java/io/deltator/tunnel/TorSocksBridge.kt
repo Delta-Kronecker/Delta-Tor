@@ -134,6 +134,23 @@ object TorSocksBridge {
 
     fun isRunning(): Boolean = running.get()
 
+    /**
+     * Send new connections to a different Tor SOCKS port without rebinding.
+     *
+     * The listener keeps its own port, so tun2socks and every app socket that was
+     * already chained stay untouched: only connections opened from here on follow
+     * the new runner. This is what makes a recovery invisible, the tunnel never
+     * goes down while a replacement Tor boots on the same bridge.
+     */
+    fun repoint(torSocksPort: Int) {
+        if (this.torSocksPort == torSocksPort) return
+        Log.i(TAG, "Repointing bridge: $torHost:${this.torSocksPort} -> $torHost:$torSocksPort")
+        this.torSocksPort = torSocksPort
+        // Cached answers were resolved over the old circuit; drop them so the
+        // first request after the switch cannot reuse a stale name mapping.
+        dnsCache.clear()
+    }
+
     fun isClientHealthy(): Boolean {
         val ss = serverSocket ?: return false
         return running.get() && !ss.isClosed
