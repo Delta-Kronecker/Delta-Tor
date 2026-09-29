@@ -1596,7 +1596,6 @@ private fun relativeTime(ms: Long): String {
 // ---- settings & log screens -------------------------------------------------
 
 @Composable
-@Composable
 private fun BackArrowIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
     Canvas(modifier) {
         val w = size.width
