@@ -19,17 +19,18 @@ import java.util.concurrent.atomic.AtomicBoolean
  *
  * Sits between hev-socks5-tunnel and Tor's SOCKS5 proxy:
  * - CONNECT (0x01): chains to Tor SOCKS5 (no auth)
- * - FWD_UDP (0x05) DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT to 8.8.8.8:53
+ * - FWD_UDP (0x05) DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT
  * - FWD_UDP (0x05) non-DNS: dropped silently (browser falls back to TCP CONNECT)
  *
  * DNS optimization:
  * - Concurrent: 8-thread pool for parallel DNS resolution
- * - Cached: 60s TTL cache avoids repeated queries for the same domain
+ * - Cached: answers are reused for 5 minutes, so a busy page rarely re-asks
+ * - Failover: several resolvers in turn, all reached over Tor
  *
  * Traffic flow:
  * App -> TUN -> hev-socks5-tunnel -> TorSocksBridge (proxyPort)
  *   TCP: -> SOCKS5 CONNECT (no auth) -> Tor SOCKS5 (proxyPort+1) -> Tor circuit -> Server
- *   DNS: -> FWD_UDP -> DNS-over-TCP via Tor SOCKS5 CONNECT -> 8.8.8.8:53
+ *   DNS: -> FWD_UDP -> DNS-over-TCP via Tor SOCKS5 CONNECT -> resolver:53
  */
 object TorSocksBridge {
     private const val TAG = "TorSocksBridge"
@@ -41,7 +42,7 @@ object TorSocksBridge {
     private const val BUFFER_SIZE = 32768
     private const val TCP_CONNECT_TIMEOUT_MS = 30000
     private const val DNS_TIMEOUT_MS = 15000
-    private const val DNS_CACHE_TTL_MS = 60_000L
+    private const val DNS_CACHE_TTL_MS = 300_000L
 
     private var torHost: String = "127.0.0.1"
     private var torSocksPort: Int = 0
@@ -484,11 +485,11 @@ object TorSocksBridge {
 
     /**
      * Handle FWD_UDP (cmd 0x05) — same wire format as other bridges.
-     * DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT to 8.8.8.8:53.
-     * Non-DNS UDP: dropped silently.
+     * DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT, so no query ever
+     * leaves the device in the clear. Non-DNS UDP: dropped silently.
      *
      * DNS queries are dispatched to a thread pool for concurrent resolution.
-     * Responses are cached for 60s to avoid repeated Tor round-trips.
+     * Responses are cached for 5 minutes to keep repeat lookups off the wire.
      */
     private fun handleFwdUdp(input: InputStream, output: OutputStream) {
         output.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
@@ -537,11 +538,9 @@ object TorSocksBridge {
                         logd("DNS: cache hit")
                         cached
                     } else {
-                        val resolved = forwardDnsTcp(payloadCopy)
-                        if (resolved != null) {
-                            cacheDnsResponse(payloadCopy, resolved)
-                        }
-                        resolved
+                        val remote = resolveThroughTor(payloadCopy)
+                        if (remote != null) cacheDnsResponse(payloadCopy, remote)
+                        remote
                     }
 
                     if (response != null && response.isNotEmpty()) {
@@ -612,10 +611,32 @@ object TorSocksBridge {
     // --- DNS-over-TCP via Tor SOCKS5 ---
 
     /**
-     * Forward DNS query as DNS-over-TCP through Tor's SOCKS5 CONNECT to 8.8.8.8:53.
-     * Each call opens a new SOCKS5 connection (no persistent connections to keep it simple).
+     * Resolvers tried in order, all of them reached over Tor. One being slow,
+     * blocked at the exit or simply broken should not take name resolution down
+     * with it.
      */
-    private fun forwardDnsTcp(payload: ByteArray): ByteArray? {
+    private val DNS_FALLBACK_RESOLVERS = listOf(
+        byteArrayOf(8, 8, 8, 8),   // Google
+        byteArrayOf(1, 1, 1, 1),   // Cloudflare
+        byteArrayOf(9, 9, 9, 9)    // Quad9
+    )
+
+    /** Ask each resolver in turn over Tor; null when none answers. */
+    private fun resolveThroughTor(payload: ByteArray): ByteArray? {
+        for (resolver in DNS_FALLBACK_RESOLVERS) {
+            val response = forwardDnsTcp(resolver, payload)
+            if (response != null) return response
+        }
+        Log.w(TAG, "DNS: no resolver answered over Tor")
+        return null
+    }
+
+    /**
+     * Forward DNS query as DNS-over-TCP through Tor's SOCKS5 CONNECT to
+     * [resolver]:53. Each call opens a new SOCKS5 connection (no persistent
+     * connections to keep it simple).
+     */
+    private fun forwardDnsTcp(resolver: ByteArray, payload: ByteArray): ByteArray? {
         var socket: Socket? = null
         try {
             // Connect to Tor SOCKS5
@@ -638,13 +659,8 @@ object TorSocksBridge {
                 return null
             }
 
-            // SOCKS5 CONNECT to 8.8.8.8:53
-            output.write(byteArrayOf(
-                0x05, 0x01, 0x00,       // VER, CMD=CONNECT, RSV
-                0x01,                    // ATYP=IPv4
-                8, 8, 8, 8,             // 8.8.8.8
-                0x00, 0x35              // port 53
-            ))
+            // SOCKS5 CONNECT to the resolver on port 53
+            output.write(byteArrayOf(0x05, 0x01, 0x00, 0x01) + resolver + byteArrayOf(0x00, 0x35))
             output.flush()
 
             // Read CONNECT response
