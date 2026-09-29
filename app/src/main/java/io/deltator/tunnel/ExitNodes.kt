@@ -17,11 +17,15 @@ object ExitNodes {
     private const val KEY_CODES = "exit_ccs"
     private const val KEY_NAMES = "exit_names"
 
-    /** Countries worth having at the top of the picker: plenty of fast relays. */
+    /**
+     * Pinned to the top of the picker, ordered by how often each country actually
+     * turned up in recorded exit locations, most frequent first. Everything not
+     * listed here follows alphabetically behind them.
+     */
     private val RECOMMENDED = listOf(
-        "US", "NL", "DE", "SE", "FI", "CA", "FR", "GB", "PL", "AT",
-        "CH", "CZ", "RO", "IT", "ES", "DK", "NO", "IE", "AU", "JP",
-        "SG", "NZ", "BE", "PT", "HU", "EE", "LV", "LT", "SI", "SK"
+        "US", "DE", "NL", "FI", "GB", "FR", "LU", "ES",
+        "SE", "UA", "CH", "IL", "CZ", "LV", "PL", "BG",
+        "TR", "CA", "HK", "JP", "AM", "BZ", "LT", "EU"
     )
 
     private val _codes = MutableStateFlow<List<String>>(emptyList())
@@ -85,8 +89,9 @@ object ExitNodes {
     fun currentCodes(): List<String> = _codes.value
 
     /**
-     * Picker order: the recommended countries first, then everything else
-     * alphabetically, so the useful ones are always reachable without scrolling.
+     * Picker order: the countries that keep coming up first, in the order they
+     * keep coming up, then everything else alphabetically, so the ones worth
+     * having are reachable without scrolling.
      */
     fun order(all: List<ExitCountry>): List<ExitCountry> {
         val byCode = all.associateBy { it.code }
