@@ -1156,7 +1156,7 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
             .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ArrowIcon(accent = accent, up = up, size = 15.dp)
+            ArrowIcon(accent = accent, up = up, iconSize = 15.dp)
             Spacer(Modifier.width(7.dp))
             Text(
                 label,
@@ -2049,14 +2049,6 @@ private fun SettingsScreen(
     }
 }
 
-private fun logLevelColor(level: Char): Color = when (level) {
-    'E' -> DeltaTor.Red
-    'W' -> DeltaTor.AmberLight
-    'I' -> DeltaTor.GreenLight
-    '=' -> DeltaTor.AccentLight
-    else -> DeltaTor.Muted
-}
-
 private fun levelLabel(level: Char): String = when (level) {
     'E' -> "ERRORS"
     'W' -> "WARNINGS"
@@ -2066,16 +2058,6 @@ private fun levelLabel(level: Char): String = when (level) {
 }
 
 private const val LOG_SEVERITY_ORDER = "EWIDV"
-
-private fun transportColor(transport: String): Color = when (ParallelTorManager.baseTransportOf(transport)) {
-    "vanilla" -> Color(0xFF5AC8FA)
-    "obfs4" -> Color(0xFFFF9F0A)
-    "webtunnel" -> Color(0xFF30D158)
-    "snowflake" -> Color(0xFF64D2FF)
-    "direct" -> Color(0xFFAC8E68)
-    "custom" -> Color(0xFFFF375F)
-    else -> DeltaTor.Muted
-}
 
 private sealed interface LogNode {
     data class SessionHeader(val id: Int, val title: String, val count: Int) : LogNode
@@ -2151,11 +2133,9 @@ private fun transportCountsOf(lines: List<LogEntry>): Map<String, Int> {
 @Composable
 private fun SeverityChip(
     label: String,
-    level: Char?,
     selected: Boolean,
     onSelect: () -> Unit
 ) {
-    val color = if (level != null) logLevelColor(level) else DeltaTor.AccentLight
     Text(
         label,
         style = MaterialTheme.typography.labelSmall.copy(
@@ -2166,12 +2146,12 @@ private fun SeverityChip(
         modifier = Modifier
             .clip(RoundedCornerShape(50))
             .background(
-                if (selected) color.copy(alpha = 0.18f) else DeltaTor.Surface,
+                if (selected) DeltaTor.SurfaceLight else DeltaTor.Surface,
                 RoundedCornerShape(50)
             )
             .border(
                 1.dp,
-                if (selected) color.copy(alpha = 0.9f) else DeltaTor.BorderLight,
+                if (selected) DeltaTor.BorderLight else DeltaTor.Border,
                 RoundedCornerShape(50)
             )
             .clickable { onSelect() }
@@ -2181,12 +2161,11 @@ private fun SeverityChip(
 
 @Composable
 private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifier) {
-    val color = logLevelColor(level)
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
-            .background(color.copy(alpha = 0.10f), RoundedCornerShape(10.dp))
+            .background(DeltaTor.Surface, RoundedCornerShape(10.dp))
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -2194,7 +2173,7 @@ private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifie
             Modifier
                 .size(8.dp)
                 .clip(RoundedCornerShape(50))
-                .background(color)
+                .background(DeltaTor.Muted)
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -2203,7 +2182,7 @@ private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifie
                 letterSpacing = 1.6.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = color
+            color = DeltaTor.Text
         )
         Spacer(Modifier.width(8.dp))
         Text(
@@ -2217,7 +2196,6 @@ private fun LogGroupHeader(level: Char, count: Int, modifier: Modifier = Modifie
 @Composable
 private fun TransportChip(
     label: String,
-    color: Color,
     selected: Boolean,
     count: Int,
     modifier: Modifier = Modifier,
@@ -2227,12 +2205,12 @@ private fun TransportChip(
         modifier = modifier
             .clip(RoundedCornerShape(50))
             .background(
-                if (selected) color else color.copy(alpha = 0.10f),
+                if (selected) DeltaTor.SurfaceLight else DeltaTor.Surface,
                 RoundedCornerShape(50)
             )
             .border(
                 1.dp,
-                if (selected) color else color.copy(alpha = 0.5f),
+                if (selected) DeltaTor.BorderLight else DeltaTor.Border,
                 RoundedCornerShape(50)
             )
             .clickable { onSelect() }
@@ -2245,7 +2223,7 @@ private fun TransportChip(
                 letterSpacing = 1.1.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = if (selected) Color.White else color,
+            color = if (selected) DeltaTor.Text else DeltaTor.Muted,
             textAlign = TextAlign.Center
         )
     }
@@ -2461,14 +2439,12 @@ private fun LogScreen(onBack: () -> Unit) {
             ) {
                 TransportChip(
                     label = "ALL",
-                    color = DeltaTor.AccentLight,
                     selected = transport == null,
                     count = 0
                 ) { transport = null }
                 AppLog.TRANSPORTS.forEach { t ->
                     TransportChip(
                         label = t.uppercase(),
-                        color = transportColor(t),
                         selected = transport == t,
                         count = transportCounts[t] ?: 0
                     ) { transport = if (transport == t) null else t }
@@ -2484,11 +2460,10 @@ private fun LogScreen(onBack: () -> Unit) {
                     .padding(horizontal = 22.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                SeverityChip("ALL", level = null, selected = filter == null, onSelect = { filter = null })
+                SeverityChip("ALL", selected = filter == null, onSelect = { filter = null })
                 for (level in LOG_SEVERITY_ORDER) {
                     SeverityChip(
                         levelLabel(level),
-                        level = level,
                         selected = filter == level,
                         onSelect = { filter = level }
                     )
@@ -2549,7 +2524,7 @@ private fun LogScreen(onBack: () -> Unit) {
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 10.sp,
                                         lineHeight = 13.sp,
-                                        color = logLevelColor(node.entry.level)
+                                        color = DeltaTor.Muted
                                     ),
                                     modifier = Modifier.padding(bottom = 3.dp)
                                 )
