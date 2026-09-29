@@ -25,6 +25,11 @@ import java.net.URL
  * the dead ones. Whenever a runner reaches 100%, the bridges it proved are added
  * to its pool so the next connect starts from them.
  *
+ * When the user picks one transport instead of auto, that transport still gets
+ * its memory twin: `webtunnel` races `webtunnel-memory` side by side, with the
+ * twin carrying only the webtunnel bridges that worked before. Nothing about the
+ * picked mode changes; the proven set just gets its own second chance.
+ *
  * Bridge lists are fetched from the Tor-Bridges-Collector repository at runtime.
  * The runner whose Tor reports "Bootstrapped 100%" first wins; the other three
  * are stopped immediately.
@@ -51,6 +56,19 @@ object ParallelTorManager {
         TRANSPORT_DIRECT,
         TRANSPORT_CUSTOM
     )
+
+    /**
+     * Suffix of the memory twin runner. Every transport a user can select on its
+     * own also gets a `<transport>-memory` companion, so choosing e.g. webtunnel
+     * races the full webtunnel list *and* the webtunnel bridges that provably
+     * worked before, instead of leaving that knowledge unused.
+     */
+    const val MEMORY_SUFFIX = "-memory"
+
+    fun memoryNameFor(transport: String): String = "$transport$MEMORY_SUFFIX"
+
+    /** The real transport behind a runner name (`webtunnel-memory` -> `webtunnel`). */
+    fun baseTransportOf(name: String): String = name.substringBefore(MEMORY_SUFFIX)
 
     private const val BRIDGE_BASE_URL =
         "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
@@ -85,6 +103,9 @@ object ParallelTorManager {
     private const val POLL_INTERVAL_MS = 1_000L
     private const val PORT_FREE_TIMEOUT_MS = 15_000L
     private const val PORT_FREE_POLL_MS = 250L
+
+    /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
+    private const val MAX_PORT_OFFSET = 11
 
 
     private val runnersLock = Any()
@@ -157,19 +178,39 @@ object ParallelTorManager {
             withContext(Dispatchers.IO) { fetchBridgeLines(context, needed) }
         }
 
-        // Only auto races the memory runner. In custom mode the user asked for one
-        // exact set of bridges, and memory would just repeat the same lines.
-        val memoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1) {
+        // The memory runner, in the two shapes it can take:
+        //  - auto with several transports: one mixed runner over every pool
+        //  - a single selected transport (or auto that resolved to one): a twin
+        //    of that very transport, `webtunnel-memory` next to `webtunnel`
+        // Direct and custom mode have no memory twin: there are no bridges to
+        // remember, or the user asked for one exact set.
+        val singleTransport: String? = when {
+            mode == TRANSPORT_AUTO && autoNames.size == 1 -> autoNames.first()
+            mode in BRIDGE_SOURCES -> mode
+            else -> null
+        }
+        val mixedMemoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1) {
             BridgeMemory.bridgeLinesFor(context, lines)
         } else {
             null
         }
-        if (memoryLines != null) {
-            val n = memoryLines.lines().count { it.isNotBlank() }
+        val twinMemoryLines = singleTransport?.let { BridgeMemory.bridgeLinesFor(context, lines, it) }
+        val twinName = singleTransport?.let { memoryNameFor(it) }
+        if (mixedMemoryLines != null) {
+            val n = mixedMemoryLines.lines().count { it.isNotBlank() }
             Log.i(TAG, "Memory runner: $n proven bridge(s) available")
             Log.transport(sessionId, TRANSPORT_MEMORY, 'I', TAG, "reusing $n previously proven bridge(s)")
-        } else {
-            Log.i(TAG, "Memory runner: nothing proven yet, racing 3 transports only")
+        }
+        if (twinMemoryLines != null && twinName != null) {
+            val n = twinMemoryLines.lines().count { it.isNotBlank() }
+            Log.i(TAG, "Memory twin: $n proven $singleTransport bridge(s) for $twinName")
+            Log.transport(
+                sessionId, twinName, 'I', TAG,
+                "reusing $n previously proven $singleTransport bridge(s)"
+            )
+        }
+        if (mixedMemoryLines == null && twinMemoryLines == null) {
+            Log.i(TAG, "Memory runner: nothing proven yet for this mode, racing without it")
         }
 
         // basePort belongs to the app's TUN bridge, so the runners start above it.
@@ -180,7 +221,11 @@ object ParallelTorManager {
             TRANSPORT_MEMORY to basePort + 4,
             TRANSPORT_SNOWFLAKE to basePort + 5,
             TRANSPORT_CUSTOM to basePort + 6,
-            TRANSPORT_DIRECT to basePort + 7
+            TRANSPORT_DIRECT to basePort + 7,
+            memoryNameFor(TRANSPORT_VANILLA) to basePort + 8,
+            memoryNameFor(TRANSPORT_OBFS4) to basePort + 9,
+            memoryNameFor(TRANSPORT_WEBTUNNEL) to basePort + 10,
+            memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11
         )
         val plans = buildList {
             when (mode) {
@@ -192,8 +237,11 @@ object ParallelTorManager {
                 TRANSPORT_DIRECT -> add(TRANSPORT_DIRECT to "")
                 TRANSPORT_CUSTOM -> add(TRANSPORT_CUSTOM to (lines[TRANSPORT_CUSTOM] ?: ""))
             }
-            if (mode == TRANSPORT_AUTO && memoryLines != null) {
-                add(TRANSPORT_MEMORY to memoryLines)
+            if (mixedMemoryLines != null) {
+                add(TRANSPORT_MEMORY to mixedMemoryLines)
+            }
+            if (twinMemoryLines != null && twinName != null) {
+                add(twinName to twinMemoryLines)
             }
         }
 
@@ -284,6 +332,10 @@ object ParallelTorManager {
     /**
      * Store the bridges a 100% runner proved and, when it is the memory runner,
      * drop the ones that just died so the pool cannot lock onto a dead set.
+     *
+     * The proof is always filed under the real transport, never under the runner
+     * name: a `webtunnel-memory` twin teaches the webtunnel pool, so both the
+     * twin and the plain webtunnel runner benefit from it next time.
      */
     private fun recordMemory(context: Context, sessionId: Int, runner: TorRunner) {
         val proven = runner.healthyBridges()
@@ -291,11 +343,12 @@ object ParallelTorManager {
             Log.transport(sessionId, runner.name, 'I', TAG, "100% but no bridge descriptor seen, memory unchanged")
             return
         }
-        val added = BridgeMemory.remember(context, runner.name, proven)
+        val transport = baseTransportOf(runner.name)
+        val added = BridgeMemory.remember(context, transport, proven)
         Log.transport(
             sessionId, runner.name, 'I', TAG,
-            "memory updated: ${runner.healthyBridges().size} working bridge(s), +$added new " +
-                "(pool ${BridgeMemory.count(context, runner.name)})"
+            "memory[$transport] updated: ${proven.size} working bridge(s), +$added new " +
+                "(pool ${BridgeMemory.count(context, transport)})"
         )
     }
 
@@ -347,8 +400,8 @@ object ParallelTorManager {
      * disconnect so a following connect never races the previous teardown.
      */
     fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
-        // basePort itself is the app's own TUN bridge; runners take +1 .. +7.
-        val ports = (basePort..basePort + 7).toList()
+        // basePort itself is the app's own TUN bridge; runners take +1 .. +MAX_PORT_OFFSET.
+        val ports = (basePort..basePort + MAX_PORT_OFFSET).toList()
         stopAll()
         return ports.all { awaitPortFree(host, it) }
     }

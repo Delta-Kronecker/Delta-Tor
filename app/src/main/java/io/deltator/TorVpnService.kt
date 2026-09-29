@@ -128,7 +128,9 @@ class TorVpnService : VpnService() {
             autoNames.joinToString(" / ") +
                 if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""
         } else {
-            mode
+            // A single transport also races its own memory twin whenever that pool
+            // has proven bridges, so say so instead of surprising the user later.
+            mode + if (BridgeMemory.count(applicationContext, mode) > 0) " + memory" else ""
         }
         Log.i(TAG, "Transport mode: $modeLabel")
         updateNotification("Connecting via $modeLabel \u2026", progress = true, progressValue = 0)

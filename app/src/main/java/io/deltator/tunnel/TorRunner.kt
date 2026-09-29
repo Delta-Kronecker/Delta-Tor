@@ -305,7 +305,8 @@ class TorRunner(
                 return Result.failure(RuntimeException("$tag: no bridge lines available"))
             }
 
-            val isVanilla = name == "vanilla" || isDirect
+            // `vanilla-memory` is the vanilla transport too, hence startsWith.
+            val isVanilla = name.startsWith(ParallelTorManager.TRANSPORT_VANILLA) || isDirect
             // Only real pluggable-transport names count. The memory runner mixes
             // plain `ip:port fp` lines with prefixed ones, and a bare address as
             // the first token must not be mistaken for a CMETHOD.
@@ -493,7 +494,8 @@ class TorRunner(
     // --- torrc ---
 
     private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
-        val hasSlowTransport = name == "webtunnel"
+        // webtunnel is slow to hand out circuits, and so is its memory twin.
+        val hasSlowTransport = name.startsWith(ParallelTorManager.TRANSPORT_WEBTUNNEL)
         val transports = cleanLines.map { it.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: "" }
             .filter { it.isNotEmpty() }
             .distinct()
