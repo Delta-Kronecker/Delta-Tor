@@ -43,6 +43,7 @@ class TorRunner(
     /** The loopback control port Tor binds when exit countries are selected. */
     @Volatile private var controlPort = 0
     private val exitApplied = AtomicBoolean(false)
+    private val exitAppliedLatch = CountDownLatch(1)
 
     val bootstrapPercent = AtomicInteger(0)
     @Volatile var ready = false
@@ -58,10 +59,15 @@ class TorRunner(
 
     fun progress(): Int = bootstrapPercent.get()
 
+    /** Blocks until the post-bootstrap exit steering finished (or timed out). */
+    fun awaitExitApplied(timeoutMs: Long): Boolean =
+        exitAppliedLatch.await(timeoutMs, TimeUnit.MILLISECONDS)
+
     /**
      * Once this runner is bootstrapped, push the selected exit countries onto the
      * running Tor over its control port. Runs once per session on a daemon thread
-     * so it can never block the log reader.
+     * so it can never block the log reader. Every step is traced under its own
+     * "ExitNode" log section so a device-side failure is visible in the app log.
      */
     private fun applyExitNodesLater() {
         val ccs = ExitNodes.currentCodes()
@@ -73,29 +79,60 @@ class TorRunner(
         val port = controlPort
         if (port <= 0) return
         Thread({
-            val exitValue = ccs.joinToString(",") { "{$it}" }
+            var ok = false
             try {
-                sendControl(
-                    port,
-                    listOf(
-                        ControlCommand("AUTHENTICATE", "250"),
-                        ControlCommand("SETCONF ExitNodes=\"$exitValue\"", "250"),
-                        ControlCommand("SETCONF StrictNodes=0", "250"),
-                        ControlCommand("SETCONF CircuitBuildTimeout=180", "250"),
-                        ControlCommand("SETCONF LearnCircuitBuildTimeout=1", "250")
-                    )
-                )
-                Log.i(tag, "Exit countries applied live via control port: $exitValue (StrictNodes 0)")
+                ok = applyExitNodesViaControl(port, ccs)
             } catch (e: Exception) {
-                Log.w(tag, "could not apply exit countries via control port $port: ${e.message}; exit will stay unconstrained for this session")
+                Log.w(TAG_EXIT, "[$name] could not apply via control port $port: ${e.message}")
             }
+            exitAppliedLatch.countDown()
+            Log.i(TAG_EXIT, "[$name] exit nodes ${if (ok) "ACTIVE" else "NOT applied"} (${ccs.joinToString(",")}; StrictNodes 0)")
         }, "$name-exit-apply").also { it.isDaemon = true; it.start() }
     }
 
-    private class ControlCommand(val line: String, val expectedReply: String)
+    /**
+     * The control exchange itself. Returns true when the exit rules took effect.
+     *
+     * The template this app ships with keeps a 24h [MaxCircuitDirtiness] and the
+     * fork's Conflux enabled. Both fight the live switch: the first circuit of
+     * the session was built without an exit restriction, so all traffic would
+     * ride that single circuit's original (wrong) country for a whole day, and
+     * Conflux sets rebuilt after the switch keep relinking unrestricted legs.
+     * The present values are therefore retired (10 min turnover, Conflux off)
+     * and a fresh identity is requested so the next streams leave through the
+     * selected countries. Any line the binary rejects is left alone, traced, and
+     * the session continues with the exit list still in force.
+     */
+    private fun applyExitNodesViaControl(port: Int, ccs: List<String>): Boolean {
+        val exitValue = ccs.joinToString(",") { "{$it}" }
+        Log.i(TAG_EXIT, "=== EXIT NODE |> $name |> ${ccs.joinToString(",")} ===")
+        Log.i(TAG_EXIT, "[$name] geoip: built earlier for ${ccs.joinToString(",")}")
+        Log.i(TAG_EXIT, "[$name] control port: $listenHost:$port")
+        return sendControl(
+            port,
+            listOf(
+                ControlCommand("AUTHENTICATE", optional = false),
+                ControlCommand("SETCONF ExitNodes=\"$exitValue\"", optional = false),
+                ControlCommand("SETCONF StrictNodes=0", optional = false),
+                ControlCommand("SETCONF MaxCircuitDirtiness=600", optional = true),
+                ControlCommand("SETCONF ConfluxEnabled=0", optional = true),
+                ControlCommand("SETCONF CircuitBuildTimeout=180", optional = true),
+                ControlCommand("SETCONF LearnCircuitBuildTimeout=1", optional = true),
+                ControlCommand("SIGNAL NEWNYM", optional = true),
+                ControlCommand("GETCONF ExitNodes", optional = false),
+                ControlCommand("GETCONF StrictNodes", optional = false)
+            )
+        )
+    }
 
-    /** Send a short control exchange to a bootstrapped Tor; throws on protocol error. */
-    private fun sendControl(port: Int, commands: List<ControlCommand>) {
+    private class ControlCommand(val line: String, val optional: Boolean)
+
+    /**
+     * Send a short control exchange to a bootstrapped Tor. Logs one line per
+     * command (command + final status) under the ExitNode section; optional
+     * commands that fail are waived with a warning, mandatory ones throw.
+     */
+    private fun sendControl(port: Int, commands: List<ControlCommand>): Boolean {
         val socket = java.net.Socket()
         try {
             socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 4_000)
@@ -104,18 +141,50 @@ class TorRunner(
             val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1))
             for (command in commands) {
                 writer.write(command.line.toByteArray(Charsets.ISO_8859_1))
-                writer.write('\r'.code)
-                writer.write('\n'.code)
+                writer.write("\r\n".toByteArray(Charsets.ISO_8859_1))
                 writer.flush()
-                val reply = reader.readLine()
-                if (reply == null) throw RuntimeException("connection closed while waiting for ${command.line}")
-                if (!reply.startsWith(command.expectedReply)) {
-                    throw RuntimeException("${command.line} -> $reply")
+                val reply = readReply(reader)
+                val ok = reply.isNotEmpty() && reply.last().startsWith("250")
+                if (!ok) {
+                    if (command.optional) {
+                        Log.w(TAG_EXIT, "[$name] ${command.line} -> ${reply.joinToString(" / ")} (ignored)")
+                        continue
+                    }
+                    throw RuntimeException("${command.line} -> ${reply.joinToString(" / ")}")
                 }
+                Log.i(TAG_EXIT, "[$name] ${command.line} -> ${reply.last()}")
             }
+            return true
         } finally {
             runCatching { socket.close() }
         }
+    }
+
+    /**
+     * Read one complete control reply. Single-line replies come back as one
+     * line; multi-line "250-..." blocks end at their "250 ..." terminator and
+     * "250+..." (data) blocks consume the raw data lines up to the "." line and
+     * the closing "250 ..." line.
+     */
+    private fun readReply(reader: BufferedReader): List<String> {
+        val out = ArrayList<String>()
+        var line = reader.readLine() ?: return out
+        out.add(line)
+        if (line.startsWith("250+")) {
+            // Raw data follows: read until the standalone "." terminator.
+            while (true) {
+                val data = reader.readLine() ?: break
+                if (data == ".") break
+                out.add(data)
+            }
+            reader.readLine()?.let { out.add(it) } // closing status line
+        } else {
+            while (line.startsWith("250-")) {
+                line = reader.readLine() ?: break
+                out.add(line)
+            }
+        }
+        return out
     }
 
     /**
@@ -210,6 +279,7 @@ class TorRunner(
         bootstrapPercent.set(0)
         controlPort = 0
         exitApplied.set(false)
+        while (exitAppliedLatch.count > 0) exitAppliedLatch.countDown()
         ready = false
         failed = null
         started = true
@@ -527,7 +597,10 @@ class TorRunner(
             return
         }
         val built = GeoIpFile.ensure(context, dataDir, codes.toSet())
-        if (!built) {
+        if (built) {
+            Log.i(TAG_EXIT, "[$name] geoip ready for ${codes.joinToString(",")} (Tor can resolve the exit countries)")
+        } else {
+            Log.w(TAG_EXIT, "[$name] geoip NOT built: Tor cannot resolve ${codes.joinToString(",")} and will pick any exit")
             Log.w(tag, "no geoip database: the exit country cannot be enforced, Tor will pick any exit")
         }
     }
@@ -599,6 +672,7 @@ class TorRunner(
     companion object {
         private const val MAX_BRIDGE_LINES = 100
         private const val TERMINATE_TIMEOUT_MS = 2_000L
+        private const val TAG_EXIT = "ExitNode"
         private const val CACHED_MARKER = "(cached): \$"
         private const val FRESH_MARKER = "(fresh): \$"
         private val WHITESPACE = Regex("\\s+")
