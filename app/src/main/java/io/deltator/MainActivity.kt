@@ -11,6 +11,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -40,6 +41,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -55,19 +57,24 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -105,6 +112,7 @@ import io.deltator.util.LogEntry
 import io.deltator.util.LogSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.PI
 import kotlin.math.cos
@@ -247,70 +255,315 @@ private fun MainScreen(
     val torRunning = state.torRunning
     val scAnimated by animateColorAsState(sc, tween(450), label = "stateColor")
 
-    Box(
-        modifier = Modifier
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    val openDrawer = remember { { scope.launch { drawerState.open() } } }
+    val closeDrawer = remember { { scope.launch { drawerState.close() } } }
+    BackHandler(enabled = drawerState.isOpen) { closeDrawer() }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = Color(0xFF14171F),
+                modifier = Modifier.fillMaxHeight().width(316.dp)
+            ) {
+                LocationDrawer(onClose = closeDrawer)
+            }
+        }
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+        ) {
+            AirBackground(glow = scAnimated)
+
+            Header(
+                statusColor = scAnimated,
+                statusLabel = statusLabel(connecting, connected, torRunning),
+                onOpenDrawer = openDrawer,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
+
+            if (release.newer && release.latestVersion.isNotBlank()) {
+                UpdateBanner(
+                    version = release.latestVersion,
+                    onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .offset(y = 98.dp)
+                )
+            }
+
+            StateBlock(
+                connecting = connecting,
+                torRunning = torRunning,
+                connected = connected,
+                transport = state.transport,
+                peak = peakPct(state.connecting, state.torRunning, state.transports),
+                sc = scAnimated,
+                hasError = state.error != null,
+                modifier = Modifier.align(Alignment.Center).offset(y = (-112).dp)
+            )
+
+            RingButton(
+                modifier = Modifier.align(Alignment.Center),
+                ringColor = scAnimated,
+                glowColor = if (connecting || connected) scAnimated else null,
+                glyphColor = glyphColor(connecting, connected),
+                progress = ringProgressOf(state),
+                connecting = connecting,
+                onClick = onPrimary
+            )
+
+            Text(
+                labelText(state),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .offset(y = 106.dp)
+                    .fillMaxWidth()
+                    .padding(horizontal = 32.dp),
+                style = MaterialTheme.typography.bodyLarge.copy(letterSpacing = 1.4.sp),
+                color = if (state.error != null) DeltaTor.Red else DeltaTor.Muted,
+                textAlign = TextAlign.Center
+            )
+
+            BottomPanel(
+                state = state,
+                onPrimary = onPrimary,
+                onStopVpn = onStopVpn,
+                onDisconnect = onDisconnect,
+                onOpenSettings = onOpenSettings,
+                modifier = Modifier.align(Alignment.BottomCenter)
+            )
+        }
+    }
+}
+
+// ---- location drawer --------------------------------------------------------
+
+@Composable
+private fun MenuIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
+    Canvas(modifier) {
+        val stroke = 1.6.dp.toPx()
+        val w = size.width
+        val h = size.height
+        for (i in 0..2) {
+            val y = h * (0.22f + i * 0.28f)
+            drawLine(color, Offset(w * 0.12f, y), Offset(w * 0.88f, y), stroke, StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
+private fun CloseIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
+    Canvas(modifier) {
+        val stroke = 1.6.dp.toPx()
+        val p = size.width * 0.24f
+        val q = size.width - p
+        drawLine(color, Offset(p, p), Offset(q, q), stroke, StrokeCap.Round)
+        drawLine(color, Offset(q, p), Offset(p, q), stroke, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun WarnIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Amber) {
+    Canvas(modifier.size(16.dp)) {
+        val w = size.width
+        val h = size.height
+        val p = Path()
+        p.moveTo(w / 2f, h * 0.06f)
+        p.lineTo(w * 0.96f, h * 0.92f)
+        p.lineTo(w * 0.04f, h * 0.92f)
+        p.close()
+        drawPath(p, color.copy(alpha = 0.20f))
+        drawPath(p, color, style = Stroke(1.3.dp.toPx(), join = StrokeJoin.Round))
+        drawLine(
+            color, Offset(w / 2f, h * 0.38f), Offset(w / 2f, h * 0.64f),
+            1.5.dp.toPx(), StrokeCap.Round
+        )
+        drawCircle(color, radius = 1.2.dp.toPx(), center = Offset(w / 2f, h * 0.78f))
+    }
+}
+
+/**
+ * The exit-country picker as a drawer on the main screen: one tap instead of a
+ * trip through the settings list, with an honest warning above the list, since
+ * pinning a country costs speed and circuit stability.
+ */
+@Composable
+private fun LocationDrawer(onClose: () -> Unit) {
+    val context = LocalContext.current
+    var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
+    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
+    val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
+
+    LaunchedEffect(Unit) {
+        countries = withContext(Dispatchers.IO) {
+            runCatching { ExitNodes.order(BridgeCountries.top(context)) }.getOrDefault(emptyList())
+        }
+    }
+
+    Column(
+        Modifier
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
     ) {
-        AirBackground(glow = scAnimated)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 18.dp, end = 12.dp, top = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "SELECT LOCATION",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        letterSpacing = 1.6.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.AccentLight
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    "Applies on the next connect",
+                    style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+                    color = DeltaTor.Muted
+                )
+            }
+            Box(
+                Modifier
+                    .size(32.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(DeltaTor.Surface, RoundedCornerShape(10.dp))
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(10.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onClose() },
+                contentAlignment = Alignment.Center
+            ) {
+                CloseIcon(Modifier.size(12.dp), DeltaTor.Text)
+            }
+        }
 
-        Header(
-            statusColor = scAnimated,
-            statusLabel = statusLabel(connecting, connected, torRunning),
-            modifier = Modifier.align(Alignment.TopCenter)
-        )
+        Spacer(Modifier.height(12.dp))
 
-        if (release.newer && release.latestVersion.isNotBlank()) {
-            UpdateBanner(
-                version = release.latestVersion,
-                onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(y = 98.dp)
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                when {
+                    selectedCodes.isEmpty() -> "Any location \u00b7 default"
+                    selectedCodes.size == 1 -> {
+                        val only = selectedCodes.first()
+                        "${flagEmoji(only)}  ${exitNames[only].orEmpty()}".trim()
+                    }
+                    else -> "${selectedCodes.size} countries selected"
+                },
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.SemiBold
+                ),
+                color = DeltaTor.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            if (selectedCodes.isNotEmpty()) {
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "CLEAR",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.Red,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { ExitNodes.clear() }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp)
+                .clip(RoundedCornerShape(14.dp))
+                .background(DeltaTor.Amber.copy(alpha = 0.10f))
+                .border(1.dp, DeltaTor.Amber.copy(alpha = 0.32f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                WarnIcon(color = DeltaTor.Amber)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "USE ONLY WHEN NEEDED",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.Amber
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Picking a country sends your traffic through a relay there. " +
+                    "It can lower your speed and make the connection less stable.",
+                style = MaterialTheme.typography.bodySmall.copy(
+                    letterSpacing = 0.1.sp,
+                    lineHeight = 16.sp
+                ),
+                color = DeltaTor.Muted
             )
         }
 
-        StateBlock(
-            connecting = connecting,
-            torRunning = torRunning,
-            connected = connected,
-            transport = state.transport,
-            peak = peakPct(state.connecting, state.torRunning, state.transports),
-            sc = scAnimated,
-            hasError = state.error != null,
-            modifier = Modifier.align(Alignment.Center).offset(y = (-128).dp)
-        )
+        Spacer(Modifier.height(12.dp))
+        DividerLine()
+        Spacer(Modifier.height(4.dp))
 
-        RingButton(
-            modifier = Modifier.align(Alignment.Center),
-            ringColor = scAnimated,
-            glowColor = if (connecting || connected) scAnimated else null,
-            glyphColor = glyphColor(connecting, connected),
-            progress = ringProgressOf(state),
-            connecting = connecting,
-            onClick = onPrimary
-        )
-
-        Text(
-            labelText(state),
-            modifier = Modifier
-                .align(Alignment.Center)
-                .offset(y = 122.dp)
-                .fillMaxWidth()
-                .padding(horizontal = 32.dp),
-            style = MaterialTheme.typography.bodyLarge.copy(letterSpacing = 1.4.sp),
-            color = if (state.error != null) DeltaTor.Red else DeltaTor.Muted,
-            textAlign = TextAlign.Center
-        )
-
-        BottomPanel(
-            state = state,
-            onPrimary = onPrimary,
-            onStopVpn = onStopVpn,
-            onDisconnect = onDisconnect,
-            onOpenSettings = onOpenSettings,
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
+        if (countries.isEmpty()) {
+            Text(
+                "Loading country list \u2026",
+                style = MaterialTheme.typography.bodySmall,
+                color = DeltaTor.Muted.copy(alpha = 0.75f),
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                contentPadding = PaddingValues(bottom = 18.dp)
+            ) {
+                item(key = "any") {
+                    ExitNodeRow(
+                        emoji = "\uD83C\uDF10",
+                        name = "Any location \u00b7 default",
+                        code = "--",
+                        selected = selectedCodes.isEmpty(),
+                        onClick = { ExitNodes.clear() }
+                    )
+                }
+                items(countries.size, key = { countries[it].code }) { i ->
+                    val c = countries[i]
+                    ExitNodeRow(
+                        emoji = remember(c.code) { flagEmoji(c.code) },
+                        name = c.name,
+                        code = c.code,
+                        selected = c.code in selectedCodes,
+                        onClick = { ExitNodes.toggle(c.code, c.name) }
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -447,14 +700,30 @@ private fun AirBackground(glow: Color) {
 private fun Header(
     statusColor: Color,
     statusLabel: String,
+    onOpenDrawer: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier
             .fillMaxWidth()
-            .padding(horizontal = 22.dp, vertical = 18.dp)
+            .padding(horizontal = 16.dp, vertical = 14.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(34.dp)
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(DeltaTor.Surface, RoundedCornerShape(11.dp))
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(11.dp))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { onOpenDrawer() },
+                contentAlignment = Alignment.Center
+            ) {
+                MenuIcon(Modifier.size(15.dp), DeltaTor.AccentLight)
+            }
+            Spacer(Modifier.width(11.dp))
             Text(
                 "DELTA",
                 style = MaterialTheme.typography.titleLarge.copy(
@@ -604,7 +873,7 @@ private fun RingButton(
 
     Box(
         modifier = modifier
-            .size(176.dp)
+            .size(152.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -615,7 +884,7 @@ private fun RingButton(
         Canvas(Modifier.fillMaxSize()) {
             val c = center
             val r = size.minDimension / 2f
-            val halo = 150.dp.toPx()
+            val halo = 130.dp.toPx()
 
             // ambient halo (pulse when active)
             if (glowColor != null) {
@@ -734,7 +1003,7 @@ private fun BottomPanel(
         modifier
             .fillMaxWidth()
             .verticalScroll(rememberScrollState())
-            .padding(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 16.dp),
+            .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         when {
@@ -769,12 +1038,12 @@ private fun BottomPanel(
         }
 
         if (state.connected || state.torRunning) {
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
         }
 
         // Live speed lives in the notification only.
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard(
                 label = "DOWNLOADED",
                 value = formatBytes(state.rxBytes),
@@ -791,9 +1060,9 @@ private fun BottomPanel(
             )
         }
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             InfoPill(
                 label = "UP TIME",
                 value = if (state.connected) formatDuration(System.currentTimeMillis() - state.connectedAtMillis) else "--",
@@ -811,24 +1080,24 @@ private fun BottomPanel(
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(9.dp))
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(46.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(DeltaTor.Surface, RoundedCornerShape(16.dp))
-                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(16.dp))
+                .height(38.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(DeltaTor.Surface, RoundedCornerShape(12.dp))
+                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(12.dp))
                 .clickable { onOpenSettings() },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center
         ) {
-            GearIcon(Modifier.size(18.dp), DeltaTor.AccentLight)
-            Spacer(Modifier.width(10.dp))
+            GearIcon(Modifier.size(15.dp), DeltaTor.AccentLight)
+            Spacer(Modifier.width(8.dp))
             Text(
                 "ADVANCED",
-                style = MaterialTheme.typography.titleMedium.copy(
+                style = MaterialTheme.typography.labelLarge.copy(
                     letterSpacing = 1.6.sp,
                     fontWeight = FontWeight.Bold
                 ),
@@ -845,7 +1114,7 @@ private fun GradientPill(
     filled: Boolean,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(24.dp)
+    val shape = RoundedCornerShape(20.dp)
     val bg = if (filled) {
         Brush.horizontalGradient(listOf(DeltaTor.AccentSoft, DeltaTor.Accent))
     } else {
@@ -854,7 +1123,7 @@ private fun GradientPill(
     val borderC = if (filled) DeltaTor.AccentLight.copy(alpha = 0.4f) else DeltaTor.BorderLight
     Box(
         modifier = modifier
-            .height(48.dp)
+            .height(40.dp)
             .clip(shape)
             .background(bg, shape)
             .border(1.dp, borderC, shape)
@@ -863,7 +1132,7 @@ private fun GradientPill(
     ) {
         Text(
             label,
-            style = MaterialTheme.typography.titleMedium.copy(
+            style = MaterialTheme.typography.labelLarge.copy(
                 letterSpacing = 1.2.sp,
                 fontWeight = FontWeight.Bold
             ),
@@ -874,7 +1143,7 @@ private fun GradientPill(
 
 @Composable
 private fun StatCard(label: String, value: String, accent: Color, up: Boolean, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(18.dp)
+    val shape = RoundedCornerShape(14.dp)
     Column(
         modifier = modifier
             .clip(shape)
@@ -883,11 +1152,11 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
                 shape
             )
             .border(1.dp, DeltaTor.Border, shape)
-            .padding(horizontal = 14.dp, vertical = 12.dp)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            ArrowIcon(accent = accent, up = up)
-            Spacer(Modifier.width(8.dp))
+            ArrowIcon(accent = accent, up = up, size = 15.dp)
+            Spacer(Modifier.width(7.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall.copy(
@@ -897,10 +1166,10 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
                 color = DeltaTor.Muted
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
             value,
-            style = MaterialTheme.typography.headlineMedium.copy(
+            style = MaterialTheme.typography.titleLarge.copy(
                 letterSpacing = 0.4.sp,
                 fontWeight = FontWeight.Bold
             ),
@@ -912,13 +1181,13 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
 
 @Composable
 private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier) {
-    val shape = RoundedCornerShape(16.dp)
+    val shape = RoundedCornerShape(12.dp)
     Column(
         modifier = modifier
             .clip(shape)
             .background(DeltaTor.Surface, shape)
             .border(1.dp, DeltaTor.BorderLight, shape)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
     ) {
         Text(
             label,
@@ -939,8 +1208,8 @@ private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier
 }
 
 @Composable
-private fun ArrowIcon(accent: Color, up: Boolean) {
-    Canvas(Modifier.size(20.dp)) {
+private fun ArrowIcon(accent: Color, up: Boolean, size: androidx.compose.ui.unit.Dp = 20.dp) {
+    Canvas(Modifier.size(size)) {
         val stroke = 2.dp.toPx()
         val w = size.width
         val h = size.height
@@ -1332,109 +1601,6 @@ private fun SettingsCardHeader(
     }
 }
 
-/**
- * The exit-country picker, kept in its own composable so that selecting a
- * country only recomposes this card. Reading the selection in the parent screen
- * would invalidate the whole ADVANCED page - including the large editable torrc
- * field - on every tap.
- */
-@Composable
-private fun ExitNodeCard(countries: List<ExitCountry>) {
-    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
-    val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
-
-    SettingsCardHeader("EXIT NODE", "Optional exit countries \u00b7 pick as many as you like")
-    SettingsCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                when {
-                    selectedCodes.isEmpty() -> "Any location \u00b7 default"
-                    selectedCodes.size == 1 -> {
-                        val only = selectedCodes.first()
-                        "${flagEmoji(only)}  ${exitNames[only].orEmpty()}"
-                    }
-                    else -> "${selectedCodes.size} countries selected"
-                },
-                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
-                color = DeltaTor.Text,
-                modifier = Modifier.weight(1f)
-            )
-            if (selectedCodes.isNotEmpty()) {
-                Text(
-                    "CLEAR",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.Red,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .clickable { ExitNodes.clear() }
-                        .padding(horizontal = 10.dp, vertical = 4.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-            Text(
-                "NEXT CONNECT",
-                style = MaterialTheme.typography.labelSmall.copy(
-                    letterSpacing = 1.1.sp,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = DeltaTor.AccentLight
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Tap to add or remove a country \u00b7 written to torrc as " +
-                "ExitNodes {us},{nl},\u2026 \u00b7 steered, never forced.",
-            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-            color = DeltaTor.Muted
-        )
-        if (countries.isEmpty()) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                "Loading country list \u2026",
-                style = MaterialTheme.typography.bodySmall,
-                color = DeltaTor.Muted.copy(alpha = 0.75f)
-            )
-        } else {
-            Spacer(Modifier.height(6.dp))
-            DividerLine()
-            // 249 countries in a plain scrolling Column are all composed, measured
-            // and drawn the moment the page opens, which is what made it stutter.
-            // A height-bounded LazyColumn only builds the rows that are on screen.
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(340.dp),
-                contentPadding = PaddingValues(vertical = 2.dp)
-            ) {
-                item(key = "any") {
-                    ExitNodeRow(
-                        emoji = "\uD83C\uDF10",
-                        name = "Any location \u00b7 default",
-                        code = "--",
-                        selected = selectedCodes.isEmpty(),
-                        onClick = { ExitNodes.clear() }
-                    )
-                }
-                items(countries.size, key = { countries[it].code }) { i ->
-                    val c = countries[i]
-                    ExitNodeRow(
-                        emoji = remember(c.code) { flagEmoji(c.code) },
-                        name = c.name,
-                        code = c.code,
-                        selected = c.code in selectedCodes,
-                        onClick = { ExitNodes.toggle(c.code, c.name) }
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun ExitNodeRow(
@@ -1447,35 +1613,31 @@ private fun ExitNodeRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(horizontal = 12.dp)
             .clip(RoundedCornerShape(10.dp))
             .clickable { onClick() }
-            .padding(horizontal = 4.dp, vertical = 8.dp),
+            .padding(vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(emoji, fontSize = 18.sp)
-        Spacer(Modifier.width(10.dp))
+        Text(emoji, fontSize = 16.sp)
+        Spacer(Modifier.width(9.dp))
         Text(
             name,
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
             color = DeltaTor.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
+        Spacer(Modifier.width(6.dp))
         Text(
             code,
-            style = MaterialTheme.typography.labelMedium.copy(
+            style = MaterialTheme.typography.labelSmall.copy(
                 letterSpacing = 1.sp,
                 color = DeltaTor.Muted
             )
         )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            if (selected) "SELECTED \u2713" else "",
-            style = MaterialTheme.typography.labelMedium.copy(
-                letterSpacing = 0.4.sp,
-                color = DeltaTor.GreenLight
-            )
-        )
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(9.dp))
         Box(
             Modifier
                 .size(8.dp)
@@ -1520,19 +1682,9 @@ private fun SettingsScreen(
     var templateText by remember { mutableStateOf(TorrcSettings.template()) }
     var saved by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    var countries by remember { mutableStateOf(emptyList<ExitCountry>()) }
     var transportMode by remember { mutableStateOf(Config.transportMode) }
     var customBridges by remember { mutableStateOf(Config.customBridges) }
     var autoTransports by remember { mutableStateOf(Config.autoTransports) }
-
-    // Plain country list from the bundled table. Recommended countries first,
-    // then the rest alphabetically. Does not depend on the bridge cache, so it
-    // is available on the very first launch.
-    LaunchedEffect(Unit) {
-        countries = withContext(Dispatchers.IO) {
-            runCatching { ExitNodes.order(BridgeCountries.top(context)) }.getOrDefault(emptyList())
-        }
-    }
 
     val tfColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = DeltaTor.AccentLight,
@@ -1821,12 +1973,6 @@ private fun SettingsScreen(
                     onUpdate = onUpdateBridges,
                     modifier = Modifier.padding(horizontal = 22.dp)
                 )
-            }
-            item {
-                Spacer(Modifier.height(22.dp))
-            }
-            item {
-                ExitNodeCard(countries)
             }
             item {
                 Spacer(Modifier.height(22.dp))
