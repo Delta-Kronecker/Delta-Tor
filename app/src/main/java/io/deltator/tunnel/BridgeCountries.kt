@@ -5,6 +5,7 @@ import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.util.zip.GZIPInputStream
 
@@ -44,21 +45,19 @@ private class CountryDb(
             val idxRaw = ArrayList<Int>()
             val codes = ArrayList<String>()
             val codeMap = HashMap<String, Int>()
-            GZIPInputStream(context.assets.open("geoip/country.csv.gz")).use { gz ->
-                BufferedReader(InputStreamReader(gz, Charsets.US_ASCII)).useLines { lines ->
-                    lines.forEach { line ->
-                        val p = line.split(',')
-                        if (p.size < 3) return@forEach
-                        // db-ip country-lite stores dotted quads, e.g. "1.0.0.0"
-                        val a = ipv4ToLong(p[0].trim()) ?: return@forEach
-                        val b = ipv4ToLong(p[1].trim()) ?: return@forEach
-                        val cc = p[2].trim().uppercase()
-                        if (cc.length != 2 || !cc.all { it in 'A'..'Z' }) return@forEach
-                        startsRaw.add(a)
-                        endsRaw.add(b)
-                        val ci = codeMap.getOrPut(cc) { codes.size.also { codes.add(cc) } }
-                        idxRaw.add(ci)
-                    }
+            BufferedReader(InputStreamReader(countryTable(context), Charsets.US_ASCII)).useLines { lines ->
+                lines.forEach { line ->
+                    val p = line.split(',')
+                    if (p.size < 3) return@forEach
+                    // db-ip country-lite stores dotted quads, e.g. "1.0.0.0"
+                    val a = ipv4ToLong(p[0].trim()) ?: return@forEach
+                    val b = ipv4ToLong(p[1].trim()) ?: return@forEach
+                    val cc = p[2].trim().uppercase()
+                    if (cc.length != 2 || !cc.all { it in 'A'..'Z' }) return@forEach
+                    startsRaw.add(a)
+                    endsRaw.add(b)
+                    val ci = codeMap.getOrPut(cc) { codes.size.also { codes.add(cc) } }
+                    idxRaw.add(ci)
                 }
             }
             val n = startsRaw.size
@@ -110,6 +109,17 @@ object BridgeCountries {
         }
         cachedNames = map
         return map
+    }
+
+    /**
+     * Open the bundled country range table, gzip or plain, whichever the APK ships.
+     */
+    private fun countryTable(context: Context): InputStream {
+        return try {
+            GZIPInputStream(context.assets.open("geoip/country.csv.gz"))
+        } catch (e: Exception) {
+            context.assets.open("geoip/country.csv")
+        }
     }
 
     /** Country (code, name) for an IP that exited through the tunnel. */
