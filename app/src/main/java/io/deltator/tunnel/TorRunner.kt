@@ -39,6 +39,10 @@ class TorRunner(
     @Volatile private var lyrebirdProcess: Process? = null
     private val lyrebirdCmethods = mutableMapOf<String, String>()
 
+    /** The loopback control port Tor binds when exit countries are selected. */
+    @Volatile private var controlPort = 0
+    private val exitApplied = AtomicBoolean(false)
+
     val bootstrapPercent = AtomicInteger(0)
     @Volatile var ready = false
     @Volatile var failed: String? = null
@@ -52,6 +56,73 @@ class TorRunner(
     fun isReady(): Boolean = ready && torProcess?.isAlive == true
 
     fun progress(): Int = bootstrapPercent.get()
+
+    /**
+     * Once this runner is bootstrapped, push the selected exit countries onto the
+     * running Tor over its control port. Runs once per session on a daemon thread
+     * so it can never block the log reader.
+     */
+    private fun applyExitNodesLater() {
+        val ccs = ExitNodes.currentCodes()
+            .map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        if (ccs.isEmpty()) return
+        if (!exitApplied.compareAndSet(false, true)) return
+        val port = controlPort
+        if (port <= 0) return
+        Thread({
+            val exitValue = ccs.joinToString(",") { "{$it}" }
+            try {
+                sendControl(
+                    port,
+                    listOf(
+                        ControlCommand("AUTHENTICATE", "250"),
+                        ControlCommand("SETCONF ExitNodes=\"$exitValue\"", "250"),
+                        ControlCommand("SETCONF StrictNodes=0", "250"),
+                        ControlCommand("SETCONF CircuitBuildTimeout=180", "250"),
+                        ControlCommand("SETCONF LearnCircuitBuildTimeout=1", "250")
+                    )
+                )
+                Log.i(tag, "Exit countries applied live via control port: $exitValue (StrictNodes 0)")
+            } catch (e: Exception) {
+                Log.w(tag, "could not apply exit countries via control port $port: ${e.message}; exit will stay unconstrained for this session")
+            }
+        }, "$name-exit-apply").also { it.isDaemon = true; it.start() }
+    }
+
+    private class ControlCommand(val line: String, val expectedReply: String)
+
+    /** Send a short control exchange to a bootstrapped Tor; throws on protocol error. */
+    private fun sendControl(port: Int, commands: List<ControlCommand>) {
+        val socket = java.net.Socket()
+        try {
+            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 4_000)
+            socket.soTimeout = 4_000
+            val writer = socket.getOutputStream()
+            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1))
+            for (command in commands) {
+                writer.write(command.line.toByteArray(Charsets.ISO_8859_1))
+                writer.write('\r'.code)
+                writer.write('\n'.code)
+                writer.flush()
+                val reply = reader.readLine()
+                if (reply == null) throw RuntimeException("connection closed while waiting for ${command.line}")
+                if (!reply.startsWith(command.expectedReply)) {
+                    throw RuntimeException("${command.line} -> $reply")
+                }
+            }
+        } finally {
+            runCatching { socket.close() }
+        }
+    }
+
+    /**
+     * A free loopback port for the control listener. ServerSocket(0) picks one
+     * from the ephemeral range; the small re-bind race is acceptable here and a
+     * runner that wins only ever needs it after its own bootstrap.
+     */
+    private fun freeEphemeralPort(): Int = java.net.ServerSocket(0).use { it.localPort }
 
     // Ring buffer of this runner's own log lines, so a dead process can be
     // explained after the fact (Tor's own words, not a generic "process exited").
@@ -136,6 +207,8 @@ class TorRunner(
     fun start(): Result<Unit> {
         stop()
         bootstrapPercent.set(0)
+        controlPort = 0
+        exitApplied.set(false)
         ready = false
         failed = null
         started = true
@@ -221,6 +294,7 @@ class TorRunner(
                             Log.i(tag, "Bootstrap: $pct%")
                             if (pct >= 100) {
                                 ready = true
+                                applyExitNodesLater()
                             }
                         }
                     }
@@ -395,32 +469,26 @@ class TorRunner(
             bridgeDirectives.appendLine("Bridge $line")
         }
 
-        val exitDirective = buildString {
-            val ccs = ExitNodes.currentCodes()
-                .map { it.trim().uppercase() }
-                .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
-                .distinct()
-            if (ccs.isNotEmpty()) {
-                appendLine("ExitNodes " + ccs.joinToString(",") { "{$it}" })
-                // StrictNodes 0, not 1. With 1 Tor refuses to build any circuit
-                // that does not leave through one of these nodes, so a list whose
-                // relays are slow, guarded or simply unreachable never completes a
-                // circuit and bootstrap hangs at 50%. With 0 the list is a strong
-                // preference: Tor still steers into those countries, but a circuit
-                // can always be completed when they are unreachable.
-                appendLine("StrictNodes 0")
-                // A circuit whose exit has to come from a chosen country is a much
-                // narrower draw than a random one, and the shipped template ends
-                // with CircuitBuildTimeout 20 and learning off, so every attempt
-                // was abandoned before it could finish. These two lines come after
-                // the template, so they are the ones Tor keeps.
-                appendLine("LearnCircuitBuildTimeout 1")
-                appendLine("CircuitBuildTimeout 180")
-            }
+        // Exit-country steering is applied AFTER bootstrap via the control port
+        // (see applyExitNodesLater). Bootstrapping with ``ExitNodes`` in the
+        // torrc makes the initial microdescriptor phase much slower, because Tor
+        // only counts descriptors of the chosen countries towards ``probably``
+        // having enough directory info; on a censored net with a mostly dead
+        // bridge pool that extra delay is where "never connects" comes from. So
+        // the first boot is unrestricted (fast), and the country rules are
+        // pushed in once the runner is already at 100%: Tor then steers new
+        // circuits into the selected countries without the slow cold start.
+        val exitCodes = ExitNodes.currentCodes()
+            .map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        if (exitCodes.isNotEmpty()) {
+            controlPort = freeEphemeralPort()
         }
 
         val templateLines = TorrcSettings.templateLines()
-        val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n$exitDirective\n"
+        val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n" +
+            (if (exitCodes.isNotEmpty()) "ControlPort $listenHost:$controlPort\n" else "")
         torrcFile.writeText(torrcContent)
         try {
             File(context.filesDir, "tor_last.torrc").writeText(torrcContent)
