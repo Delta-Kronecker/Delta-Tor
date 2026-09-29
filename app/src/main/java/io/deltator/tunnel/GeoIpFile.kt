@@ -1,10 +1,12 @@
 package io.deltator.tunnel
 
 import android.content.Context
-import android.util.Log
+import io.deltator.util.AppLog as Log
+import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.util.zip.GZIPInputStream
 
@@ -34,7 +36,8 @@ import java.util.zip.GZIPInputStream
  */
 object GeoIpFile {
     private const val TAG = "GeoIpFile"
-    private const val ASSET = "geoip/country.csv.gz"
+    private const val ASSET_GZIP = "geoip/country.csv.gz"
+    private const val ASSET_PLAIN = "geoip/country.csv"
     private const val HEADER_PREFIX = "# countries:"
 
     /**
@@ -75,27 +78,26 @@ object GeoIpFile {
                 ).use { out6 ->
                     out4.write("$HEADER_PREFIX $signature\n")
                     out6.write("$HEADER_PREFIX $signature\n")
-                    GZIPInputStream(context.assets.open(ASSET)).use { gz ->
-                        gz.bufferedReader(Charsets.UTF_8).use { input ->
-                            while (true) {
-                                val line = input.readLine() ?: break
-                                val parts = line.split(',')
-                                if (parts.size != 3) continue
-                                val cc = parts[2].trim()
-                                if (cc.length != 2 || cc !in keep) continue
-                                val low = parts[0].trim()
-                                val high = parts[1].trim()
+                    countryTable(context).use { input ->
+                        while (true) {
+                            val line = input.readLine() ?: break
+                            val parts = line.split(',')
+                            if (parts.size != 3) continue
+                            val cc = parts[2].trim()
+                            if (cc.length != 2 || cc !in keep) continue
+                            val low = parts[0].trim()
+                            val high = parts[1].trim()
+                            if (low.contains(':')) {
+                                // IPv6: Tor parses the bounds as text.
                                 if (high < low) continue
-                                if (low.contains(':')) {
-                                    // IPv6: Tor parses the bounds as text.
-                                    out6.write("$low,$high,$cc\n")
-                                    kept6++
-                                } else {
-                                    val lo = toUint32(low) ?: continue
-                                    val hi = toUint32(high) ?: continue
-                                    out4.write("$lo,$hi,$cc\n")
-                                    kept4++
-                                }
+                                out6.write("$low,$high,$cc\n")
+                                kept6++
+                            } else {
+                                val lo = toUint32(low) ?: continue
+                                val hi = toUint32(high) ?: continue
+                                if (hi < lo) continue
+                                out4.write("$lo,$hi,$cc\n")
+                                kept4++
                             }
                         }
                     }
@@ -118,6 +120,27 @@ object GeoIpFile {
             File(dataDir, "geoip6.tmp").delete()
             false
         }
+    }
+
+    /**
+     * Open the bundled country range table. Some packaging runs ship it gzip
+     * compressed as `country.csv.gz`, others as plain `country.csv`; never assume
+     * which one is inside the APK.
+     */
+    private fun countryTable(context: Context): BufferedReader {
+        val gz = try {
+            context.assets.open(ASSET_GZIP)
+        } catch (e: Exception) {
+            null
+        }
+        if (gz != null) {
+            Log.d(TAG, "reading assets/$ASSET_GZIP")
+            return GZIPInputStream(gz).bufferedReader(Charsets.UTF_8)
+        }
+        Log.w(TAG, "assets/$ASSET_GZIP not found; using assets/$ASSET_PLAIN")
+        return BufferedReader(
+            InputStreamReader(context.assets.open(ASSET_PLAIN), Charsets.UTF_8)
+        )
     }
 
     /** Remove generated databases, e.g. when the user clears all countries. */
