@@ -326,7 +326,7 @@ class TorVpnService : VpnService() {
                 error = null
             )
         }
-        updateNotification("Stopping \u00b7 killing every Tor core", progress = true)
+        updateNotification("Stopping \u00b7 killing every Tor core", progress = true, progressValue = 0)
         serviceScope.launch {
             // Blocks until every Tor/lyrebird process has exited and every port
             // is free, so the cores are provably down before the flag clears.
