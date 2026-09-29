@@ -143,6 +143,9 @@ class MainActivity : ComponentActivity() {
                     onPrimary = {
                         val s = AppState.state.value
                         when {
+                            // The cores are being killed right now; a start here
+                            // would race the teardown for the ports.
+                            s.stopping -> Unit
                             s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.torRunning -> sendAction(TorVpnService.ACTION_START_VPN)
                             else -> requestVpnPermissionAndConnect()
@@ -167,6 +170,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestVpnPermissionAndConnect() {
+        if (AppState.state.value.stopping) return
         if (AppState.state.value.torRunning) {
             sendAction(TorVpnService.ACTION_START_VPN)
             return
@@ -281,7 +285,7 @@ private fun MainScreen(
 
             Header(
                 statusColor = scAnimated,
-                statusLabel = statusLabel(connecting, connected, torRunning),
+                statusLabel = statusLabel(state),
                 onOpenDrawer = openDrawer,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
@@ -301,6 +305,7 @@ private fun MainScreen(
                 torRunning = torRunning,
                 connected = connected,
                 reconnecting = state.reconnecting,
+                stopping = state.stopping,
                 transport = state.transport,
                 peak = peakPct(state.connecting, state.torRunning, state.transports),
                 sc = scAnimated,
@@ -312,9 +317,10 @@ private fun MainScreen(
                 modifier = Modifier.align(Alignment.Center),
                 ringColor = scAnimated,
                 glowColor = if (connecting || connected) scAnimated else null,
-                glyphColor = glyphColor(connecting, connected),
+                glyphColor = glyphColor(connecting, connected, state.stopping),
                 progress = ringProgressOf(state),
                 connecting = connecting,
+                enabled = !state.stopping,
                 onClick = onPrimary
             )
 
@@ -715,6 +721,7 @@ private fun ChevronIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.T
 // ---- state helpers ----------------------------------------------------------
 
 private fun stateColor(state: AppState.VpnState): Color = when {
+    state.stopping -> DeltaTor.Amber
     state.connecting -> DeltaTor.Amber
     state.reconnecting -> DeltaTor.AmberLight
     state.connected -> DeltaTor.Green
@@ -722,14 +729,16 @@ private fun stateColor(state: AppState.VpnState): Color = when {
     else -> DeltaTor.Muted
 }
 
-private fun statusLabel(connecting: Boolean, connected: Boolean, torRunning: Boolean): String = when {
-    connecting -> "CONNECTING"
-    connected -> "CONNECTED"
-    torRunning -> "READY"
+private fun statusLabel(state: AppState.VpnState): String = when {
+    state.stopping -> "STOPPING"
+    state.connecting -> "CONNECTING"
+    state.connected -> "CONNECTED"
+    state.torRunning -> "READY"
     else -> "OFFLINE"
 }
 
-private fun glyphColor(connecting: Boolean, connected: Boolean): Color = when {
+private fun glyphColor(connecting: Boolean, connected: Boolean, stopping: Boolean): Color = when {
+    stopping -> DeltaTor.Amber
     connecting -> DeltaTor.Amber
     connected -> DeltaTor.Green
     else -> DeltaTor.Text
@@ -737,6 +746,7 @@ private fun glyphColor(connecting: Boolean, connected: Boolean): Color = when {
 
 private fun labelText(state: AppState.VpnState): String = when {
     state.error != null -> state.error
+    state.stopping -> "STOPPING"
     state.connecting -> "CANCEL"
     state.connected -> "DISCONNECT"
     state.torRunning -> "START VPN"
@@ -748,9 +758,11 @@ private fun wordFor(
     torRunning: Boolean,
     connected: Boolean,
     reconnecting: Boolean,
+    stopping: Boolean,
     hasError: Boolean
 ): String = when {
     hasError -> "ERROR"
+    stopping -> "STOPPING"
     connecting -> "CONNECTING"
     reconnecting -> "LINK LOST"
     connected -> "CONNECTED"
@@ -763,11 +775,13 @@ private fun sublineFor(
     torRunning: Boolean,
     connected: Boolean,
     reconnecting: Boolean,
+    stopping: Boolean,
     transport: String,
     peak: Int,
     hasError: Boolean
 ): String = when {
     hasError -> "BOOTSTRAP FAILED"
+    stopping -> "KILLING EVERY TOR CORE"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
     reconnecting -> "RESTORING THE TUNNEL"
     connected -> "${transport.uppercase()} \u00b7 GATEWAY ACTIVE"
@@ -948,16 +962,21 @@ private fun StateBlock(
     torRunning: Boolean,
     connected: Boolean,
     reconnecting: Boolean,
+    stopping: Boolean,
     transport: String,
     peak: Int,
     sc: Color,
     hasError: Boolean,
     modifier: Modifier = Modifier
 ) {
-    val word = wordFor(connecting, torRunning, connected, reconnecting, hasError)
-    val sub = sublineFor(connecting, torRunning, connected, reconnecting, transport, peak, hasError)
+    val word = wordFor(connecting, torRunning, connected, reconnecting, stopping, hasError)
+    val sub = sublineFor(connecting, torRunning, connected, reconnecting, stopping, transport, peak, hasError)
     val subColor by animateColorAsState(
-        if (reconnecting) DeltaTor.AmberLight else if (connected) DeltaTor.GreenLight else DeltaTor.Muted,
+        when {
+            stopping || reconnecting -> DeltaTor.AmberLight
+            connected -> DeltaTor.GreenLight
+            else -> DeltaTor.Muted
+        },
         tween(450),
         label = "sub"
     )
@@ -1005,6 +1024,7 @@ private fun RingButton(
     glyphColor: Color,
     progress: Float?,
     connecting: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     val rotation by rememberInfiniteTransition(label = "ringSpin")
@@ -1032,6 +1052,7 @@ private fun RingButton(
             .size(152.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clickable(
+                enabled = enabled,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
             ) { onClick() },
@@ -1162,6 +1183,15 @@ private fun BottomPanel(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         when {
+            // Nothing may be started while the cores are dying, so the row of
+            // actions is replaced by the phase itself.
+            state.stopping -> GradientPill(
+                modifier = Modifier.fillMaxWidth(),
+                label = "STOPPING \u00b7 KILLING EVERY TOR CORE",
+                filled = false,
+                enabled = false,
+                onClick = {}
+            )
             state.connected -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientPill(
                     modifier = Modifier.weight(1f),
@@ -1195,7 +1225,6 @@ private fun BottomPanel(
         if (state.connected || state.torRunning) {
             Spacer(Modifier.height(8.dp))
         }
-
         // Live speed on the home screen itself, not only in the notification.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             StatCard(
@@ -1262,6 +1291,7 @@ private fun GradientPill(
     modifier: Modifier = Modifier,
     label: String,
     filled: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(20.dp)
@@ -1277,7 +1307,7 @@ private fun GradientPill(
             .clip(shape)
             .background(bg, shape)
             .border(1.dp, borderC, shape)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Text(

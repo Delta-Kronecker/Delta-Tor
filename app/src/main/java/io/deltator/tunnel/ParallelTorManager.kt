@@ -476,12 +476,14 @@ object ParallelTorManager {
     }
 
     fun stopAll() {
-        val list = synchronized(runnersLock) {
-            val copy = runners.values.toList()
-            runners = mutableMapOf()
-            copy
-        }
-        list.forEach { it.stop() }
+        detachRunners().forEach { it.stop() }
+    }
+
+    /** Take the runner list out of the map so a stop cannot race a new start. */
+    private fun detachRunners(): List<TorRunner> = synchronized(runnersLock) {
+        val copy = runners.values.toList()
+        runners = mutableMapOf()
+        copy
     }
 
     /**
@@ -515,13 +517,29 @@ object ParallelTorManager {
 
     /**
      * Stop everything and wait for every runner port to be released. Used on
-     * disconnect so a following connect never races the previous teardown.
+     * disconnect and on a user stop so a following connect never races the
+     * previous teardown.
+     *
+     * The return value is not just "we sent the signal": every runner reports
+     * whether its processes were seen to exit, and a port only frees once the
+     * kernel has reaped the listener, so a true here means the cores are really
+     * down and the ports are really back.
      */
     fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
         // basePort itself is the app's own TUN bridge; runners take +1 .. +MAX_PORT_OFFSET.
         val ports = (basePort..basePort + MAX_PORT_OFFSET).toList()
-        stopAll()
-        return ports.all { awaitPortFree(host, it) }
+        val list = detachRunners()
+        list.forEach { it.stop() }
+        val survivors = list.filter { !it.confirmedStopped }
+        survivors.forEach { Log.e(TAG, "runner ${it.name} still has a live process after SIGKILL") }
+        Log.i(
+            TAG,
+            "stopped ${list.size} runner(s), ${list.size - survivors.size} confirmed dead, " +
+                "${survivors.size} unconfirmed"
+        )
+        val free = ports.all { awaitPortFree(host, it) }
+        Log.i(TAG, if (free) "every port free" else "some ports are still held")
+        return free
     }
 
     /**

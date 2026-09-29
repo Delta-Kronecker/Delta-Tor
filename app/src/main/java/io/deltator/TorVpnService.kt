@@ -10,6 +10,7 @@ import android.net.Network
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeMemory
@@ -69,6 +70,13 @@ class TorVpnService : VpnService() {
 
         /** Upper bound on one liveness probe; a dead Tor would otherwise hang it. */
         private const val PROBE_TIMEOUT_MS = 6_000
+
+        /**
+         * How long the UI stays in STOPPING after the cores are gone. Long enough
+         * that the phase is actually seen instead of flashing past, and it also
+         * covers the teardown itself when that is the slower of the two.
+         */
+        private const val STOPPING_MIN_MS = 3_000L
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -111,6 +119,10 @@ class TorVpnService : VpnService() {
     }
 
     private fun connect() {
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring connect: a stop is still tearing the cores down")
+            return
+        }
         if (AppState.vpnStarted) {
             Log.i(TAG, "Already running")
             return
@@ -267,6 +279,10 @@ class TorVpnService : VpnService() {
 
     /** Re-establish the VPN on top of an already-running Tor engine. */
     private fun startVpn() {
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring start: a stop is still tearing the cores down")
+            return
+        }
         if (AppState.state.value.connected) {
             Log.i(TAG, "VPN already active")
             return
@@ -288,24 +304,44 @@ class TorVpnService : VpnService() {
         }
     }
 
-    /** Tear down only the VPN (TUN + tunnel); the Tor engine and bridge keep running. */
+    /** Tear down the VPN (TUN + tunnel) and every Tor core, with a real stop phase. */
     private fun stopVpn() {
-        if (!AppState.state.value.connected) {
-            Log.i(TAG, "No VPN to stop")
+        val s = AppState.state.value
+        if (s.stopping) {
+            Log.i(TAG, "A stop is already running")
             return
         }
-        Log.i(TAG, "Stopping VPN; keeping Tor alive")
-        statsJob?.cancel()
-        statsJob = null
-        try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
-        try { vpnInterface?.close() } catch (_: Exception) {}
-        vpnInterface = null
-        AppState.update { it.copy(connecting = false, connected = false, error = null) }
-        startForeground(
-            NOTIFICATION_ID,
-            buildNotification("Tor ready \u00b7 VPN stopped \u00b7 SOCKS 127.0.0.1:${Config.proxyPort}", progress = false)
-        )
-        Log.i(TAG, "VPN stopped, Tor still running")
+        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning) {
+            Log.i(TAG, "Nothing to stop")
+            return
+        }
+        val startedAt = SystemClock.elapsedRealtime()
+        Log.i(TAG, "Stopping: TUN, tunnel and every Tor core")
+        AppState.update {
+            it.copy(
+                stopping = true,
+                connecting = false,
+                connected = false,
+                reconnecting = false,
+                error = null
+            )
+        }
+        updateNotification("Stopping \u00b7 killing every Tor core", progress = true)
+        serviceScope.launch {
+            // Blocks until every Tor/lyrebird process has exited and every port
+            // is free, so the cores are provably down before the flag clears.
+            teardown()
+            val left = STOPPING_MIN_MS - (SystemClock.elapsedRealtime() - startedAt)
+            if (left > 0) {
+                Log.i(TAG, "cores are gone, holding STOPPING for another ${left}ms")
+                delay(left)
+            }
+            Log.endSession("stopped by user \u00b7 cores down")
+            Log.i(TAG, "stopped: no Tor core is left running")
+            AppState.update { it.copy(stopping = false, torRunning = false) }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
@@ -658,7 +694,7 @@ class TorVpnService : VpnService() {
     private fun fail(message: String) {
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
-        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, error = message) }
+        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -669,7 +705,7 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Disconnecting...")
         Log.endSession("disconnected by user")
         serviceScope.launch {
-            AppState.update { it.copy(connecting = false, connected = false) }
+            AppState.update { it.copy(connecting = false, connected = false, stopping = false) }
             teardown()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()

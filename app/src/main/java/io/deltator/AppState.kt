@@ -16,6 +16,12 @@ object AppState {
         val connected: Boolean = false,
         /** Up but carrying nothing: the link or the circuits are being restored. */
         val reconnecting: Boolean = false,
+        /**
+         * A stop is in progress: the TUN is down and every Tor/lyrebird process
+         * is being killed. Nothing may be started while this is set, because a
+         * start would race the teardown for the ports.
+         */
+        val stopping: Boolean = false,
         val transports: Map<String, Int> = emptyMap(),
         val transport: String = "",
         val error: String? = null,
@@ -67,7 +73,10 @@ object AppState {
 
     fun markStopped() {
         vpnStarted = false
-        _state.value = VpnState()
+        // The stop itself is still running when this is called, so the flag has
+        // to survive the reset: it is what keeps the UI locked until the cores
+        // are confirmed gone.
+        _state.update { VpnState(stopping = it.stopping) }
     }
 
     fun update(block: (VpnState) -> VpnState) {
