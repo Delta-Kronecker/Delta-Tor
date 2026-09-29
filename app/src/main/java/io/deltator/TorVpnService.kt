@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeMemory
 import io.deltator.tunnel.ExitLocator
+import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.TorRunner
@@ -359,27 +360,48 @@ class TorVpnService : VpnService() {
 
     private fun startExitLocator(proxyHost: String, proxyPort: Int) {
         serviceScope.launch {
+            val selected = ExitNodes.currentCodes()
+                .map { it.trim().uppercase() }
+                .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+                .distinct()
             try {
-                val info = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort)
-                if (info == null) {
-                    Log.w(TAG, "Exit location lookup failed")
-                    return@launch
+                if (selected.isNotEmpty()) {
+                    // The very first circuit of the session is the fast, unrestricted
+                    // one; the post-bootstrap SETCONF + NEWNYM needs a moment to steer
+                    // the next circuits into the selected countries before the reported
+                    // location can match the choice.
+                    Log.i("ExitNode", "waiting for live exit switch before locating (selected: ${selected.joinToString(",")})")
+                    delay(5_000)
                 }
-                Log.i(
-                    TAG,
-                    "Exit located: ${info.ip} \u00b7 ${info.label()}" +
-                        (if (info.asn.isNotBlank()) " \u00b7 ${info.asn}" else "") +
-                        " (via ${if (info.fromNetwork) "ip2location" else "offline geoip"})"
-                )
-                AppState.update {
-                    it.copy(
-                        exitIp = info.ip,
-                        exitCode = info.countryCode,
-                        exitName = info.countryName.ifBlank { info.city }
-                    )
+                val tries = if (selected.isEmpty()) 1 else 6
+                for (attempt in 1..tries) {
+                    val info = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort, timeoutMs = 8_000)
+                    if (info == null) {
+                        Log.w("ExitNode", "location probe attempt $attempt/$tries failed (no traffic yet?)")
+                    } else {
+                        AppState.update {
+                            it.copy(
+                                exitIp = info.ip,
+                                exitCode = info.countryCode,
+                                exitName = info.countryName.ifBlank { info.city }
+                            )
+                        }
+                        val match = info.countryCode.uppercase() in selected
+                        Log.i(
+                            "ExitNode",
+                            "located ${info.ip} \u00b7 ${info.label()}" +
+                                (if (selected.isEmpty()) "" else " \u00b7 ${if (match) "MATCHES ${selected.joinToString(",")}" else "NOT yet ${selected.joinToString(",")}"}") +
+                                (if (info.asn.isNotBlank()) " \u00b7 ${info.asn}" else "")
+                        )
+                        if (selected.isEmpty() || match) return@launch
+                    }
+                    if (attempt < tries) delay(8_000)
+                }
+                if (selected.isNotEmpty()) {
+                    Log.w("ExitNode", "did not observe a ${selected.joinToString(",")} exit after $tries tries; connection still up")
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Exit locator failed: ${e.message}")
+                Log.w("ExitNode", "exit locator failed: ${e.message}")
             }
         }
     }
