@@ -50,6 +50,13 @@ class TorRunner(
     @Volatile var failed: String? = null
     @Volatile var started = false
 
+    /**
+     * True once [stop] has run and every process it owned was seen to exit, so
+     * a caller can report a real "the core is gone" instead of "we asked it to
+     * go". False before the first stop, and false if a process outlived SIGKILL.
+     */
+    @Volatile var confirmedStopped = false
+
     fun isRunning(): Boolean {
         val lyrebirdOk = lyrebirdProcess == null || lyrebirdProcess?.isAlive == true
         return torProcess?.isAlive == true && lyrebirdOk
@@ -622,27 +629,32 @@ class TorRunner(
         torProcess = null
         lyrebirdProcess = null
 
-        terminate(tor, "Tor")
-        terminate(bird, "lyrebird")
+        val torDead = terminate(tor, "Tor")
+        val birdDead = terminate(bird, "lyrebird")
+        confirmedStopped = (tor == null || torDead) && (bird == null || birdDead)
 
         lyrebirdCmethods.clear()
         ready = false
     }
 
-    private fun terminate(p: Process?, what: String) {
-        if (p == null) return
+    /** Returns true only when the process is confirmed gone, SIGKILL included. */
+    private fun terminate(p: Process?, what: String): Boolean {
+        if (p == null) return true
         try {
             p.destroy()
             if (!p.waitFor(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                 Log.w(tag, "$what ignored SIGTERM, forcing kill")
                 p.destroyForcibly()
                 if (!p.waitFor(TERMINATE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-                    Log.e(tag, "$what ($what) still alive after SIGKILL: ${describe(p)}")
+                    Log.e(tag, "$what still alive after SIGKILL: ${describe(p)}")
+                    return false
                 }
             }
+            return true
         } catch (e: Exception) {
             Log.e(tag, "Error stopping $what", e)
             try { p.destroyForcibly() } catch (_: Exception) {}
+            return !p.isAlive
         }
     }
 
