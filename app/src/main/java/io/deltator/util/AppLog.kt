@@ -44,7 +44,7 @@ data class LogSession(
  * — no other code changes needed.
  */
 object AppLog {
-    private const val MAX_LINES = 1500
+    private const val MAX_LINES = 4500
     private val nextId = AtomicLong(0)
     private val buffer = ArrayDeque<LogEntry>()
 
