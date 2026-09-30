@@ -73,10 +73,11 @@ object AppState {
 
     fun markStopped() {
         vpnStarted = false
-        // The stop itself is still running when this is called, so the flag has
-        // to survive the reset: it is what keeps the UI locked until the cores
-        // are confirmed gone.
-        _state.update { VpnState(stopping = it.stopping) }
+        // Teardown resets the whole state, and two things have to survive it: the
+        // stop flag, which is what keeps the UI locked until the cores are
+        // confirmed gone, and the error, which is the only explanation there is
+        // for a connection that failed on its own.
+        _state.update { VpnState(stopping = it.stopping, error = it.error) }
     }
 
     fun update(block: (VpnState) -> VpnState) {

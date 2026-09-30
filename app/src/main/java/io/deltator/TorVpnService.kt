@@ -84,6 +84,7 @@ class TorVpnService : VpnService() {
     private var activeRunner: TorRunner? = null
     private var statsJob: Job? = null
     private var linkWatchJob: Job? = null
+    private var exitLocatorJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -521,6 +522,7 @@ class TorVpnService : VpnService() {
             val winner = try {
                 ParallelTorManager.restartTransport(
                     context = applicationContext,
+                    basePort = Config.proxyPort,
                     sessionId = currentSession,
                     name = previous.name
                 ) { snapshot ->
@@ -644,7 +646,11 @@ class TorVpnService : VpnService() {
     }
 
     private fun startExitLocator(proxyHost: String, proxyPort: Int) {
-        serviceScope.launch {
+        // Every recovery starts the locator again, so the previous run is replaced
+        // rather than left to finish: otherwise N recoveries mean N loops of up to
+        // six 8s probes competing for the circuit that was just rebuilt.
+        exitLocatorJob?.cancel()
+        exitLocatorJob = serviceScope.launch {
             val selected = ExitNodes.currentCodes()
                 .map { it.trim().uppercase() }
                 .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
@@ -705,7 +711,7 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Disconnecting...")
         Log.endSession("disconnected by user")
         serviceScope.launch {
-            AppState.update { it.copy(connecting = false, connected = false, stopping = false) }
+            AppState.update { it.copy(connecting = false, connected = false, stopping = false, error = null) }
             teardown()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -717,6 +723,8 @@ class TorVpnService : VpnService() {
         statsJob = null
         linkWatchJob?.cancel()
         linkWatchJob = null
+        exitLocatorJob?.cancel()
+        exitLocatorJob = null
         unregisterNetworkCallback()
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
         try { vpnInterface?.close() } catch (_: Exception) {}

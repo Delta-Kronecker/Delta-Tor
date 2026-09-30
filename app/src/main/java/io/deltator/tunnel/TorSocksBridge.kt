@@ -144,11 +144,14 @@ object TorSocksBridge {
      * goes down while a replacement Tor boots on the same bridge.
      */
     fun repoint(torSocksPort: Int) {
-        if (this.torSocksPort == torSocksPort) return
-        Log.i(TAG, "Repointing bridge: $torHost:${this.torSocksPort} -> $torHost:$torSocksPort")
-        this.torSocksPort = torSocksPort
-        // Cached answers were resolved over the old circuit; drop them so the
-        // first request after the switch cannot reuse a stale name mapping.
+        if (this.torSocksPort != torSocksPort) {
+            Log.i(TAG, "Repointing bridge: $torHost:${this.torSocksPort} -> $torHost:$torSocksPort")
+            this.torSocksPort = torSocksPort
+        }
+        // Cached answers were resolved over the circuit that just went away, so
+        // drop them: a recovery reuses the same runner port, and returning early
+        // on an unchanged port used to keep up to five minutes of name mappings
+        // that were resolved by the dead Tor.
         dnsCache.clear()
     }
 
