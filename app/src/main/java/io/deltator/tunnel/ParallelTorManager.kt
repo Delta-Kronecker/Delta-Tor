@@ -110,6 +110,25 @@ object ParallelTorManager {
     /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
     private const val MAX_PORT_OFFSET = 11
 
+    /**
+     * The fixed runner<->port assignment. It is a function of [basePort] only, so a
+     * runner keeps the same port across a recovery, and a runner that was not part
+     * of the last race still has a known, reserved port to be restarted on.
+     */
+    private fun runnerPorts(basePort: Int): Map<String, Int> = mapOf(
+        TRANSPORT_VANILLA to basePort + 1,
+        TRANSPORT_OBFS4 to basePort + 2,
+        TRANSPORT_WEBTUNNEL to basePort + 3,
+        TRANSPORT_MEMORY to basePort + 4,
+        TRANSPORT_SNOWFLAKE to basePort + 5,
+        TRANSPORT_CUSTOM to basePort + 6,
+        TRANSPORT_DIRECT to basePort + 7,
+        memoryNameFor(TRANSPORT_VANILLA) to basePort + 8,
+        memoryNameFor(TRANSPORT_OBFS4) to basePort + 9,
+        memoryNameFor(TRANSPORT_WEBTUNNEL) to basePort + 10,
+        memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11
+    )
+
 
     private val runnersLock = Any()
     @Volatile private var runners = mutableMapOf<String, TorRunner>()
@@ -224,19 +243,7 @@ object ParallelTorManager {
         }
 
         // basePort belongs to the app's TUN bridge, so the runners start above it.
-        val ports = mapOf(
-            TRANSPORT_VANILLA to basePort + 1,
-            TRANSPORT_OBFS4 to basePort + 2,
-            TRANSPORT_WEBTUNNEL to basePort + 3,
-            TRANSPORT_MEMORY to basePort + 4,
-            TRANSPORT_SNOWFLAKE to basePort + 5,
-            TRANSPORT_CUSTOM to basePort + 6,
-            TRANSPORT_DIRECT to basePort + 7,
-            memoryNameFor(TRANSPORT_VANILLA) to basePort + 8,
-            memoryNameFor(TRANSPORT_OBFS4) to basePort + 9,
-            memoryNameFor(TRANSPORT_WEBTUNNEL) to basePort + 10,
-            memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11
-        )
+        val allPorts = runnerPorts(basePort)
         val plans = buildList {
             when (mode) {
                 TRANSPORT_AUTO -> autoNames.forEach { name -> add(name to (lines[name] ?: "")) }
@@ -262,12 +269,12 @@ object ParallelTorManager {
 
         val planNames = plans.map { it.first }.toSet()
         lastPlans = plans.toMap()
-        lastPorts = ports.filterKeys { it in planNames }
+        lastPorts = allPorts.filterKeys { it in planNames }
 
         synchronized(runnersLock) { runners = mutableMapOf() }
 
         plans.forEach { (name, bridgeLines) ->
-            val runner = TorRunner(context, name, ports.getValue(name), bridgeLines)
+            val runner = TorRunner(context, name, allPorts.getValue(name), bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
             Log.transport(sessionId, name, 'I', TAG, "starting ($bridgeCount bridges)")
@@ -386,6 +393,7 @@ object ParallelTorManager {
      */
     suspend fun restartTransport(
         context: Context,
+        basePort: Int,
         sessionId: Int,
         name: String,
         onProgress: (Map<String, TorRunner>) -> Unit = {}
@@ -393,6 +401,9 @@ object ParallelTorManager {
         val cached = lastPlans[name]
         if (cached == null) {
             throw RuntimeException("No cached bridges for $name")
+        }
+        if (lastPorts[name] == null) {
+            throw RuntimeException("No cached port for $name")
         }
 
         // The twin is looked up fresh: the pool may have grown since the race,
@@ -406,17 +417,24 @@ object ParallelTorManager {
         } else {
             BridgeMemory.bridgeLinesFor(context, mapOf(base to cached), base) ?: lastPlans[twin]
         }
+
+        // A twin that has no port of its own cannot be started. Its port is
+        // reserved by [runnerPorts], not by the last race: on the first connect
+        // the memory pool is empty, so no twin races and no port is recorded for
+        // it, while the race itself fills the pool. Recovery looks the twin up
+        // again and used to find no port for it, throw, and escalate the whole
+        // connection into a reconnect from zero. It now takes the reserved port.
+        val fixedPorts = runnerPorts(basePort)
         val plans = buildList {
             add(name to cached)
-            if (twinLines != null) add(twin to twinLines)
+            if (twinLines != null && fixedPorts.containsKey(twin)) add(twin to twinLines)
         }
-        val ports = plans.associate { (planName, _) -> planName to (lastPorts[planName] ?: 0) }
-        if (ports.values.any { it <= 0 }) {
-            throw RuntimeException("No cached port for $name")
+        val ports = plans.associate { (planName, _) ->
+            planName to (lastPorts[planName] ?: fixedPorts.getValue(planName))
         }
 
         Log.i(TAG, "Recovery: restarting $name on port ${ports.getValue(name)}" +
-            if (twinLines != null) " with $twin" else "")
+            if (plans.size > 1) " with $twin" else "")
 
         // The dying processes still hold their listeners, and a replacement that
         // binds too early just fails to start, so wait the ports out.
