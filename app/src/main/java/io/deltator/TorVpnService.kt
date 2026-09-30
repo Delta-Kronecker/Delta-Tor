@@ -28,8 +28,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -99,6 +97,27 @@ class TorVpnService : VpnService() {
         private const val PROBE_TIMEOUT_MS = 6_000
 
         /**
+         * How often the traffic counters are read and republished while bytes are
+         * actually moving.
+         */
+        private const val STATS_INTERVAL_BUSY_MS = 1_000L
+
+        /**
+         * The same, for a tunnel nobody is using. A connected VPN spends most of
+         * its life idle, and idle is exactly when there is nothing new to draw:
+         * the counters stand still and republishing them once a second only woke
+         * the device up to redraw numbers that had not changed.
+         */
+        private const val STATS_INTERVAL_IDLE_MS = 5_000L
+
+        /**
+         * Backstop for the CPU lock, not the way it normally ends. The lock is
+         * released as soon as the tunnel is up, and this only exists so a process
+         * that dies mid-bootstrap cannot hold the CPU awake indefinitely.
+         */
+        private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
+
+        /**
          * How long the UI stays in STOPPING after the cores are gone. Long enough
          * that the phase is actually seen instead of flashing past, and it also
          * covers the teardown itself when that is the slower of the two.
@@ -114,6 +133,60 @@ class TorVpnService : VpnService() {
     private var exitLocatorJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
+
+    /** Outstanding [holdCpu] calls, so nested windows release only when both end. */
+    private var cpuHolds = 0
+
+    /**
+     * Keep the CPU awake, or leave it awake if it already is.
+     *
+     * A PARTIAL_WAKE_LOCK stops the device from suspending at all, which is what
+     * bootstrap and a transport rebuild need and what a healthy tunnel does not.
+     * It used to be taken once at connect and released only at teardown, so a VPN
+     * that connected and then sat idle held the CPU out of suspend for ten
+     * minutes, on the device's least power-friendly setting, for no work at all.
+     * Now the two windows that genuinely have work in flight are the only ones
+     * that hold it.
+     *
+     * Counted rather than flagged, because a rebuild that gives up hands over to a
+     * full reconnect: those two windows overlap for a moment and the CPU must not
+     * be released by whichever of them finishes first.
+     */
+    @Synchronized
+    private fun holdCpu() {
+        if (cpuHolds == 0) {
+            if (wakeLock == null) {
+                wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
+                    .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeltaTor:vpn")
+                    .apply { setReferenceCounted(false) }
+            }
+            try {
+                wakeLock?.acquire(WAKE_LOCK_TIMEOUT_MS)
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not take the CPU lock: ${e.message}")
+            }
+        }
+        cpuHolds++
+    }
+
+    /** Give the CPU back once every window that asked for it has finished. */
+    @Synchronized
+    private fun releaseCpu() {
+        if (cpuHolds == 0) return
+        cpuHolds--
+        if (cpuHolds == 0) dropCpu()
+    }
+
+    /** Release the lock whatever asked for it. The shutdown path. */
+    @Synchronized
+    private fun dropCpu() {
+        cpuHolds = 0
+        try {
+            wakeLock?.takeIf { it.isHeld }?.release()
+        } catch (_: Exception) {
+        }
+        wakeLock = null
+    }
 
     /**
      * Liveness of the link, kept by a [ConnectivityManager.NetworkCallback] so a
@@ -135,8 +208,11 @@ class TorVpnService : VpnService() {
     /** Id of the connect session whose lines this service emits. */
     @Volatile private var currentSession: Int = 0
 
-    private val _notificationText = MutableStateFlow("")
-    val notificationText = _notificationText.asStateFlow()
+    /**
+     * What the connected notification last rendered, so an idle tunnel can leave
+     * the notification alone instead of reposting the same two numbers.
+     */
+    private var lastRenderedText = ""
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -170,12 +246,7 @@ class TorVpnService : VpnService() {
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
-        // Keep CPU alive during bootstrap on some OEM ROMs
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DeltaTor:vpn").apply {
-            setReferenceCounted(false)
-            acquire(10 * 60 * 1000L)
-        }
+        holdCpu()
 
         serviceScope.launch {
             try {
@@ -183,6 +254,8 @@ class TorVpnService : VpnService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Connect failed", e)
                 fail("Connect failed: ${e.message}")
+            } finally {
+                releaseCpu()
             }
         }
     }
@@ -307,6 +380,7 @@ class TorVpnService : VpnService() {
             )
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
+        lastRenderedText = ""
         startStatsPolling()
         startLinkWatch()
         startExitLocator(proxyHost, proxyPort)
@@ -403,56 +477,100 @@ class TorVpnService : VpnService() {
         }
     }
 
+    /**
+     * Publish the traffic counters, and only when there is something new to say.
+     *
+     * The counters are read every second while bytes are moving, because that is
+     * when they are the point. Once the tunnel goes quiet they are read every few
+     * seconds and the notification is only redrawn when its text actually differs
+     * from what is already on screen.
+     *
+     * That check is the whole point. The notification used to be rebuilt and
+     * reposted unconditionally, once a second, for as long as the VPN was on: a
+     * fresh builder, three fresh PendingIntents and a Binder call to SystemUI,
+     * sixty times a minute, to redraw two numbers that had not moved. Reposting a
+     * notification that says the same thing is not free even when nothing
+     * changes, and a VPN that nobody is using is the state it spends most of its
+     * life in.
+     */
     private fun startStatsPolling() {
         statsJob?.cancel()
+        lastRenderedText = ""
         statsJob = serviceScope.launch {
             var lastTx = 0L
             var lastRx = 0L
             var lastTime = 0L
             while (isActive) {
                 val stats = HevSocks5Tunnel.getStats()
-                if (stats != null) {
-                    val now = System.currentTimeMillis()
-                    val dtSeconds = ((now - lastTime).coerceAtLeast(1000) / 1000f).coerceAtLeast(0.001f)
-                    val upSpeed = if (lastTime > 0) (stats.txBytes - lastTx).toFloat() / dtSeconds else 0f
-                    val downSpeed = if (lastTime > 0) (stats.rxBytes - lastRx).toFloat() / dtSeconds else 0f
-                    lastTx = stats.txBytes
-                    lastRx = stats.rxBytes
-                    lastTime = now
-
-                    AppState.update {
-                        it.copy(
-                            txBytes = stats.txBytes,
-                            rxBytes = stats.rxBytes,
-                            txSpeed = upSpeed,
-                            rxSpeed = downSpeed
-                        )
-                    }
-                    val notif = NotificationCompat.Builder(this@TorVpnService, CHANNEL_VPN_STATUS)
-                        .setSmallIcon(R.drawable.ic_tor)
-                        .setContentTitle(
-                            if (AppState.state.value.reconnecting) "DeltaTor \u2014 Reconnecting"
-                            else "DeltaTor \u2014 Connected"
-                        )
-                        .setContentText(
-                            if (AppState.state.value.reconnecting) "Restoring the tunnel\u2026"
-                            else "\u2191 ${formatBytes(upSpeed)}/s  \u2193 ${formatBytes(downSpeed)}/s\n" +
-                                "Total: \u2191 ${formatBytes(stats.txBytes)}  \u2193 ${formatBytes(stats.rxBytes)}"
-                        )
-                        .setStyle(NotificationCompat.BigTextStyle())
-                        .setContentIntent(mainPendingIntent())
-                        .setOngoing(true)
-                        .setOnlyAlertOnce(true)
-                        .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                        .setPriority(NotificationCompat.PRIORITY_LOW)
-                        .addAction(0, "Stop VPN", stopVpnPendingIntent())
-                        .addAction(0, "Disconnect", disconnectPendingIntent())
-                        .build()
-                    getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notif)
+                if (stats == null) {
+                    delay(STATS_INTERVAL_IDLE_MS)
+                    continue
                 }
-                delay(1000)
+
+                val now = System.currentTimeMillis()
+                val dtSeconds = ((now - lastTime).coerceAtLeast(1000) / 1000f).coerceAtLeast(0.001f)
+                val upSpeed = if (lastTime > 0) (stats.txBytes - lastTx).toFloat() / dtSeconds else 0f
+                val downSpeed = if (lastTime > 0) (stats.rxBytes - lastRx).toFloat() / dtSeconds else 0f
+                val moving = stats.txBytes != lastTx || stats.rxBytes != lastRx
+                lastTx = stats.txBytes
+                lastRx = stats.rxBytes
+                lastTime = now
+
+                AppState.update {
+                    it.copy(
+                        txBytes = stats.txBytes,
+                        rxBytes = stats.rxBytes,
+                        txSpeed = upSpeed,
+                        rxSpeed = downSpeed
+                    )
+                }
+
+                // Reconnecting is what the user is watching, so it keeps the fast
+                // cadence; a still tunnel has nothing to hurry.
+                val busy = moving || AppState.state.value.reconnecting
+                val text = trafficText(upSpeed, downSpeed, stats.txBytes, stats.rxBytes)
+                if (busy || text != lastRenderedText) {
+                    notifyTraffic(text)
+                    lastRenderedText = text
+                }
+                delay(if (busy) STATS_INTERVAL_BUSY_MS else STATS_INTERVAL_IDLE_MS)
             }
         }
+    }
+
+    /** The connected notification's title and body, as one string to compare. */
+    private fun trafficText(
+        upSpeed: Float,
+        downSpeed: Float,
+        txBytes: Long,
+        rxBytes: Long
+    ): String {
+        val reconnecting = AppState.state.value.reconnecting
+        return if (reconnecting) {
+            "DeltaTor \u2014 Reconnecting|Restoring the tunnel\u2026"
+        } else {
+            "DeltaTor \u2014 Connected|\u2191 ${formatBytes(upSpeed)}/s  \u2193 ${formatBytes(downSpeed)}/s\n" +
+                "Total: \u2191 ${formatBytes(txBytes)}  \u2193 ${formatBytes(rxBytes)}"
+        }
+    }
+
+    private fun notifyTraffic(text: String) {
+        val parts = text.split('|')
+        postNotification(
+            NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
+                .setSmallIcon(R.drawable.ic_tor)
+                .setContentTitle(parts[0])
+                .setContentText(parts[1])
+                .setStyle(NotificationCompat.BigTextStyle())
+                .setContentIntent(mainPendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .addAction(0, "Stop VPN", stopVpnPendingIntent)
+                .addAction(0, "Disconnect", disconnectPendingIntent)
+                .build()
+        )
     }
 
     // --- Link loss and recovery ------------------------------------------------
@@ -629,6 +747,7 @@ class TorVpnService : VpnService() {
     private suspend fun recoverTransport() {
         if (!recovering.compareAndSet(false, true)) return
         val startedAt = System.currentTimeMillis()
+        holdCpu()
         try {
             val previous = activeRunner
             if (previous == null) {
@@ -672,6 +791,7 @@ class TorVpnService : VpnService() {
                 NOTIFICATION_ID,
                 buildNotification("Reconnected via ${winner.name} \u00b7 ${seconds}s", progress = false)
             )
+            lastRenderedText = ""
             // The new Tor has its own exit circuits, so the reported country is
             // stale until it is looked up again.
             startExitLocator("127.0.0.1", Config.proxyPort)
@@ -680,6 +800,7 @@ class TorVpnService : VpnService() {
             escalateToFullReconnect(e.message ?: "recovery failed")
         } finally {
             recovering.set(false)
+            releaseCpu()
         }
     }
 
@@ -851,8 +972,7 @@ class TorVpnService : VpnService() {
         // released, so a connect right after a stop cannot hit EADDRINUSE.
         try { ParallelTorManager.stopAllAndWait(Config.proxyPort) } catch (_: Exception) {}
         activeRunner = null
-        try { wakeLock?.release() } catch (_: Exception) {}
-        wakeLock = null
+        dropCpu()
         if (AppState.vpnStarted) {
             AppState.markStopped()
         }
@@ -863,26 +983,43 @@ class TorVpnService : VpnService() {
             .setSmallIcon(R.drawable.ic_tor)
             .setContentTitle("DeltaTor")
             .setContentText(text)
-            .setContentIntent(mainPendingIntent())
+            .setContentIntent(mainPendingIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setProgress(100, progressValue, progress)
-            .addAction(0, "Disconnect", disconnectPendingIntent())
+            .addAction(0, "Disconnect", disconnectPendingIntent)
             .build()
     }
 
-    private fun updateNotification(text: String, progress: Boolean, progressValue: Int) {
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(text, progress, progressValue))
+    /**
+     * Post a notification and forget what the traffic line last rendered, because
+     * whatever this one says is now what is on screen.
+     */
+    private fun postNotification(notification: Notification) {
+        lastRenderedText = ""
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification)
     }
 
-    private fun mainPendingIntent(): PendingIntent {
+    private fun updateNotification(text: String, progress: Boolean, progressValue: Int) {
+        postNotification(buildNotification(text, progress, progressValue))
+    }
+
+    /**
+     * The three intents the notification carries, built once.
+     *
+     * They never vary: same activity, same two actions, same request codes. Every
+     * build was handing a fresh one to the framework anyway, and each of those is
+     * a call across to the system server. With a notification rebuilt once a
+     * second that is three pointless Binder calls a second for the life of the
+     * connection.
+     */
+    private val mainPendingIntent: PendingIntent by lazy {
         val intent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
-        return PendingIntent.getActivity(
+        PendingIntent.getActivity(
             this,
             1,
             intent,
@@ -890,11 +1027,11 @@ class TorVpnService : VpnService() {
         )
     }
 
-    private fun disconnectPendingIntent(): PendingIntent {
+    private val disconnectPendingIntent: PendingIntent by lazy {
         val intent = Intent(this, TorVpnService::class.java).apply {
             action = ACTION_DISCONNECT
         }
-        return PendingIntent.getService(
+        PendingIntent.getService(
             this,
             2,
             intent,
@@ -902,11 +1039,11 @@ class TorVpnService : VpnService() {
         )
     }
 
-    private fun stopVpnPendingIntent(): PendingIntent {
+    private val stopVpnPendingIntent: PendingIntent by lazy {
         val intent = Intent(this, TorVpnService::class.java).apply {
             action = ACTION_STOP_VPN
         }
-        return PendingIntent.getService(
+        PendingIntent.getService(
             this,
             3,
             intent,
