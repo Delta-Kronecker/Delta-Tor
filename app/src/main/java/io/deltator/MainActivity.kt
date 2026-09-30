@@ -108,6 +108,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeStore
 import io.deltator.tunnel.ParallelTorManager
+import io.deltator.tunnel.ExitCapacityIndex
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.ui.DeltaTor
@@ -405,8 +406,10 @@ private fun ControlDrawer(
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
     val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     val countries by ExitNodes.directory.collectAsStateWithLifecycle()
+    val capacity by ExitCapacityIndex.byCountry.collectAsStateWithLifecycle()
 
     var showCountries by remember { mutableStateOf(false) }
+    var showAllCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
     val advancedForm = remember { AdvancedForm() }
     LaunchedEffect(advancedForm.saved) {
@@ -554,16 +557,72 @@ private fun ControlDrawer(
                         )
                     }
                 } else {
-                    items(countries.size, key = { "cc-" + countries[it].code }) { i ->
-                        val c = countries[i]
-                        DrawerRow(last = i == countries.size - 1) {
+                    // `directory` already leads with the countries that have
+                    // exits, ordered by how much exit bandwidth they hold, so
+                    // the split is just where that prefix ends.
+                    val known = capacity.isNotEmpty()
+                    val withExits = remember(countries, capacity) {
+                        if (known) countries.takeWhile { capacity.containsKey(it.code) } else emptyList()
+                    }
+                    val without = remember(countries, capacity) {
+                        if (known) countries.drop(withExits.size) else countries
+                    }
+                    if (known && withExits.isNotEmpty()) {
+                        item(key = "grp-exits") {
+                            DrawerGroupHeader(
+                                "COUNTRIES WITH RUNNING EXITS",
+                                "${withExits.size} of ${countries.size}"
+                            )
+                        }
+                    } else if (!known) {
+                        // Nothing is hidden before the relay data arrives, and
+                        // nothing claims to be dead either: it just is not known
+                        // yet. The list refines itself once the answer lands.
+                        item(key = "grp-unknown") {
+                            DrawerGroupHeader("COUNTRIES", "EXIT DATA NOT LOADED", muted = true)
+                        }
+                    }
+                    itemsIndexed(withExits, key = { _, c -> "cc-" + c.code }) { i, c ->
+                        DrawerRow(last = without.isEmpty() && i == withExits.lastIndex) {
                             CountryRow(
                                 emoji = remember(c.code) { flagEmoji(c.code) },
                                 name = c.name,
                                 code = c.code,
                                 selected = c.code in selectedCodes,
+                                exits = capacity[c.code]?.exits ?: 0,
+                                share = capacity[c.code]?.weight ?: 0f,
                                 onClick = { ExitNodes.toggle(c.code, c.name) }
                             )
+                        }
+                    }
+                    if (known && without.isNotEmpty()) {
+                        item(key = "grp-rest") {
+                            // A country picked before the relay data arrived is in
+                            // this group and nowhere else, so the group opens
+                            // itself rather than hiding the selection.
+                            val holdsSelection = without.any { it.code in selectedCodes }
+                            DrawerGroupHeader(
+                                "NO RUNNING EXITS \u00b7 PICKING ONE DOES NOTHING",
+                                if (showAllCountries) "HIDE" else "SHOW ALL",
+                                muted = true,
+                                onClick = {
+                                    if (holdsSelection) ExitNodes.clear()
+                                    showAllCountries = !showAllCountries
+                                }
+                            )
+                        }
+                        if (showAllCountries || without.any { it.code in selectedCodes }) {
+                            itemsIndexed(without, key = { _, c -> "cc-" + c.code }) { i, c ->
+                                DrawerRow(last = i == without.lastIndex) {
+                                    CountryRow(
+                                        emoji = remember(c.code) { flagEmoji(c.code) },
+                                        name = c.name,
+                                        code = c.code,
+                                        selected = c.code in selectedCodes,
+                                        onClick = { ExitNodes.toggle(c.code, c.name) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1823,11 +1882,55 @@ private fun SettingsCardHeader(
 
 
 @Composable
+private fun DrawerGroupHeader(
+    title: String,
+    trailing: String,
+    muted: Boolean = false,
+    onClick: (() -> Unit)? = null
+) {
+    val color = if (muted) DeltaTor.Muted.copy(alpha = 0.6f) else DeltaTor.Muted
+    val action = onClick
+    val clickable = if (action != null) Modifier.clickable { action() } else Modifier
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(clickable)
+            .padding(start = 26.dp, end = 20.dp, top = 14.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
+            color = color,
+            modifier = Modifier.weight(1f)
+        )
+        if (action != null) {
+            Text(
+                trailing,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    letterSpacing = 1.2.sp,
+                    fontWeight = FontWeight.Bold
+                ),
+                color = DeltaTor.AccentLight
+            )
+        } else {
+            Text(
+                trailing,
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
+                color = color.copy(alpha = 0.7f)
+            )
+        }
+    }
+}
+
+@Composable
 private fun CountryRow(
     emoji: String,
     name: String,
     code: String,
     selected: Boolean,
+    exits: Int = 0,
+    share: Float = 0f,
     onClick: () -> Unit
 ) {
     Row(
@@ -1851,6 +1954,23 @@ private fun CountryRow(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f)
         )
+        if (exits > 0) {
+            // The share is the honest number and the count is the memorable
+            // one, so both are here: a country can have many exits that are all
+            // slow, or few that are quick.
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "${(share * 100).format1()}%",
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+                color = if (selected) DeltaTor.AccentLight else DeltaTor.Muted.copy(alpha = 0.85f)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "$exits",
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 0.4.sp),
+                color = DeltaTor.Muted.copy(alpha = 0.55f)
+            )
+        }
         Spacer(Modifier.width(10.dp))
         Text(
             code,
@@ -1889,6 +2009,12 @@ private fun CheckIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF14
         p.lineTo(size.width * 0.86f, size.height * 0.22f)
         drawPath(p, color, style = Stroke(stroke, cap = StrokeCap.Round, join = StrokeJoin.Round))
     }
+}
+
+/** "9.0", "0.3" \u00b7 one decimal, never "9", so columns line up. */
+private fun Float.format1(): String {
+    val v = (this * 10f).toInt()
+    return "${v / 10}.${v % 10}"
 }
 
 private fun flagEmoji(code: String): String {
