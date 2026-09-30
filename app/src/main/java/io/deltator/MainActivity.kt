@@ -410,6 +410,18 @@ private fun ControlDrawer(
     val countries by ExitNodes.directory.collectAsStateWithLifecycle()
     val capacity by ExitCapacityIndex.byCountry.collectAsStateWithLifecycle()
 
+    val known = capacity.isNotEmpty()
+    // Split here rather than inside the LazyColumn: its builder is
+    // `LazyListScope.() -> Unit`, which is not a @Composable function, so a
+    // `remember` written in there does not compile. Only the item bodies are
+    // composable.
+    val withExits = remember(countries, capacity) {
+        if (known) countries.takeWhile { capacity.containsKey(it.code) } else emptyList()
+    }
+    val without = remember(countries, capacity) {
+        if (known) countries.drop(withExits.size) else countries
+    }
+
     var showCountries by remember { mutableStateOf(false) }
     var showAllCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
@@ -562,13 +574,6 @@ private fun ControlDrawer(
                     // `directory` already leads with the countries that have
                     // exits, ordered by how much exit bandwidth they hold, so
                     // the split is just where that prefix ends.
-                    val known = capacity.isNotEmpty()
-                    val withExits = remember(countries, capacity) {
-                        if (known) countries.takeWhile { capacity.containsKey(it.code) } else emptyList()
-                    }
-                    val without = remember(countries, capacity) {
-                        if (known) countries.drop(withExits.size) else countries
-                    }
                     if (known && withExits.isNotEmpty()) {
                         item(key = "grp-exits") {
                             DrawerGroupHeader(
