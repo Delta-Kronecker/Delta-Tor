@@ -54,6 +54,21 @@ object AppLog {
     /** When true, sensitive config details are redacted from the in-app log buffer. */
     @Volatile var redactSensitive = false
 
+    /**
+     * Whether lines are recorded at all, from [Config.loggingEnabled].
+     *
+     * A bootstrap is a few thousand Tor lines and every one of them costs an id,
+     * a string and a slot in the ring buffer, on a phone that is also running
+     * three Tor cores. The user decides whether to pay that: off means nothing
+     * is kept, and the first line after it is turned back on is the first one
+     * recorded again, so what the switch does is visible immediately.
+     *
+     * This is about recording, not about Tor. Tor's own output still has to be
+     * read, because the bootstrap percentage and the proven bridges are parsed
+     * out of it.
+     */
+    @Volatile var enabled = true
+
     // --- connect sessions -----------------------------------------------------
     private val sessionLock = Any()
     private val sessionIds = AtomicLong(0)
@@ -115,6 +130,7 @@ object AppLog {
         runnerTag.find(tag)?.groupValues?.get(1)?.takeIf { it in TRANSPORTS }
 
     private fun appendFor(level: Char, tag: String, msg: String, transport: String?) {
+        if (!enabled) return
         val id = nextId.getAndIncrement()
         val entry = if (observerCount > 0) {
             val ts = dateFormat.get()!!.format(Date())

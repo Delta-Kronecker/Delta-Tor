@@ -19,6 +19,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -76,6 +77,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -404,6 +406,8 @@ private fun ControlDrawer(
 
     var showCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
+    val countriesMounted = rememberDeferredMount(showCountries)
+    val advancedMounted = rememberDeferredMount(showAdvanced)
 
     val selection = when {
         selectedCodes.isEmpty() -> "Any location \u00b7 default"
@@ -472,7 +476,10 @@ private fun ControlDrawer(
                     onClick = { showCountries = !showCountries }
                 )
             }
-            if (showCountries) {
+            if (showCountries && !countriesMounted) {
+                item(key = "loc-mount") { SectionMounting() }
+            }
+            if (showCountries && countriesMounted) {
                 item(key = "loc-warn") {
                     SettingsCard {
                         Column(
@@ -566,48 +573,15 @@ private fun ControlDrawer(
                     onClick = { showAdvanced = !showAdvanced }
                 )
             }
-            if (showAdvanced) {
+            if (showAdvanced && !advancedMounted) {
+                item(key = "adv-mount") { SectionMounting() }
+            }
+            if (showAdvanced && advancedMounted) {
                 item(key = "adv-body") {
                     AdvancedContent(
                         bridges = bridges,
                         onUpdateBridges = onUpdateBridges,
                         onOpenLog = onOpenLog
-                    )
-                }
-            }
-            item(key = "div-repo") { DividerLine() }
-            item(key = "repo-head") {
-                DrawerSection(
-                    title = "REPOSITORY",
-                    summary = "Source, issues and releases"
-                )
-            }
-            item(key = "repo-card") {
-                SettingsCard {
-                    Text(
-                        "DeltaTor for Android",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        color = DeltaTor.Text
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        "Open source. Issues and releases are public.",
-                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.1.sp),
-                        color = DeltaTor.Muted
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        REPO_URL,
-                        style = TextStyle(
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            lineHeight = 15.sp,
-                            color = DeltaTor.Muted
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -620,6 +594,78 @@ private fun ControlDrawer(
             label = "GITHUB",
             filled = true,
             onClick = { runCatching { uriHandler.openUri(REPO_URL) } }
+        )
+    }
+}
+
+/**
+ * Whether a collapsible section's body may be mounted yet.
+ *
+ * The tap that opens a section has to be answered by the header alone, and it
+ * was not: mounting the body ran in the same frame as the tap, so the header
+ * only moved once the whole body existed. ADVANCED is the worst case, two text
+ * fields and two dropdowns, and the first time a text field is ever composed
+ * Android initialises the whole text input stack, which is why opening it once
+ * was slower than opening it again. Waiting a frame costs the body nothing and
+ * gives the header the frame back, and by the time the body lands the section
+ * is already open and animating.
+ */
+@Composable
+private fun rememberDeferredMount(wanted: Boolean): Boolean {
+    var ready by remember(wanted) { mutableStateOf(false) }
+    LaunchedEffect(wanted) {
+        if (!wanted) return@LaunchedEffect
+        withFrameNanos { }
+        ready = true
+    }
+    return ready
+}
+
+/** Shown for the one frame between opening a section and mounting its body. */
+@Composable
+private fun SectionMounting() {
+    Spacer(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp)
+            .height(64.dp)
+    )
+}
+
+/**
+ * An on/off control drawn out of the same parts as the chips and the checkbox,
+ * so it does not bring a Material switch into a drawer that draws everything
+ * else itself.
+ */
+@Composable
+private fun ToggleSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    val shift by animateDpAsState(
+        targetValue = if (checked) 22.dp else 4.dp,
+        animationSpec = tween(160),
+        label = "knob"
+    )
+    Box(
+        modifier = Modifier
+            .size(width = 46.dp, height = 26.dp)
+            .clip(RoundedCornerShape(50))
+            .background(
+                if (checked) DeltaTor.Accent else DeltaTor.SurfaceAlt,
+                RoundedCornerShape(50)
+            )
+            .border(
+                1.dp,
+                if (checked) DeltaTor.AccentLight.copy(alpha = 0.4f) else DeltaTor.BorderLight,
+                RoundedCornerShape(50)
+            )
+            .clickable { onCheckedChange(!checked) }
+    ) {
+        Box(
+            Modifier
+                .offset(x = shift)
+                .padding(top = 3.dp)
+                .size(18.dp)
+                .clip(RoundedCornerShape(50))
+                .background(if (checked) Color.White else DeltaTor.Muted)
         )
     }
 }
@@ -1857,6 +1903,7 @@ private fun AdvancedContent(
     var transportMode by remember { mutableStateOf(Config.transportMode) }
     var customBridges by remember { mutableStateOf(Config.customBridges) }
     var autoTransports by remember { mutableStateOf(Config.autoTransports) }
+    var loggingOn by remember { mutableStateOf(Config.loggingEnabled) }
 
     val tfColors = OutlinedTextFieldDefaults.colors(
         focusedBorderColor = DeltaTor.AccentLight,
@@ -2168,6 +2215,45 @@ private fun AdvancedContent(
                         color = Color.White
                     )
                 }
+            }
+            DividerLine()
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp, bottom = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Record the log",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.3.sp
+                        ),
+                        color = DeltaTor.Text
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        if (loggingOn) {
+                            "Keeps every Tor line of every connect. Turn it off to stop " +
+                                "recording; the reason for a failure still shows on the screen."
+                        } else {
+                            "Nothing is being recorded. The bootstrap still runs \u2014 it just " +
+                                "is not kept, so a later log has nothing in it."
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                ToggleSwitch(
+                    checked = loggingOn,
+                    onCheckedChange = {
+                        loggingOn = it
+                        Config.loggingEnabled = it
+                        AppLog.enabled = it
+                    }
+                )
             }
         }
         Spacer(Modifier.height(20.dp))
@@ -2552,6 +2638,35 @@ private fun LogScreen(onBack: () -> Unit) {
 
             Spacer(Modifier.height(4.dp))
 
+            // A log that stops early still reads like a complete one, so say so
+            // while recording is off instead of leaving a hole to be explained
+            // later.
+            if (!AppLog.enabled) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier
+                            .size(6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(DeltaTor.Muted)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        if (lines.isEmpty()) {
+                            "Recording is off \u00b7 nothing here yet"
+                        } else {
+                            "Recording is off \u00b7 this log stops here"
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.3.sp),
+                        color = DeltaTor.Muted
+                    )
+                }
+            }
+
             Spacer(Modifier.height(6.dp))
 
             // Transport picker: read one raced connection at a time.
@@ -2607,6 +2722,8 @@ private fun LogScreen(onBack: () -> Unit) {
                     val activeTransport = transport
                     Text(
                         when {
+                            !AppLog.enabled ->
+                                "Logging is off. Turn it on under ADVANCED \u00b7 CONNECTION LOG."
                             lines.isEmpty() -> "No log lines captured yet. Start a connection."
                             activeTransport != null -> "No ${activeTransport.uppercase()} lines captured yet."
                             else -> "No entries for this level."

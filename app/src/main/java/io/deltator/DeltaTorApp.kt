@@ -8,6 +8,7 @@ import android.os.Build
 import io.deltator.tunnel.BridgeStore
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
+import io.deltator.util.AppLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ class DeltaTorApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Config.init(this)
+        AppLog.enabled = Config.loggingEnabled
         TorrcSettings.init(this)
         ExitNodes.init(this)
         createNotificationChannels()
@@ -76,6 +78,15 @@ object Config {
     var debugMode: Boolean
         get() = prefs.getBoolean("debug_mode", false)
         set(value) = prefs.edit().putBoolean("debug_mode", value).apply()
+
+    /**
+     * Whether the connection log is recorded. On by default, because a log that
+     * records nothing is no use to anyone who then has a problem; off is for the
+     * user who would rather have the memory and the battery back.
+     */
+    var loggingEnabled: Boolean
+        get() = prefs.getBoolean("logging_enabled", true)
+        set(value) = prefs.edit().putBoolean("logging_enabled", value).apply()
 
     var transportMode: String
         // "auto","vanilla","obfs4","webtunnel","snowflake","direct","custom"
