@@ -9,6 +9,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Races four Tor clients against each other:
@@ -139,6 +140,14 @@ object ParallelTorManager {
      */
     @Volatile private var lastPlans: Map<String, String> = emptyMap()
     @Volatile private var lastPorts: Map<String, Int> = emptyMap()
+
+    /**
+     * Bumped whenever the runner map is emptied. A start captures it and checks
+     * it every poll, so a stop or a second connect that empties the map under a
+     * running race is reported as the supersession it is, instead of the race
+     * waking up to an empty snapshot and blaming the transports it was watching.
+     */
+    private val generation = AtomicLong(0)
 
     /** Current bootstrap % per transport (-1 = failed). Safe for UI reads. */
     fun progressSnapshot(): Map<String, Int> = synchronized(runnersLock) {
@@ -271,7 +280,7 @@ object ParallelTorManager {
         lastPlans = plans.toMap()
         lastPorts = allPorts.filterKeys { it in planNames }
 
-        synchronized(runnersLock) { runners = mutableMapOf() }
+        val gen = beginRunners()
 
         plans.forEach { (name, bridgeLines) ->
             val runner = TorRunner(context, name, allPorts.getValue(name), bridgeLines)
@@ -295,6 +304,7 @@ object ParallelTorManager {
 
         val deadline = System.currentTimeMillis() + RACE_TIMEOUT_MS
         while (true) {
+            checkGeneration(gen)
             val snapshot = synchronized(runnersLock) { runners.toMap() }
             onProgress(snapshot)
 
@@ -433,6 +443,18 @@ object ParallelTorManager {
             planName to (lastPorts[planName] ?: fixedPorts.getValue(planName))
         }
 
+        // What this recovery builds becomes the last plan, the same way a race
+        // records its own. Without it the twin it just started is unreachable:
+        // in auto mode the race never plans a twin at all, so lastPlans holds no
+        // twin, yet the twin is the one holding the proven bridges and it is the
+        // one that wins. The next recovery asked for the active transport, got
+        // that twin, found no cached bridges for it and threw before it even
+        // started a process, which escalated a working connection into a
+        // reconnect from zero. Merged, not replaced: a transport proven by an
+        // earlier race is still a transport this recovery can rebuild.
+        lastPlans = lastPlans + plans
+        lastPorts = lastPorts + ports
+
         Log.i(TAG, "Recovery: restarting $name on port ${ports.getValue(name)}" +
             if (plans.size > 1) " with $twin" else "")
 
@@ -443,7 +465,7 @@ object ParallelTorManager {
             ports.values.forEach { awaitPortFree("127.0.0.1", it) }
         }
 
-        synchronized(runnersLock) { runners = mutableMapOf() }
+        val gen = beginRunners()
         val recorded = mutableSetOf<String>()
         plans.forEach { (planName, bridgeLines) ->
             val runner = TorRunner(context, planName, ports.getValue(planName), bridgeLines)
@@ -460,6 +482,7 @@ object ParallelTorManager {
 
         val deadline = System.currentTimeMillis() + RECOVERY_TIMEOUT_MS
         while (true) {
+            checkGeneration(gen)
             val snapshot = synchronized(runnersLock) { runners.toMap() }
             onProgress(snapshot)
             snapshot.values.forEach { r ->
@@ -501,7 +524,24 @@ object ParallelTorManager {
     private fun detachRunners(): List<TorRunner> = synchronized(runnersLock) {
         val copy = runners.values.toList()
         runners = mutableMapOf()
+        generation.incrementAndGet()
         copy
+    }
+
+    /**
+     * Empty the map for a fresh start and take the generation that start owns.
+     * Any poll loop still running on an older generation is watching runners
+     * that no longer exist and is told so instead of failing on its own.
+     */
+    private fun beginRunners(): Long = synchronized(runnersLock) {
+        runners = mutableMapOf()
+        generation.incrementAndGet()
+    }
+
+    private fun checkGeneration(gen: Long) {
+        if (generation.get() != gen) {
+            throw RuntimeException("Start was superseded by a stop or a newer connect")
+        }
     }
 
     /**
