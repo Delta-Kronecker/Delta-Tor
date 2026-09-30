@@ -56,8 +56,17 @@ class TorVpnService : VpnService() {
         /** How often the connected tunnel is asked whether Tor can still carry traffic. */
         private const val PROBE_INTERVAL_MS = 5_000L
 
-        /** The same check while nothing is wrong, to keep the request itself rare. */
+        /**
+         * The same check while nothing is wrong, to keep the request itself rare.
+         *
+         * The first two steps of a healthy tunnel. After that the interval opens
+         * up: a probe is a real request through Tor, not a local question, and a
+         * connection nobody is using was paying for one every twenty seconds to
+         * be told what it already knew.
+         */
         private const val PROBE_INTERVAL_HEALTHY_MS = 20_000L
+        private const val PROBE_INTERVAL_QUIET_MS = 45_000L
+        private const val PROBE_INTERVAL_IDLE_MS = 90_000L
 
         /**
          * Consecutive failed probes before the transport is rebuilt. Two is one
@@ -204,6 +213,15 @@ class TorVpnService : VpnService() {
 
     /** When the transport was last rebuilt, so a flap cannot rebuild in a loop. */
     private var lastRecoveryAt = 0L
+
+    /**
+     * Consecutive healthy probes with nothing else happening, which is what lets a
+     * tunnel nobody is using be checked less and less often.
+     */
+    @Volatile private var quietProbes = 0
+
+    /** Traffic carried since the last probe, which tells quiet apart from idle. */
+    @Volatile private var bytesAtLastProbe = 0L
 
     /** Id of the connect session whose lines this service emits. */
     @Volatile private var currentSession: Int = 0
@@ -381,6 +399,8 @@ class TorVpnService : VpnService() {
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         lastRenderedText = ""
+        quietProbes = 0
+        bytesAtLastProbe = 0L
         startStatsPolling()
         startLinkWatch()
         startExitLocator(proxyHost, proxyPort)
@@ -594,22 +614,30 @@ class TorVpnService : VpnService() {
                 // is a real (if tiny) request through Tor; a link that is down or
                 // already failing is watched closely.
                 val urgent = before.reconnecting || !linkUp || failedProbes > 0
-                delay(if (urgent) PROBE_INTERVAL_MS else PROBE_INTERVAL_HEALTHY_MS)
+                delay(if (urgent) PROBE_INTERVAL_MS else healthyInterval())
 
                 val state = AppState.state.value
                 if (!state.connected || recovering.get()) continue
 
                 if (!linkUp) {
                     // Nothing can pass until the link is back; only say so.
+                    quietProbes = 0
                     if (!state.reconnecting) markReconnecting("network down")
                     continue
                 }
+
+                // Traffic is its own evidence that the tunnel is working, and it
+                // also means a dead link would have been noticed by the user.
+                val bytes = AppState.state.value.txBytes + AppState.state.value.rxBytes
+                val carried = bytes != bytesAtLastProbe
+                bytesAtLastProbe = bytes
 
                 when (probeTunnelUsable()) {
                     ProbeResult.Ok -> {
                         deadSince = 0
                         failedProbes = 0
                         lastRecoveryAt = 0
+                        quietProbes = if (carried) 0 else quietProbes + 1
                         if (state.reconnecting) {
                             Log.i(TAG, "Tunnel usable again")
                             clearReconnecting()
@@ -622,9 +650,10 @@ class TorVpnService : VpnService() {
                     // rebuilding itself every few seconds.
                     ProbeResult.Live -> {
                         failedProbes = 0
+                        quietProbes = 0
                         continue
                     }
-                    ProbeResult.Dead -> {}
+                    ProbeResult.Dead -> quietProbes = 0
                 }
 
                 val since = System.currentTimeMillis()
@@ -659,6 +688,21 @@ class TorVpnService : VpnService() {
     }
 
     /**
+     * How long to wait before the next probe of a tunnel that has been answering.
+     *
+     * A healthy link gets checked often at first and then less often, and any of
+     * traffic, a network change or a less than perfect answer puts it back at the
+     * front. The point is that the backstop stays a backstop: the cases where a
+     * link dies without the system telling us are exactly the cases where the
+     * interval is short, because something just happened.
+     */
+    private fun healthyInterval(): Long = when {
+        quietProbes < 2 -> PROBE_INTERVAL_HEALTHY_MS
+        quietProbes < 5 -> PROBE_INTERVAL_QUIET_MS
+        else -> PROBE_INTERVAL_IDLE_MS
+    }
+
+    /**
      * Ask the live tunnel whether Tor can still complete a request.
      *
      * A SOCKS5 CONNECT to a fixed address is the honest test: the reply only
@@ -679,6 +723,11 @@ class TorVpnService : VpnService() {
      *    is a real reason to rebuild, and even this one only after [probeGraceMs]
      *    has passed, because a circuit that is being built right now looks
      *    exactly the same from out here.
+     *
+     * The ok answer is the one that is not written down. A probe every twenty
+     * seconds or slower saying "still fine" is noise in a log the user reads to
+     * find out what went wrong, and it is the only message this loop would ever
+     * produce on a connection that never goes wrong.
      */
     private fun probeTunnelUsable(): ProbeResult {
         var stage = "connect"
@@ -702,7 +751,7 @@ class TorVpnService : VpnService() {
                 out.flush()
                 val reply = input.read()
                 if (reply == 0x00) {
-                    logProbe("circuit is up", ProbeResult.Ok)
+                    return ProbeResult.Ok
                 } else if (reply < 0) {
                     logProbe("Tor closed without answering", ProbeResult.Dead)
                 } else {
@@ -792,6 +841,10 @@ class TorVpnService : VpnService() {
                 buildNotification("Reconnected via ${winner.name} \u00b7 ${seconds}s", progress = false)
             )
             lastRenderedText = ""
+            // A fresh transport has just proved itself, so the careful cadence
+            // starts again rather than carrying over whatever it ended on.
+            quietProbes = 0
+            bytesAtLastProbe = AppState.state.value.txBytes + AppState.state.value.rxBytes
             // The new Tor has its own exit circuits, so the reported country is
             // stale until it is looked up again.
             startExitLocator("127.0.0.1", Config.proxyPort)
@@ -844,6 +897,7 @@ class TorVpnService : VpnService() {
                 if (linkUp) return
                 linkUp = true
                 failedProbes = 0
+                quietProbes = 0
                 Log.i(TAG, "Network available again")
             }
         }
@@ -963,6 +1017,8 @@ class TorVpnService : VpnService() {
         linkWatchJob = null
         exitLocatorJob?.cancel()
         exitLocatorJob = null
+        quietProbes = 0
+        bytesAtLastProbe = 0L
         unregisterNetworkCallback()
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
         try { vpnInterface?.close() } catch (_: Exception) {}
