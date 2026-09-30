@@ -396,7 +396,6 @@ private fun ControlDrawer(
     onUpdateBridges: () -> Unit,
     onOpenLog: () -> Unit
 ) {
-    val context = LocalContext.current
     val uriHandler = LocalUriHandler.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
@@ -405,14 +404,6 @@ private fun ControlDrawer(
 
     var showCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
-    var repoCopied by remember { mutableStateOf(false) }
-
-    LaunchedEffect(repoCopied) {
-        if (repoCopied) {
-            delay(1500)
-            repoCopied = false
-        }
-    }
 
     val selection = when {
         selectedCodes.isEmpty() -> "Any location \u00b7 default"
@@ -470,8 +461,8 @@ private fun ControlDrawer(
         DividerLine()
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 32.dp)
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(bottom = 20.dp)
         ) {
             item(key = "loc-head") {
                 DrawerSection(
@@ -481,56 +472,56 @@ private fun ControlDrawer(
                     onClick = { showCountries = !showCountries }
                 )
             }
-            item(key = "loc-warn") {
-                SettingsCard {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(DeltaTor.Amber.copy(alpha = 0.10f))
-                            .padding(horizontal = 12.dp, vertical = 11.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            WarnIcon(color = DeltaTor.Amber)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "USE ONLY WHEN NEEDED",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    letterSpacing = 1.2.sp,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = DeltaTor.Amber,
-                                modifier = Modifier.weight(1f)
-                            )
-                            if (selectedCodes.isNotEmpty()) {
+            if (showCountries) {
+                item(key = "loc-warn") {
+                    SettingsCard {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(DeltaTor.Amber.copy(alpha = 0.10f))
+                                .padding(horizontal = 12.dp, vertical = 11.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                WarnIcon(color = DeltaTor.Amber)
+                                Spacer(Modifier.width(8.dp))
                                 Text(
-                                    "CLEAR",
+                                    "USE ONLY WHEN NEEDED",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         letterSpacing = 1.2.sp,
                                         fontWeight = FontWeight.Bold
                                     ),
-                                    color = DeltaTor.Red,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(50))
-                                        .clickable { ExitNodes.clear() }
-                                        .padding(horizontal = 10.dp, vertical = 3.dp)
+                                    color = DeltaTor.Amber,
+                                    modifier = Modifier.weight(1f)
                                 )
+                                if (selectedCodes.isNotEmpty()) {
+                                    Text(
+                                        "CLEAR",
+                                        style = MaterialTheme.typography.labelSmall.copy(
+                                            letterSpacing = 1.2.sp,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = DeltaTor.Red,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(50))
+                                            .clickable { ExitNodes.clear() }
+                                            .padding(horizontal = 10.dp, vertical = 3.dp)
+                                    )
+                                }
                             }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Picking a country sends your traffic through a relay there. " +
+                                    "It can lower your speed and make the connection less stable.",
+                                style = MaterialTheme.typography.bodySmall.copy(
+                                    letterSpacing = 0.1.sp,
+                                    lineHeight = 16.sp
+                                ),
+                                color = DeltaTor.Muted
+                            )
                         }
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "Picking a country sends your traffic through a relay there. " +
-                                "It can lower your speed and make the connection less stable.",
-                            style = MaterialTheme.typography.bodySmall.copy(
-                                letterSpacing = 0.1.sp,
-                                lineHeight = 16.sp
-                            ),
-                            color = DeltaTor.Muted
-                        )
                     }
                 }
-            }
-            if (showCountries) {
                 item(key = "any") {
                     DrawerRow(last = countries.isEmpty()) {
                         CountryRow(
@@ -594,42 +585,42 @@ private fun ControlDrawer(
             item(key = "repo-card") {
                 SettingsCard {
                     Text(
+                        "DeltaTor for Android",
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontWeight = FontWeight.SemiBold
+                        ),
+                        color = DeltaTor.Text
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "Open source. Issues and releases are public.",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.1.sp),
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
                         REPO_URL,
                         style = TextStyle(
                             fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = DeltaTor.Text
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = DeltaTor.Muted
                         ),
-                        modifier = Modifier.padding(horizontal = 2.dp, vertical = 2.dp)
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GradientPill(
-                            modifier = Modifier.weight(1f),
-                            label = "OPEN REPOSITORY",
-                            filled = true,
-                            labelSize = 12.sp,
-                            onClick = { runCatching { uriHandler.openUri(REPO_URL) } }
-                        )
-                        GradientPill(
-                            modifier = Modifier.weight(1f),
-                            label = if (repoCopied) "COPIED \u2713" else "COPY LINK",
-                            filled = false,
-                            labelSize = 12.sp,
-                            onClick = {
-                                val clipboard = context
-                                    .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(
-                                    ClipData.newPlainText("DeltaTor repository", REPO_URL)
-                                )
-                                repoCopied = true
-                            }
-                        )
-                    }
                 }
             }
         }
+
+        GradientPill(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp),
+            label = "GITHUB",
+            filled = true,
+            onClick = { runCatching { uriHandler.openUri(REPO_URL) } }
+        )
     }
 }
 
