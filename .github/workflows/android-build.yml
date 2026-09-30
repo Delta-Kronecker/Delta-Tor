@@ -42,7 +42,8 @@ jobs:
           mkdir -p dist/stage/apk dist/stage/symbols
 
           # zip is present on the runner images, but the packaging must not be
-          # the reason a build fails, so fall back to the interpreter.
+          # the reason a build fails, so fall back to the interpreter. The
+          # output has to be absolute: zip runs inside the staged directory.
           pack() {
             if command -v zip >/dev/null 2>&1; then
               (cd "$1" && zip -qr "$2" .)
@@ -53,7 +54,7 @@ jobs:
 
           # 1. The APK itself.
           find app/build/outputs/apk -name '*.apk' -exec cp {} dist/stage/apk/ \;
-          pack dist/stage/apk dist/deltator-debug-apk.zip
+          pack dist/stage/apk "$PWD/dist/deltator-debug-apk.zip"
 
           # 2. The sources, from the commit that was built, so the zip and the
           #    APK cannot disagree about what "this build" was.
@@ -70,7 +71,7 @@ jobs:
               find "$dir" -name '*.so' -exec cp --parents {} dist/stage/symbols/ \;
             fi
           done
-          pack dist/stage/symbols dist/deltator-native-symbols.zip
+          pack dist/stage/symbols "$PWD/dist/deltator-native-symbols.zip"
 
           ls -la dist/*.zip
 
