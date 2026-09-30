@@ -20,6 +20,7 @@ import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.TorRunner
 import io.deltator.tunnel.TorSocksBridge
+import io.deltator.tunnel.TorrcSettings
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -68,6 +69,32 @@ class TorVpnService : VpnService() {
          */
         private const val PROBES_BEFORE_RECOVERY = 2
 
+        /**
+         * Failures after which the wait is abandoned and the rebuild happens
+         * anyway. A transport that has answered nothing at all for this many
+         * probes in a row is not merely busy building a circuit, so waiting out
+         * the grace window would only delay an already obvious answer.
+         */
+        private const val PROBES_TO_IGNORE_GRACE = 6
+
+        /**
+         * How long the tunnel may stay silent before it is rebuilt, whichever
+         * of the two counters gets there first. It has to be longer than one
+         * circuit build (CircuitBuildTimeout, 40s) plus the SocksTimeout a
+         * request waits for one, because a circuit being built is silent and
+         * from here it is indistinguishable from a tunnel that is gone.
+         */
+        private const val PROBE_GRACE_MS = 75_000L
+
+        /**
+         * A restore is a clean Tor that still has to build its first circuit, so
+         * for a while after it the tunnel is honestly allowed to be quiet. The
+         * app used to start rebuilding again the moment two probes ran into that
+         * silence, which is a loop: each rebuild costs a full bootstrap and the
+         * next rebuild is due before the tunnel ever carried anything.
+         */
+        private const val PROBE_RECOVERY_COOLDOWN_MS = 90_000L
+
         /** Upper bound on one liveness probe; a dead Tor would otherwise hang it. */
         private const val PROBE_TIMEOUT_MS = 6_000
 
@@ -95,6 +122,15 @@ class TorVpnService : VpnService() {
     @Volatile private var linkUp = true
     private val recovering = AtomicBoolean(false)
     private var failedProbes = 0
+
+    /** What one liveness probe found, as far as it could tell. */
+    private enum class ProbeResult { Ok, Live, Dead }
+
+    /** When the tunnel last answered nothing at all, 0 while it is talking. */
+    private var deadSince = 0L
+
+    /** When the transport was last rebuilt, so a flap cannot rebuild in a loop. */
+    private var lastRecoveryAt = 0L
 
     /** Id of the connect session whose lines this service emits. */
     @Volatile private var currentSession: Int = 0
@@ -451,21 +487,55 @@ class TorVpnService : VpnService() {
                     continue
                 }
 
-                if (probeTunnelUsable()) {
-                    if (state.reconnecting || failedProbes > 0) {
-                        Log.i(TAG, "Tunnel usable again after $failedProbes failed probe(s)")
-                        clearReconnecting()
+                when (probeTunnelUsable()) {
+                    ProbeResult.Ok -> {
+                        deadSince = 0
+                        failedProbes = 0
+                        lastRecoveryAt = 0
+                        if (state.reconnecting) {
+                            Log.i(TAG, "Tunnel usable again")
+                            clearReconnecting()
+                        }
+                        continue
                     }
-                    failedProbes = 0
-                    continue
+                    // Tor is talking and said no. A busy exit or a destination
+                    // that refuses port 80 is not a dead transport, and killing
+                    // the runner over it is how a working connection ended up
+                    // rebuilding itself every few seconds.
+                    ProbeResult.Live -> {
+                        failedProbes = 0
+                        continue
+                    }
+                    ProbeResult.Dead -> {}
                 }
 
+                val since = System.currentTimeMillis()
+                if (deadSince == 0L) deadSince = since
                 failedProbes++
-                Log.w(TAG, "Tunnel probe failed ($failedProbes/$PROBES_BEFORE_RECOVERY)")
-                if (failedProbes >= PROBES_BEFORE_RECOVERY) {
-                    failedProbes = 0
-                    recoverTransport()
+                val deadForMs = since - deadSince
+                Log.w(TAG, "Tunnel silent for ${deadForMs / 1000}s ($failedProbes probe(s))")
+
+                // One answer can be missing because a circuit is mid-build, and
+                // from out here that is indistinguishable from a dead tunnel, so
+                // the wall clock decides, not the count. Two failures are only
+                // the fast path for a tunnel that really has nothing.
+                val mustRebuild = failedProbes >= PROBES_BEFORE_RECOVERY &&
+                    (deadForMs >= probeGraceMs() || failedProbes >= PROBES_TO_IGNORE_GRACE)
+
+                if (!mustRebuild) continue
+
+                failedProbes = 0
+                deadSince = 0
+                if (since - lastRecoveryAt < PROBE_RECOVERY_COOLDOWN_MS) {
+                    Log.i(
+                        TAG,
+                        "Not rebuilding ${activeRunner?.name} again so soon, " +
+                            "${(PROBE_RECOVERY_COOLDOWN_MS - (since - lastRecoveryAt)) / 1000}s left of the cooldown"
+                    )
+                    continue
                 }
+                lastRecoveryAt = since
+                recoverTransport()
             }
         }
     }
@@ -478,27 +548,74 @@ class TorVpnService : VpnService() {
      * right after, so a probe costs one circuit check and no payload. Bootstrap
      * percentage cannot be used for this, it is printed once and never revoked
      * when the network disappears.
+     *
+     * Three outcomes, not two, because they say different things and the caller
+     * acts on the difference:
+     *  - ok: Tor reached the destination. The tunnel is doing its job.
+     *  - live: Tor answered SOCKS5 but not with 0x00. That is a rejection, not a
+     *    corpse: a busy exit refusing port 80, or a destination that does not
+     *    answer. Treating it as a dead link is what made the whole connection
+     *    flap over an exit that dislikes the probe.
+     *  - dead: no SOCKS5 answer at all. Either the bridge never spoke, or Tor
+     *    never answered within the timeout because it had no circuit. Only this
+     *    is a real reason to rebuild, and even this one only after [probeGraceMs]
+     *    has passed, because a circuit that is being built right now looks
+     *    exactly the same from out here.
      */
-    private fun probeTunnelUsable(): Boolean {
+    private fun probeTunnelUsable(): ProbeResult {
+        var stage = "connect"
         return try {
             Socket().use { s ->
+                stage = "bridge"
                 s.connect(InetSocketAddress("127.0.0.1", Config.proxyPort), PROBE_TIMEOUT_MS)
                 s.soTimeout = PROBE_TIMEOUT_MS
                 val out = s.getOutputStream()
                 val input = s.getInputStream()
                 out.write(byteArrayOf(0x05, 0x01, 0x00)) // greeting, no auth
                 out.flush()
-                if (input.read() != 0x05 || input.read() != 0x00) return false
+                val version = input.read()
+                val method = input.read()
+                if (version != 0x05 || method != 0x00) {
+                    return logProbe("bridge rejected greeting: $version/$method", ProbeResult.Dead)
+                }
+                stage = "tor"
                 // CONNECT 1.1.1.1:80, then close without sending a byte.
                 out.write(byteArrayOf(0x05, 0x01, 0x00, 0x01, 1, 1, 1, 1, 0x00, 0x50))
                 out.flush()
-                input.read() == 0x00
+                val reply = input.read()
+                if (reply == 0x00) {
+                    logProbe("circuit is up", ProbeResult.Ok)
+                } else if (reply < 0) {
+                    logProbe("Tor closed without answering", ProbeResult.Dead)
+                } else {
+                    logProbe(
+                        "Tor answered 0x%02x, the destination refused it".format(reply),
+                        ProbeResult.Live
+                    )
+                }
             }
         } catch (e: Exception) {
-            Log.d(TAG, "probe failed: ${e.message}")
-            false
+            // No SOCKS5 answer at all. Named, because the difference between
+            // "the bridge would not take the connection" and "Tor never
+            // answered" is the difference between fixing the app and fixing Tor.
+            logProbe("no answer at $stage: ${e.message}", ProbeResult.Dead)
         }
     }
+
+    private fun logProbe(detail: String, result: ProbeResult): ProbeResult {
+        Log.d(TAG, "probe ($detail)")
+        return result
+    }
+
+    /**
+     * Grace before a rebuild follows the Tor that has to build the circuit the
+     * tunnel is waiting for: CircuitBuildTimeout plus the SocksTimeout a request
+     * spends waiting for one. A shorter grace calls a rebuild normal, and a
+     * normal rebuild is a full bootstrap that takes longer than the grace, which
+     * is the loop the cooldown below exists to break.
+     */
+    private fun probeGraceMs(): Long =
+        TorrcSettings.intValue("CircuitBuildTimeout", 40) * 1000L + PROBE_GRACE_MS
 
     /**
      * Rebuild the transport that was carrying traffic, keeping the tunnel up.

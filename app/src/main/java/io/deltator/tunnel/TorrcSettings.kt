@@ -98,7 +98,12 @@ object TorrcSettings {
         SocksTimeout 30
         CircuitsAvailableTimeout 4320
         CircuitStreamTimeout 10
-        CircuitBuildTimeout 20
+        # 40s, not 20. A build through a bridge that a 20s budget abandons is
+        # thrown away and retried from the first hop, so a network that came
+        # back paid for several complete attempts before one circuit existed,
+        # and every one of them read as a dead link to the liveness probe. 40s
+        # lets one attempt finish.
+        CircuitBuildTimeout 40
         NumPrimaryGuards 20
         Schedulers Vanilla
         MaxClientCircuitsPending 128
@@ -124,4 +129,20 @@ object TorrcSettings {
     fun templateLines(): List<String> = template().lines()
         .map { it.trim() }
         .filter { it.isNotBlank() && !it.startsWith("#") }
+
+    /**
+     * Integer value of a directive in the current template, so a caller stays
+     * consistent with a template the user can edit. The last occurrence wins,
+     * the same way Tor reads a torrc.
+     */
+    fun intValue(key: String, fallback: Int): Int {
+        var found = fallback
+        for (line in templateLines()) {
+            val parts = line.split(Regex("\\s+"))
+            if (parts.size >= 2 && parts[0].equals(key, ignoreCase = true)) {
+                found = parts[1].toIntOrNull() ?: found
+            }
+        }
+        return found
+    }
 }
