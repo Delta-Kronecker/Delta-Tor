@@ -16,6 +16,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -72,6 +73,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -278,7 +280,7 @@ private fun MainScreen(
                 .fillMaxSize()
                 .windowInsetsPadding(WindowInsets.systemBars)
         ) {
-            AirBackground(glow = scAnimated)
+            AirBackground(glow = scAnimated, connecting = connecting)
 
             Header(
                 statusColor = scAnimated,
@@ -599,6 +601,44 @@ private fun ControlDrawer(
 }
 
 /**
+ * An infinite animated value that only exists while [active].
+ *
+ * `rememberInfiniteTransition` keeps asking the frame clock for frames from the
+ * moment it is created, whether or not anything reads its value. So a ring that
+ * spins while connecting, left created in a state that is not connecting, does
+ * not idle: it redraws itself sixty times a second to animate something no
+ * branch of the draw ever looks at. A VPN that is connected and left open is
+ * exactly that situation.
+ *
+ * Handed back as a plain state so callers read it the same way in both cases,
+ * and resting at [resting] instead of jumping to a value the loop would have
+ * passed through.
+ */
+@Composable
+private fun rememberActiveLoop(
+    active: Boolean,
+    label: String,
+    from: Float,
+    to: Float,
+    durationMillis: Int,
+    easing: Easing,
+    restart: Boolean = false,
+    resting: Float = from
+): State<Float> =
+    if (active) {
+        rememberInfiniteTransition(label = label).animateFloat(
+            from, to,
+            infiniteRepeatable(
+                tween(durationMillis, easing = easing),
+                if (restart) RepeatMode.Restart else RepeatMode.Reverse
+            ),
+            label = label
+        )
+    } else {
+        remember(label, resting) { mutableStateOf(resting) }
+    }
+
+/**
  * Whether a collapsible section's body may be mounted yet.
  *
  * The tap that opens a section has to be answered by the header alone, and it
@@ -831,13 +871,20 @@ private fun ringProgressOf(state: AppState.VpnState): Float? {
 // ---- background -------------------------------------------------------------
 
 @Composable
-private fun AirBackground(glow: Color) {
-    val pulse by rememberInfiniteTransition(label = "bgpulse")
-        .animateFloat(
-            0.5f, 1f,
-            infiniteRepeatable(tween(2600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "a"
-        )
+private fun AirBackground(glow: Color, connecting: Boolean) {
+    // Read outside the draw lambda on purpose. It used to be read inside, which
+    // is what made this the most expensive thing on the screen: a full-screen
+    // Canvas that redrew three large radial gradients every frame, forever,
+    // including all the time spent connected to something and not connecting.
+    // The ring and the status line already carry the sense of something running.
+    val pulse by rememberActiveLoop(
+        active = connecting,
+        label = "bgpulse",
+        from = 0.5f,
+        to = 1f,
+        durationMillis = 2600,
+        easing = FastOutSlowInEasing
+    )
     Canvas(Modifier.fillMaxSize()) {
         drawRect(
             Brush.verticalGradient(
@@ -1045,24 +1092,37 @@ private fun RingButton(
     enabled: Boolean = true,
     onClick: () -> Unit
 ) {
-    val rotation by rememberInfiniteTransition(label = "ringSpin")
-        .animateFloat(
-            0f, 360f,
-            infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
-            label = "r"
-        )
-    val pulse by rememberInfiniteTransition(label = "ringPulse")
-        .animateFloat(
-            0.55f, 1f,
-            infiniteRepeatable(tween(2200, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "p"
-        )
-    val breathe by rememberInfiniteTransition(label = "ringBreath")
-        .animateFloat(
-            1f, 1.035f,
-            infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-            label = "b"
-        )
+    // The beam only ever appears while connecting and the scale only breathes
+    // while connecting, so neither loop is worth running the rest of the time.
+    val rotation by rememberActiveLoop(
+        active = connecting,
+        label = "ringSpin",
+        from = 0f,
+        to = 360f,
+        durationMillis = 9000,
+        easing = LinearEasing,
+        restart = true
+    )
+    val breathe by rememberActiveLoop(
+        active = connecting,
+        label = "ringBreath",
+        from = 1f,
+        to = 1.035f,
+        durationMillis = 2400,
+        easing = FastOutSlowInEasing
+    )
+    // The halo stays lit while connected, so it keeps breathing, but a
+    // connection at rest sits at the middle of the range rather than moving
+    // between the two ends forever.
+    val pulse by rememberActiveLoop(
+        active = glowColor != null,
+        label = "ringPulse",
+        from = 0.55f,
+        to = 1f,
+        durationMillis = 2200,
+        easing = FastOutSlowInEasing,
+        resting = 0.78f
+    )
     val scale = if (connecting) breathe else 1f
 
     Box(
