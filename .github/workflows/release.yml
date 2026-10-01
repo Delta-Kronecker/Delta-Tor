@@ -288,17 +288,29 @@ jobs:
           # Same certificate either way, so strip the colons and fold the case here
           # rather than letting whoever pastes it in get a mismatch that looks like
           # a key mismatch.
-          # Be extremely defensive about the pin file (CRLF/BOM/comments)
-          PIN_RAW="$(tr -d '\r' < "$PIN_FILE" | sed '1{/^#!/d}; /^[[:space:]]*#/d; /^[[:space:]]*$/d' | head -1)"
-          PIN="$(echo "$PIN_RAW" | tr -d '[:space:]:-' | tr '[:upper:]' '[:lower:]' | grep -oE '[0-9a-f]{64}' | head -1 || true)"
+          # Pull the digest out of the pin file rather than reading the file
+          # whole, so the explanation above it survives without its text being
+          # glued onto the digest. Tolerate the things an editor adds behind
+          # your back: CRLF, a UTF-8 BOM on the first line, leading blanks.
+          # Comments are dropped first so a hex string written in prose is
+          # never mistaken for the pin.
+          PIN="$(sed '1s/^\xef\xbb\xbf//' "$PIN_FILE" \
+            | tr -d '\r' \
+            | grep -v '^[[:space:]]*#' \
+            | tr -d ' \t:-' \
+            | grep -oiE '[0-9a-f]{64}' \
+            | head -1 \
+            | tr '[:upper:]' '[:lower:]' || true)"
 
           actuals=""
           for apk in dist/*.apk; do
             raw=$("$APKSIGNER" verify --print-certs "$apk")
-            echo "---- raw from apksigner for $(basename "$apk") ----"
-            echo "$raw"
-            # Normalize every reported digest: lowercase and strip non-hex
-            digests="$(echo "$raw" | sed -n -E 's/^(Signer #[0-9]+|V[0-9]+ Signer:)[[:space:]]+certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]' | sed 's/[^0-9a-f]//g')"
+            # Match both shapes apksigner uses: the per-signer form
+            # ("Signer #1 certificate SHA-256 digest:") and the v2/v3 form
+            # ("V2 Signer: certificate SHA-256 digest:"). It varies by version
+            # and by what the APK happens to be signed with, so anchor on the
+            # digest label and let either prefix match.
+            digests="$(echo "$raw" | sed -n -E 's/^.*certificate SHA-256 digest:[[:space:]]*//p' | tr '[:upper:]' '[:lower:]' | sed 's/[^0-9a-f]//g')"
             if [ -z "$digests" ]; then
               echo "::error::$(basename "$apk") has no signer certificate"
               exit 1
@@ -311,13 +323,6 @@ jobs:
 
           # Fail closed while no real digest is pinned: shipping an unverified
           # signer is exactly the case this step exists to catch.
-          echo "=== PIN DEBUG ==="
-          echo "PIN_FILE=$PIN_FILE"
-          echo "PIN_LEN=${#PIN}"
-          echo "PIN=$PIN"
-          echo "ACTUALS_CLEAN=$(echo $actuals | tr '[:space:]' ',')"
-          echo "=== END PIN DEBUG ==="
-
           if [ -z "$PIN" ]; then
             echo "### Signing certificate not pinned yet" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
