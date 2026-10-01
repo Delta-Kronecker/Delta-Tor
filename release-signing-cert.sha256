@@ -1,12 +1,15 @@
 # SHA-256 fingerprint of the certificate that signs release APKs.
 #
-# To get it, either:
+# CN=DeltaRay, OU=Release, O=Delta-Kronecker, C=IR
+# Taken from the v2 signing block of the published v2.0.0 APKs and confirmed
+# with: keytool -printcert -file cert.der
+#
+# To re-check it after a deliberate key rotation, use either:
 #   keytool -list -v -keystore <your.jks> -alias <alias>     # look for "SHA256:"
-#   apksigner verify --print-certs <an-apk>                 # look for "SHA-256 digest:"
+#   apksigner verify --print-certs <an-apk>                 # "SHA-256 digest:"
 #
 # Copy the fingerprint onto one line below. Colons are optional and case does
-# not matter, so you can paste keytool's output exactly as it prints it. Add a
-# comment line above it if you like; the first 64 hex characters are used.
+# not matter, so you can paste keytool's output exactly as it prints it.
 #
 # This is deliberately NOT a repository secret. It is the public part of the key:
 # anyone who downloads the APK can read it, and it is safe to commit. The
@@ -14,4 +17,4 @@
 # fingerprint in a reviewed file is the whole point -- if it lived in a secret,
 # whoever rotated the key would rotate the expected value in the same breath and
 # the check would approve itself.
-REPLACE_WITH_SHA256_OF_SIGNING_CERTIFICATE
+F5:28:75:47:DE:AA:5F:31:3C:BA:39:95:45:83:02:23:4B:BF:3D:8E:7B:0D:92:F2:7C:33:38:37:45:6D:F7:EB
