@@ -23,22 +23,6 @@ object ExitNodes {
     private const val KEY_CODES = "exit_ccs"
     private const val KEY_NAMES = "exit_names"
 
-    /**
-     * The five countries holding the most exit bandwidth, used on an install
-     * that has never opened the picker.
-     *
-     * Leaving the list empty is not neutral. Tor picks an exit by its own
-     * criteria and will happily route through a country running one relay,
-     * which is a worse outcome than picking badly from a good set. Five is a
-     * set rather than one country on purpose: with `StrictNodes 0` Tor builds
-     * each circuit through whichever of them is up, so one bad day at one exit
-     * does not become the exit for everything.
-     */
-    private val DEFAULT_CODES = listOf("NL", "DE", "US", "SE", "AT")
-    private val DEFAULT_NAMES = listOf(
-        "Netherlands", "Germany", "United States", "Sweden", "Austria"
-    )
-
     private val _codes = MutableStateFlow<List<String>>(emptyList())
     val codes: StateFlow<List<String>> = _codes.asStateFlow()
 
@@ -51,16 +35,6 @@ object ExitNodes {
         if (prefs != null) return
         val p = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs = p
-        // Seed the fresh install only. A user who cleared the list meant
-        // "anywhere", so the test is whether the key exists, not whether it
-        // holds anything: absent means nobody has chosen yet, present but empty
-        // means somebody chose.
-        if (!p.contains(KEY_CODES)) {
-            persist(
-                DEFAULT_CODES,
-                DEFAULT_NAMES.mapIndexedNotNull { i, n -> DEFAULT_CODES.getOrNull(i)?.let { it to n } }.toMap()
-            )
-        }
         val codes = p.getString(KEY_CODES, "").orEmpty()
             .split(',')
             .map { it.trim().uppercase() }
