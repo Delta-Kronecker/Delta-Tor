@@ -571,7 +571,7 @@ private fun ControlDrawer(
                     DrawerRow(last = countries.isEmpty()) {
                         CountryRow(
                             emoji = "\uD83C\uDF10",
-                            name = "Any location",
+                            name = "Any location \u00b7 default",
                             code = "--",
                             selected = selectedCodes.isEmpty(),
                             onClick = { ExitNodes.clear() }
