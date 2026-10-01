@@ -6,9 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to build, e.g. v2.0.0 (workflow_dispatch only; blank on tag push)'
+        description: 'Release tag to build, e.g. v2.1.0 (workflow_dispatch only; blank on tag push)'
         required: false
         default: ''
+      allow_retag:
+        description: 'Move the tag if it already points at a different commit. Off by default: repointing a published tag breaks rebuilds of what people already downloaded.'
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: write
@@ -37,27 +42,137 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;29.0.14206865"
 
-      - name: Create or update release tag
-        # Manual runs build from the branch HEAD; point the tag input there.
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+      - name: Resolve the tag, and refuse to move one that already exists
+        # A tag is a promise about what people downloaded. Repointing v2.0.0 at
+        # today's HEAD would leave every copy already in circulation pointing at
+        # code it is not, which breaks the one property a release cannot have:
+        # that the tag rebuilds. So an existing tag is only reused when it is
+        # already on this commit, and moving one needs an explicit opt-in.
+        id: tag
         env:
-          TAG: ${{ inputs.tag }}
+          INPUT_TAG: ${{ inputs.tag }}
+          ALLOW_RETAG: ${{ inputs.allow_retag || 'false' }}
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --force --tags
-          git tag -f "$TAG" "$GITHUB_SHA"
-          git push origin "$TAG" --force
+
+          # On workflow_dispatch GITHUB_REF_NAME is the branch, not a tag, so
+          # falling back to it blindly would happily create and push a release
+          # tag named after the branch. Only trust it when the ref really is a tag.
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            echo "::error::no tag given, and this run is not a tag push."
+            echo "::error::re-dispatch with a tag input such as v2.1.0, or push a v* tag."
+            exit 1
+          fi
+
+          # Check the shape before the tag is pushed. A tag is permanent and
+          # public, so "create it and let a later step complain" is the wrong
+          # order: it leaves a junk tag behind for every bad input.
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH, e.g. v2.1.0"; exit 1 ;;
+          esac
+
+          EXISTING="$(git rev-parse -q --verify "refs/tags/$TAG" || true)"
+          if [ -n "$EXISTING" ]; then
+            if [ "$EXISTING" = "$GITHUB_SHA" ]; then
+              echo "Tag $TAG already points at this commit; reusing it."
+            elif [ "$ALLOW_RETAG" = "true" ]; then
+              echo "::warning::repointing $TAG from $EXISTING to $GITHUB_SHA (allow_retag)"
+              git tag -f "$TAG" "$GITHUB_SHA"
+              git push origin "$TAG" --force
+            else
+              echo "::error::tag $TAG already exists on $EXISTING, and this run is $GITHUB_SHA."
+              echo "::error::re-running a published tag would make existing downloads irreproducible."
+              echo "::error::tag a new version instead, or re-dispatch with allow_retag=true if you really mean it."
+              exit 1
+            fi
+          else
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
       - name: Decode release keystore
+        # An empty secret here used to decode into a 0-byte file, pass `ls`, and
+        # surface much later as an opaque Gradle complaint about a bad keystore.
+        # Fail here instead, while the reason is still obvious.
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_STORE_TYPE }}
         run: |
+          set -euo pipefail
+          for var in ANDROID_KEYSTORE_BASE64 ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
+            if [ -z "${!var:-}" ]; then
+              echo "::error::secret $var is empty; the release cannot be signed"
+              exit 1
+            fi
+          done
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > keystore-release.jks
-          ls -l keystore-release.jks
+          test -s keystore-release.jks || { echo "::error::keystore decoded to an empty file"; exit 1; }
+          # Open it now, with the credentials the build will use. A keystore that
+          # does not match its own password has to fail here, not inside Gradle.
+          KEYTOOL="$(command -v keytool || true)"
+          if [ -z "$KEYTOOL" ] && [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/keytool" ]; then
+            KEYTOOL="$JAVA_HOME/bin/keytool"
+          fi
+          if [ -z "$KEYTOOL" ]; then
+            echo "::error::no keytool found; cannot check the keystore"
+            exit 1
+          fi
+          STORE_TYPE="${ANDROID_KEYSTORE_STORE_TYPE:-PKCS12}"
+          # -storepass:env, not -storepass: an argument would put the secret in the
+          # process list, and omitting it makes keytool prompt, which on a runner
+          # just hangs until the job times out.
+          #
+          # Capture the output instead of sending it to /dev/null. keytool reports a
+          # bad store or a missing alias on stdout, so discarding it turns every one
+          # of these failures into a silent step with no explanation at all.
+          if ! out="$("$KEYTOOL" -list -storepass:env ANDROID_KEYSTORE_PASSWORD -keystore keystore-release.jks -storetype "$STORE_TYPE" 2>&1)"; then
+            echo "::error::cannot open the keystore: wrong ANDROID_KEYSTORE_PASSWORD, or the base64 secret is not a $STORE_TYPE keystore"
+            echo "$out"
+            exit 1
+          fi
+          # -list only proves the store password; -alias proves the entry is really
+          # there under the name the build will ask for.
+          if ! out="$("$KEYTOOL" -list -storepass:env ANDROID_KEYSTORE_PASSWORD -keystore keystore-release.jks -storetype "$STORE_TYPE" -alias "$ANDROID_KEY_ALIAS" 2>&1)"; then
+            echo "::error::keystore has no entry called $ANDROID_KEY_ALIAS; check ANDROID_KEY_ALIAS"
+            echo "$out"
+            exit 1
+          fi
+          echo "Keystore opens, and alias $ANDROID_KEY_ALIAS is present."
+
+      - name: Work out the version from the tag
+        # One source of truth: the tag. The APK's own versionCode/versionName is
+        # derived from this, and the two checks further down fail the release if
+        # the APK and the tag ever disagree, so a mis-tagged build cannot ship.
+        id: version
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          # Exactly three numeric parts. The versionCode check below derives its
+          # number the same way Gradle does, and the two disagree on a two-part
+          # version like 2.1, so accept only the form both agree on.
+          case "$VERSION" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::tag '$TAG' is not MAJOR.MINOR.PATCH, e.g. v2.1.0"; exit 1 ;;
+          esac
+          echo "Building $TAG as version $VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Build signed release APK
         env:
@@ -66,11 +181,11 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEYSTORE_STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_STORE_TYPE }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon -PdeltatorVersion=${{ steps.version.outputs.version }}
 
       - name: Collect per-ABI release APKs
         env:
-          TAG_NAME: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
+          TAG_NAME: ${{ steps.tag.outputs.tag }}
         run: |
           mkdir -p dist
           shopt -s nullglob
@@ -83,14 +198,118 @@ jobs:
           test -f "dist/deltator-$TAG_NAME-armeabi-v7a.apk"
           test -f "dist/deltator-$TAG_NAME-universal.apk"
 
+      - name: Check the APK version matches the tag
+        # Gradle derives versionName/versionCode from the same property the tag
+        # produced, so this should hold by construction. It is here because the
+        # failure it catches is invisible until much later: a build that ignored
+        # the property would be uploaded under the tag, and Android would then
+        # refuse it as a downgrade for anyone already on a higher versionCode.
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          AAPT2="$(find "$ANDROID_HOME/build-tools" -name aapt2 -type f | sort -V | tail -1)"
+          if [ -z "$AAPT2" ]; then
+            echo "::error::no aapt2 found; cannot read the APK version"
+            exit 1
+          fi
+          # Same rule as app/build.gradle.kts: major*10000 + minor*100 + patch.
+          MAJOR="${EXPECTED_VERSION%%.*}"
+          REST="${EXPECTED_VERSION#*.}"
+          MINOR="${REST%%.*}"
+          PATCH="${REST#*.}"
+          PATCH="${PATCH%%[^0-9]*}"
+          EXPECTED_CODE=$(( MAJOR * 10000 + MINOR * 100 + PATCH ))
+          for apk in dist/*.apk; do
+            badging="$("$AAPT2" dump badging "$apk")"
+            code="$(echo "$badging" | grep -o 'versionCode=[^ ]*' | head -1 | cut -d= -f2 | tr -d "'")"
+            name="$(echo "$badging" | grep -o 'versionName=[^ ]*' | head -1 | cut -d= -f2 | tr -d "'")"
+            echo "$(basename "$apk"): versionName=$name versionCode=$code"
+            if [ "$name" != "$EXPECTED_VERSION" ]; then
+              echo "::error::$(basename "$apk") reports versionName $name but the tag says $EXPECTED_VERSION"
+              exit 1
+            fi
+            if [ "$code" != "$EXPECTED_CODE" ]; then
+              echo "::error::$(basename "$apk") has versionCode $code, expected $EXPECTED_CODE for $EXPECTED_VERSION"
+              echo "::error::a versionCode that does not go up blocks installation over the previous release."
+              exit 1
+            fi
+          done
+          echo "Every APK is version $EXPECTED_VERSION (code $EXPECTED_CODE)."
+
       - name: Verify APK signatures
         run: |
+          set -euo pipefail
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
           echo "Using apksigner: $APKSIGNER"
           for apk in dist/*.apk; do
             echo "== $apk"
             "$APKSIGNER" verify --verbose --print-certs "$apk"
           done
+
+      - name: Verify the APKs are signed by the expected certificate
+        # apksigner verify above only proves an APK is internally consistent and
+        # signed by whoever signed it. It does not prove *who*. Android chains
+        # updates to one key, so a release signed with a different certificate
+        # than the one already published installs cleanly on nothing: every
+        # existing user is stuck on their current version with no way forward,
+        # and CI would have been green the whole time.
+        #
+        # The expected SHA-256 lives in release-signing-cert.sha256 at the repo
+        # root. Replace the placeholder with the digest printed below on the
+        # first run that has a real one; after that this check is exact.
+        env:
+          PIN_FILE: release-signing-cert.sha256
+        run: |
+          set -euo pipefail
+          # Pull the first 64-hex run out of the file rather than reading it whole,
+          # so the file can keep its explanation without the comment text being
+          # glued onto the digest. No digest in the file means no pin, which the
+          # check below treats as a failure.
+          #
+          # Normalised before comparing, because the two tools that print a
+          # fingerprint disagree in ways that are easy to trip over: keytool writes
+          # 50:97:24:... in upper case, apksigner writes 509724... in lower case.
+          # Same certificate either way, so strip the colons and fold the case here
+          # rather than letting whoever pastes it in get a mismatch that looks like
+          # a key mismatch.
+          PIN="$(sed 's/://g' "$PIN_FILE" | grep -oiE '[0-9a-f]{64}' | head -1 | tr '[:upper:]' '[:lower:]' || true)"
+
+          actuals=""
+          for apk in dist/*.apk; do
+            # Every signer, not just #1: a rotation produces more than one line,
+            # and any signer that is not the pinned key is a reason to stop.
+            digests="$("$APKSIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
+            if [ -z "$digests" ]; then
+              echo "::error::$(basename "$apk") has no signer certificate"
+              exit 1
+            fi
+            for d in $digests; do
+              actuals="$actuals $d"
+            done
+            echo "$(basename "$apk") signed by $(echo "$digests" | tr '[:space:]' ',' | sed 's/,$//')"
+          done
+
+          # Fail closed while no real digest is pinned: shipping an unverified
+          # signer is exactly the case this step exists to catch.
+          if [ -z "$PIN" ]; then
+            echo "### Signing certificate not pinned yet" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "Put the digest below into $PIN_FILE on one line (colons optional), then rerun. The release was not published." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            for d in $actuals; do echo "- $d" >> "$GITHUB_STEP_SUMMARY"; done
+            echo "::error::$PIN_FILE has no 64-character SHA-256 fingerprint on a single line, so signer identity is NOT verified."
+            exit 1
+          fi
+
+          for d in $actuals; do
+            if [ "$d" != "$PIN" ]; then
+              echo "::error::signed by $d but the repo pins $PIN"
+              echo "::error::if the key was rotated on purpose, update $PIN_FILE in the same commit as the keystore secret."
+              exit 1
+            fi
+          done
+          echo "All APKs are signed by the pinned certificate $PIN"
 
       - name: Upload release APKs
         uses: actions/upload-artifact@v4
@@ -102,6 +321,6 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
+          tag_name: ${{ steps.tag.outputs.tag }}
           files: dist/*.apk
           generate_release_notes: true
