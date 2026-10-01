@@ -292,9 +292,11 @@ jobs:
 
           actuals=""
           for apk in dist/*.apk; do
-            # Every signer, not just #1: a rotation produces more than one line,
-            # and any signer that is not the pinned key is a reason to stop.
-            digests="$("$APKSIGNER" verify --print-certs "$apk" | sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]')"
+            raw=$("$APKSIGNER" verify --print-certs "$apk")
+            echo "---- raw from apksigner for $(basename "$apk") ----"
+            echo "$raw"
+            # Normalize every reported digest: lowercase and strip non-hex
+            digests="$(echo "$raw" | sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p' | tr '[:upper:]' '[:lower:]' | sed 's/[^0-9a-f]//g')"
             if [ -z "$digests" ]; then
               echo "::error::$(basename "$apk") has no signer certificate"
               exit 1
