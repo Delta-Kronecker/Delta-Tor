@@ -397,6 +397,15 @@ private fun WarnIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Ambe
 
 private const val REPO_URL = "https://github.com/Delta-Kronecker/Delta-Tor"
 
+/**
+ * How many countries the picker leads with, by exit bandwidth.
+ *
+ * 25 is where the curve flattens: these hold about 99% of all Tor exit
+ * bandwidth, so cutting the list here removes noise and removes nothing that
+ * could have been picked on purpose. Everything past it stays one tap away.
+ */
+private const val EXIT_PICKER_TOP = 25
+
 @Composable
 private fun ControlDrawer(
     onClose: () -> Unit,
@@ -415,8 +424,16 @@ private fun ControlDrawer(
     // `LazyListScope.() -> Unit`, which is not a @Composable function, so a
     // `remember` written in there does not compile. Only the item bodies are
     // composable.
+    //
+    // The prefix is cut at 25, not at every country that has an exit. Past that
+    // the numbers stop arguing with each other: the top 25 already hold 99.2%
+    // of the exit bandwidth, so ranks 26 to 61 are competing over the last 0.8%
+    // and a list that says "Germany, then Sweden, then the Maldives" is a list
+    // nobody can order. The remainder is not thrown away, it is one tap away
+    // under REST OF WORLD, with the countries that still have exits ahead of
+    // the ones that have none.
     val withExits = remember(countries, capacity) {
-        if (known) countries.takeWhile { capacity.containsKey(it.code) } else emptyList()
+        if (known) countries.take(EXIT_PICKER_TOP) else emptyList()
     }
     val without = remember(countries, capacity) {
         if (known) countries.drop(withExits.size) else countries
@@ -554,7 +571,7 @@ private fun ControlDrawer(
                     DrawerRow(last = countries.isEmpty()) {
                         CountryRow(
                             emoji = "\uD83C\uDF10",
-                            name = "Any location \u00b7 default",
+                            name = "Any location",
                             code = "--",
                             selected = selectedCodes.isEmpty(),
                             onClick = { ExitNodes.clear() }
@@ -577,8 +594,8 @@ private fun ControlDrawer(
                     if (known && withExits.isNotEmpty()) {
                         item(key = "grp-exits") {
                             DrawerGroupHeader(
-                                "COUNTRIES WITH RUNNING EXITS",
-                                "${withExits.size} of ${countries.size}"
+                                "COUNTRIES WITH THE MOST EXIT BANDWIDTH",
+                                "TOP ${withExits.size} OF ${countries.size}"
                             )
                         }
                     } else if (!known) {
@@ -609,7 +626,12 @@ private fun ControlDrawer(
                             // itself rather than hiding the selection.
                             val holdsSelection = without.any { it.code in selectedCodes }
                             DrawerGroupHeader(
-                                "NO RUNNING EXITS \u00b7 PICKING ONE DOES NOTHING",
+                                // This group is now two things at once: the
+                                // countries past the cut that still have exits,
+                                // and the ones that have none. Saying only "no
+                                // running exits" would be false of the first,
+                                // so the warning names the majority instead.
+                                "REST OF WORLD \u00b7 MOST HAVE NO EXIT",
                                 if (showAllCountries) "HIDE" else "SHOW ALL",
                                 muted = true,
                                 onClick = {
