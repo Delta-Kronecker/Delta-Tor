@@ -269,6 +269,14 @@ jobs:
           PIN_FILE: release-signing-cert.sha256
         run: |
           set -euo pipefail
+          # Every `run:` block is its own shell, so a variable set in an earlier
+          # step is not set here. Resolve apksigner in this step too, or this
+          # dies on an unbound APKSIGNER.
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::no apksigner found; cannot verify who signed these APKs"
+            exit 1
+          fi
           # Pull the first 64-hex run out of the file rather than reading it whole,
           # so the file can keep its explanation without the comment text being
           # glued onto the digest. No digest in the file means no pin, which the
