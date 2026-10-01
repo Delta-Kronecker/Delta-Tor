@@ -840,7 +840,7 @@ private fun stateColor(state: AppState.VpnState): Color = when {
 }
 
 private fun statusLabel(state: AppState.VpnState): String = when {
-    state.stopping -> "STOPPING"
+    state.stopping -> ""
     state.connecting -> "CONNECTING"
     state.connected -> "CONNECTED"
     state.torRunning -> "READY"
@@ -855,9 +855,8 @@ private fun glyphColor(connecting: Boolean, connected: Boolean, stopping: Boolea
 }
 
 private fun labelText(state: AppState.VpnState): String = when {
-    // Stopping outranks a leftover error: it is the one state where the button
-    // must read the same for every reason the connection was in.
-    state.stopping -> "STOPPING"
+    // Nothing here. The only STOPPING the user sees is the big word at the top.
+    state.stopping -> ""
     state.error != null -> state.error
     state.connecting -> "CANCEL"
     state.connected -> "DISCONNECT"
@@ -892,7 +891,7 @@ private fun sublineFor(
     peak: Int,
     hasError: Boolean
 ): String = when {
-    stopping -> "STOPPING"
+    stopping -> ""
     hasError -> "BOOTSTRAP FAILED"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
     reconnecting -> "RESTORING THE TUNNEL"
@@ -1315,15 +1314,12 @@ private fun BottomPanel(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         when {
-            // Nothing may be started while the cores are dying, so the row of
-            // actions is replaced by the phase itself.
-            state.stopping -> GradientPill(
-                modifier = Modifier.fillMaxWidth(),
-                label = "STOPPING",
-                filled = false,
-                enabled = false,
-                onClick = {}
-            )
+            // Nothing is drawn while the cores are dying. connected and
+            // torRunning are both still true at this point, so they have to be
+            // excluded explicitly here rather than relying on the teardown
+            // having cleared them: the row would otherwise come straight back
+            // and hand the user a start button mid-teardown.
+            state.stopping -> Unit
             state.connected -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientPill(
                     modifier = Modifier.weight(1f),
@@ -1354,7 +1350,7 @@ private fun BottomPanel(
             }
         }
 
-        if (state.connected || state.torRunning) {
+        if (!state.stopping && (state.connected || state.torRunning)) {
             Spacer(Modifier.height(8.dp))
         }
         // Live speed on the home screen itself, not only in the notification.
