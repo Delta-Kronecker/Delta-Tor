@@ -309,6 +309,13 @@ jobs:
 
           # Fail closed while no real digest is pinned: shipping an unverified
           # signer is exactly the case this step exists to catch.
+          echo "=== PIN DEBUG ==="
+          echo "PIN_FILE=$PIN_FILE"
+          echo "PIN_LEN=${#PIN}"
+          echo "PIN=$PIN"
+          echo "ACTUALS_CLEAN=$(echo $actuals | tr '[:space:]' ',')"
+          echo "=== END PIN DEBUG ==="
+
           if [ -z "$PIN" ]; then
             echo "### Signing certificate not pinned yet" >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
