@@ -501,8 +501,6 @@ class TorRunner(
     // --- torrc ---
 
     private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
-        // webtunnel is slow to hand out circuits, and so is its memory twin.
-        val hasSlowTransport = name.startsWith(ParallelTorManager.TRANSPORT_WEBTUNNEL)
         val transports = cleanLines.map { it.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: "" }
             .filter { it.isNotEmpty() }
             .distinct()
@@ -517,18 +515,12 @@ class TorRunner(
             if (geoipFile.exists()) appendLine("GeoIPFile ${geoipFile.absolutePath}")
             if (geoip6File.exists()) appendLine("GeoIPv6File ${geoip6File.absolutePath}")
             appendLine("Log info stdout")
-            appendLine("CircuitBuildTimeout ${if (hasSlowTransport) 120 else 60}")
-            appendLine("LearnCircuitBuildTimeout 0")
             appendLine("KeepalivePeriod 30")
-            appendLine("NumEntryGuards 1")
             appendLine("ClientUseIPv4 1")
             appendLine("ClientUseIPv6 1")
             appendLine("ClientPreferIPv6ORPort auto")
-            appendLine("SafeLogging 0")
-            appendLine("AvoidDiskWrites 1")
             appendLine("DormantClientTimeout 2419200")
             appendLine("ClientBootstrapConsensusAuthorityDownloadInitialDelay 0")
-            appendLine("ConnectionPadding 1")
             appendLine("ReducedConnectionPadding 0")
         }.trim()
 

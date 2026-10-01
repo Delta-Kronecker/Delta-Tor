@@ -72,10 +72,9 @@ object TorrcSettings {
         FetchDirInfoEarly 1
         FetchDirInfoExtraEarly 1
 
-        PathsNeededToBuildCircuits 0.25
+        PathsNeededToBuildCircuits 0.1
 
         DisableDebuggerAttachment 1
-        AvoidDiskWrites 1
         SafeLogging 1
 
         ConfluxEnabled 1
@@ -88,7 +87,7 @@ object TorrcSettings {
         CircuitStreamTimeout 10
         CircuitBuildTimeout 40
         NumPrimaryGuards 20
-        Schedulers Vanilla
+        Schedulers KIST,Vanilla
         MaxClientCircuitsPending 128
         CircuitPriorityHalflife 5
     """.trimIndent()
