@@ -288,7 +288,9 @@ jobs:
           # Same certificate either way, so strip the colons and fold the case here
           # rather than letting whoever pastes it in get a mismatch that looks like
           # a key mismatch.
-          PIN="$(sed 's/://g' "$PIN_FILE" | grep -oiE '[0-9a-f]{64}' | head -1 | tr '[:upper:]' '[:lower:]' || true)"
+          # Be extremely defensive about the pin file (CRLF/BOM/comments)
+          PIN_RAW="$(tr -d '\r' < "$PIN_FILE" | sed '1{/^#!/d}; /^[[:space:]]*#/d; /^[[:space:]]*$/d' | head -1)"
+          PIN="$(echo "$PIN_RAW" | tr -d '[:space:]:-' | tr '[:upper:]' '[:lower:]' | grep -oE '[0-9a-f]{64}' | head -1 || true)"
 
           actuals=""
           for apk in dist/*.apk; do
