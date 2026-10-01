@@ -892,7 +892,7 @@ private fun sublineFor(
     peak: Int,
     hasError: Boolean
 ): String = when {
-    stopping -> "KILLING EVERY TOR CORE"
+    stopping -> "STOPPING"
     hasError -> "BOOTSTRAP FAILED"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
     reconnecting -> "RESTORING THE TUNNEL"
@@ -1319,7 +1319,7 @@ private fun BottomPanel(
             // actions is replaced by the phase itself.
             state.stopping -> GradientPill(
                 modifier = Modifier.fillMaxWidth(),
-                label = "STOPPING \u00b7 KILLING EVERY TOR CORE",
+                label = "STOPPING",
                 filled = false,
                 enabled = false,
                 onClick = {}
