@@ -871,6 +871,13 @@ class TorVpnService : VpnService() {
     }
 
     private fun markReconnecting(reason: String) {
+        // A link event can arrive just after the user hit stop. Reconnecting now
+        // would start cores again in the middle of the teardown, so the stop
+        // wins and the button stays locked.
+        if (AppState.state.value.stopping) {
+            Log.w(TAG, "Ignoring reconnect ($reason): a stop is tearing the cores down")
+            return
+        }
         Log.w(TAG, "Reconnecting: $reason")
         AppState.update { it.copy(reconnecting = true) }
         updateNotification("Reconnecting\u2026", progress = false, progressValue = 0)
@@ -990,6 +997,16 @@ class TorVpnService : VpnService() {
     }
 
     private fun fail(message: String) {
+        // A connect that was already in flight when the user hit stop can fail
+        // on its way out. Reporting that now would clear the stop flag while the
+        // teardown is still running, which unlocks the button and lets a start
+        // race the cores for their ports, and it would run a second teardown
+        // concurrently with the first. The stop owns the teardown; the failure
+        // is only worth recording if nothing was stopping.
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring '$message': a stop is already tearing the cores down")
+            return
+        }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
         AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message) }
@@ -1000,11 +1017,37 @@ class TorVpnService : VpnService() {
     }
 
     private fun disconnect() {
-        Log.i(TAG, "Disconnecting...")
-        Log.endSession("disconnected by user")
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring disconnect: a stop is already tearing the cores down")
+            return
+        }
+        val s = AppState.state.value
+        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning) {
+            Log.i(TAG, "Nothing to disconnect")
+            return
+        }
+        val startedAt = SystemClock.elapsedRealtime()
+        Log.i(TAG, "Disconnecting: TUN, tunnel and every Tor core")
+        AppState.update {
+            it.copy(
+                stopping = true,
+                connecting = false,
+                connected = false,
+                reconnecting = false,
+                error = null
+            )
+        }
+        updateNotification("Stopping \u00b7 killing every Tor core", progress = true, progressValue = 0)
         serviceScope.launch {
-            AppState.update { it.copy(connecting = false, connected = false, stopping = false, error = null) }
             teardown()
+            val left = STOPPING_MIN_MS - (SystemClock.elapsedRealtime() - startedAt)
+            if (left > 0) {
+                Log.i(TAG, "cores are gone, holding STOPPING for another ${left}ms")
+                delay(left)
+            }
+            Log.endSession("disconnected by user")
+            Log.i(TAG, "disconnected: no Tor core is left running")
+            AppState.update { it.copy(stopping = false, torRunning = false) }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }

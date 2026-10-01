@@ -855,8 +855,10 @@ private fun glyphColor(connecting: Boolean, connected: Boolean, stopping: Boolea
 }
 
 private fun labelText(state: AppState.VpnState): String = when {
-    state.error != null -> state.error
+    // Stopping outranks a leftover error: it is the one state where the button
+    // must read the same for every reason the connection was in.
     state.stopping -> "STOPPING"
+    state.error != null -> state.error
     state.connecting -> "CANCEL"
     state.connected -> "DISCONNECT"
     state.torRunning -> "START VPN"
@@ -871,8 +873,8 @@ private fun wordFor(
     stopping: Boolean,
     hasError: Boolean
 ): String = when {
-    hasError -> "ERROR"
     stopping -> "STOPPING"
+    hasError -> "ERROR"
     connecting -> "CONNECTING"
     reconnecting -> "LINK LOST"
     connected -> "CONNECTED"
@@ -890,8 +892,8 @@ private fun sublineFor(
     peak: Int,
     hasError: Boolean
 ): String = when {
-    hasError -> "BOOTSTRAP FAILED"
     stopping -> "KILLING EVERY TOR CORE"
+    hasError -> "BOOTSTRAP FAILED"
     connecting -> "TUNNEL BOOTSTRAPPING \u00b7 $peak%"
     reconnecting -> "RESTORING THE TUNNEL"
     connected -> "${transport.uppercase()} \u00b7 GATEWAY ACTIVE"
