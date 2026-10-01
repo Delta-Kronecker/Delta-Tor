@@ -80,12 +80,16 @@ object Config {
         set(value) = prefs.edit().putBoolean("debug_mode", value).apply()
 
     /**
-     * Whether the connection log is recorded. On by default, because a log that
-     * records nothing is no use to anyone who then has a problem; off is for the
-     * user who would rather have the memory and the battery back.
+     * Whether the connection log is recorded.
+     *
+     * Off by default. Recording every Tor line of every connect attempt across
+     * three Tor cores is the most expensive thing in the app that the user never
+     * asked for, and nobody misses a log they never turned on. The bootstrap
+     * percentage and the failure reason still appear on screen without it, since
+     * Tor's output is read either way; only the kept history is off.
      */
     var loggingEnabled: Boolean
-        get() = prefs.getBoolean("logging_enabled", true)
+        get() = prefs.getBoolean("logging_enabled", false)
         set(value) = prefs.edit().putBoolean("logging_enabled", value).apply()
 
     var transportMode: String

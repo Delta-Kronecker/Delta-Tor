@@ -14,6 +14,31 @@ import android.content.SharedPreferences
  *
  * The prefs key carries a version suffix: bumping it hands every existing install
  * the new default template instead of leaving it on the values it was shipped with.
+ *
+ * The shipped template carries no comments, because it is shown verbatim in an
+ * editable text field and prose about the config is not what someone editing a
+ * config is looking at. The reasoning lives here instead, where it does not get
+ * written into the user's torrc:
+ *
+ *  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort`, ever.
+ *    Three Tor processes run in parallel and the app owns the only SOCKS5
+ *    listener; a hard-coded port here would be claimed by whichever started
+ *    first and make the other two fail. `SocksPolicy` only.
+ *  - `ConfluxEnabled` / `ConfluxClientUX` are the only Conflux knobs this Android
+ *    tor binary has. The `ConfluxNum*` family is fork-only and would abort
+ *    startup here, so it is left out rather than parked as a comment.
+ *  - `CircuitPadding`, `ConnectionPadding` and `UseMicrodescriptors` trade
+ *    cover traffic for throughput. That is a deliberate choice, not a default.
+ *  - `MaxCircuitDirtiness`, `SocksTimeout`, `CircuitBuildTimeout` and
+ *    `MaxClientCircuitsPending` appear twice, and the repeat is intentional:
+ *    torrc is last-wins, so the tail block overrides the bootstrap block above it.
+ *    The tail is the reconnect tuning. 24h circuits kept feeding a circuit Tor
+ *    had not noticed was dead; a 2 minute `SocksTimeout` held stalled tun2socks
+ *    connections; and a 20s `CircuitBuildTimeout` threw away a build that was
+ *    about to succeed, so a returning network paid for several complete attempts
+ *    and every one of them read as a dead link to the liveness probe.
+ *  - `NewCircuitPeriod 10` keeps one spare circuit ahead, so a returning network
+ *    finds a warm circuit instead of a cold start.
  */
 object TorrcSettings {
 
@@ -22,29 +47,13 @@ object TorrcSettings {
     private lateinit var prefs: SharedPreferences
 
     val defaultTemplate: String = """
-        # DeltaTor (Android) - speed-optimized torrc template (tor 0.4.9.11)
-        # Adapted from the portable Windows DeltaTor config. All parameters are
-        # kept, except lines that must be Android-managed:
-        #   - DataDirectory / GeoIP* : absolute paths are set by the app.
-        #   - ClientTransportPlugin  : appended automatically on connect.
-        #   - Log path               : app reads stdout for the in-app log.
-        # Bridges are appended automatically on connect.
-
-        # --- Local proxy policy ---
-        # The SOCKS5 listener is set by the app and is the only listener:
-        # three Tor processes (vanilla / obfs4 / webtunnel) run in parallel, so
-        # any hard-coded port here would be claimed by the first one to start
-        # and make the other two fail. Never add fixed SocksPort /
-        # HTTPTunnelPort / DNSPort / ControlPort lines to this template.
         SocksPolicy accept 127.0.0.1
         SocksPolicy reject *
 
-        # --- Remove cover-traffic padding (privacy OFF; pure throughput) ---
         CircuitPadding 0
         ConnectionPadding 0
         UseMicrodescriptors 1
 
-        # --- Bootstrap/circuit tuning ---
         DormantOnFirstStartup 0
         DormantCanceledByStartup 1
         LearnCircuitBuildTimeout 0
@@ -55,54 +64,28 @@ object TorrcSettings {
         MaxClientCircuitsPending 64
         SocksTimeout 60
 
-        # --- Faster start from a clean state (lower directory download delays) ---
         ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
         ClientBootstrapConsensusFallbackDownloadInitialDelay 0
         ClientBootstrapConsensusAuthorityOnlyDownloadInitialDelay 0
         ClientBootstrapConsensusMaxInProgressTries 6
 
-        # --- Fetch directory info early so the first circuits are ready sooner ---
         FetchDirInfoEarly 1
         FetchDirInfoExtraEarly 1
 
-        # --- Consider the client connected once 25% of paths succeed ---
         PathsNeededToBuildCircuits 0.25
 
-        # --- Operational (Android manages paths; the rest is kept) ---
         DisableDebuggerAttachment 1
         AvoidDiskWrites 1
         SafeLogging 1
 
-        # --- EXPERIMENT: Conflux (split traffic across circuits) ---
-        # This Android tor build supports ConfluxEnabled + ConfluxClientUX only.
-        # The fork-only knobs below are NOT in the Android binary and would abort
-        # startup, so they are preserved as comments.
         ConfluxEnabled 1
         ConfluxClientUX throughput
-        # ConfluxNumSets 32
-        # ConfluxNumLinkedSets 32
-        # ConfluxNumLegs 1
-        # ConfluxSetSelection 1
-        # ConfluxSetRttPct 15
 
-        # --- strategy: ultimate (later values win over the tuning above) ---
-        # Reconnect tuning: these three decide how fast traffic flows again after
-        # the network drops. 24h circuits (the old value) kept feeding a circuit
-        # Tor had not noticed was dead, and a 2 minute SocksTimeout held stalled
-        # tun2socks connections; 10 min turnover plus a 30s client timeout let the
-        # first request after the link returns find a usable circuit.
         MaxCircuitDirtiness 600
-        # Always build one spare circuit ahead, so a returning network is a warm
-        # circuit instead of a cold start (default is 30).
         NewCircuitPeriod 10
         SocksTimeout 30
         CircuitsAvailableTimeout 4320
         CircuitStreamTimeout 10
-        # 40s, not 20. A build through a bridge that a 20s budget abandons is
-        # thrown away and retried from the first hop, so a network that came
-        # back paid for several complete attempts before one circuit existed,
-        # and every one of them read as a dead link to the liveness probe. 40s
-        # lets one attempt finish.
         CircuitBuildTimeout 40
         NumPrimaryGuards 20
         Schedulers Vanilla

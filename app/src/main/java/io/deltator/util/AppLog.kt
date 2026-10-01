@@ -67,7 +67,7 @@ object AppLog {
      * read, because the bootstrap percentage and the proven bridges are parsed
      * out of it.
      */
-    @Volatile var enabled = true
+    @Volatile var enabled = false
 
     // --- connect sessions -----------------------------------------------------
     private val sessionLock = Any()
