@@ -79,16 +79,23 @@ jobs:
             *) echo "::error::tag '$TAG' is not vMAJOR.MINOR.PATCH, e.g. v2.1.0"; exit 1 ;;
           esac
 
-          EXISTING="$(git rev-parse -q --verify "refs/tags/$TAG" || true)"
-          if [ -n "$EXISTING" ]; then
-            if [ "$EXISTING" = "$GITHUB_SHA" ]; then
-              echo "Tag $TAG already points at this commit; reusing it."
+          # Peel both sides to commits before comparing. An annotated tag makes
+          # refs/tags/$TAG a *tag object*, whose SHA is not the SHA of the
+          # commit it points at, while GITHUB_SHA is that commit. Comparing them
+          # raw therefore never matches for exactly the annotated tags a
+          # release should use, and the run dies in the guard below on a tag
+          # that is in fact already correct.
+          EXISTING_COMMIT="$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" || true)"
+          THIS_COMMIT="$(git rev-parse -q --verify "$GITHUB_SHA^{commit}" || true)"
+          if [ -n "$EXISTING_COMMIT" ]; then
+            if [ "$EXISTING_COMMIT" = "$THIS_COMMIT" ]; then
+              echo "Tag $TAG already points at this commit; reusing it as-is."
             elif [ "$ALLOW_RETAG" = "true" ]; then
-              echo "::warning::repointing $TAG from $EXISTING to $GITHUB_SHA (allow_retag)"
+              echo "::warning::repointing $TAG from $EXISTING_COMMIT to $THIS_COMMIT (allow_retag)"
               git tag -f "$TAG" "$GITHUB_SHA"
               git push origin "$TAG" --force
             else
-              echo "::error::tag $TAG already exists on $EXISTING, and this run is $GITHUB_SHA."
+              echo "::error::tag $TAG already exists on $EXISTING_COMMIT, and this run is $THIS_COMMIT."
               echo "::error::re-running a published tag would make existing downloads irreproducible."
               echo "::error::tag a new version instead, or re-dispatch with allow_retag=true if you really mean it."
               exit 1
