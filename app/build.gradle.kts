@@ -20,6 +20,50 @@ rootProject.file("keystore.properties").takeIf { it.exists() }?.let { f ->
 val releaseKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
     ?: keystoreProperties.getProperty("storeFile")
 
+// --- Version -------------------------------------------------------------------
+// The version comes from the release tag, not from a number in this file that
+// somebody has to remember to bump. It was 2.0.0 for a while, which meant a
+// release workflow happily published deltator-v2.1.0-arm64-v8a.apk containing an
+// app that identified itself as 2.0.0: the filename said one thing, the manifest
+// said another, and neither the filename nor the archive could catch it.
+//
+// The release workflow passes the tag as -PdeltatorVersion (or DELTATOR_VERSION).
+// A plain `assembleDebug` here, and the debug CI, get the fallback below, which
+// is the last published version.
+val appVersion: String = (findProperty("deltatorVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() }
+    ?: System.getenv("DELTATOR_VERSION")?.trim()?.takeIf { it.isNotEmpty() }
+    ?: "2.0.0"
+
+// major*10000 + minor*100 + patch, so it grows with the version and stays an
+// integer for the whole 1.x and 2.x range. Play only accepts a versionCode
+// higher than the last one, so this has to be monotonic: it is, for as long as
+// minor and patch each stay below 100.
+val appVersionPattern = Regex("""^(\d+)\.(\d+)(?:\.(\d+))?(?:[-+][0-9A-Za-z.\-]+)?$""")
+val appVersionMatch = appVersionPattern.matchEntire(appVersion)
+    ?: throw GradleException(
+        "deltatorVersion must look like 2.1.0 or 2.1.0-rc1, got '$appVersion'. " +
+            "The Release workflow derives it from the git tag, so fix the tag " +
+            "rather than the value: a release must not ship under a version it was not tagged."
+    )
+val appVersionMinor: Int = appVersionMatch.groupValues[2].toInt()
+val appVersionPatch: Int = appVersionMatch.groupValues[3].ifEmpty { "0" }.toInt()
+
+// Enforced rather than only documented, because staying under 100 is what keeps
+// this arithmetic from colliding: 2.0.100 and 2.1.0 would both be 20100, and
+// 2.100.0 (21000) sorts below 2.99.99 (29999). In both cases the newer version
+// gets a versionCode that is not larger, and Android silently refuses to install
+// it over the older one.
+if (appVersionMinor >= 100 || appVersionPatch >= 100) {
+    throw GradleException(
+        "deltatorVersion $appVersion has minor=$appVersionMinor patch=$appVersionPatch. " +
+            "versionCode is major*10000 + minor*100 + patch, so minor and patch must " +
+            "both stay below 100 or versionCode stops increasing with the version."
+    )
+}
+
+val appVersionCode: Int =
+    appVersionMatch.groupValues[1].toInt() * 10_000 + appVersionMinor * 100 + appVersionPatch
+
 android {
     namespace = "io.deltator"
     compileSdk = 36
@@ -29,8 +73,8 @@ android {
         applicationId = "io.deltator"
         minSdk = 24
         targetSdk = 35
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = appVersionCode
+        versionName = appVersion
     }
 
     signingConfigs {

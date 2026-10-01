@@ -1,0 +1,17 @@
+# SHA-256 fingerprint of the certificate that signs release APKs.
+#
+# To get it, either:
+#   keytool -list -v -keystore <your.jks> -alias <alias>     # look for "SHA256:"
+#   apksigner verify --print-certs <an-apk>                 # look for "SHA-256 digest:"
+#
+# Copy the fingerprint onto one line below. Colons are optional and case does
+# not matter, so you can paste keytool's output exactly as it prints it. Add a
+# comment line above it if you like; the first 64 hex characters are used.
+#
+# This is deliberately NOT a repository secret. It is the public part of the key:
+# anyone who downloads the APK can read it, and it is safe to commit. The
+# private key and the passwords stay in repository secrets. Pinning the
+# fingerprint in a reviewed file is the whole point -- if it lived in a secret,
+# whoever rotated the key would rotate the expected value in the same breath and
+# the check would approve itself.
+REPLACE_WITH_SHA256_OF_SIGNING_CERTIFICATE
