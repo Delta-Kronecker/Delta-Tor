@@ -25,6 +25,13 @@ object AppState {
         val transports: Map<String, Int> = emptyMap(),
         val transport: String = "",
         val error: String? = null,
+        /**
+         * A non-fatal hint shown while connecting, e.g. the snowflake advice
+         * after a long auto-mode race. Deliberately separate from [error]: an
+         * advisory must not turn the ring into ERROR, and must survive the
+         * connection it is about.
+         */
+        val advisory: String? = null,
         val txBytes: Long = 0,
         val rxBytes: Long = 0,
         val txSpeed: Float = 0f,
