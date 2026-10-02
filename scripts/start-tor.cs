@@ -86,6 +86,9 @@ namespace StartTor
         private static readonly string KeepAliveFile = Path.Combine(DataDir, "keepalive.txt");
         private static readonly string AutoProxyFile = Path.Combine(DataDir, "auto-proxy.txt");
         private static readonly string IsolateSOCKSFile = Path.Combine(DataDir, "isolate-socks.txt");
+        // Exit-country picker state. Same shape as Android ExitNodes: a comma
+        // separated code list, written by the UI.
+        private static readonly string ExitNodesFile = Path.Combine(DataDir, "exit-ccs.txt");
         private const int KeepAliveSocksPort = 9052;
         private const string KeepAliveUsername = "deltator-keepalive";
         private const int MaxSpeedTestStreams = 4;
@@ -1053,6 +1056,33 @@ namespace StartTor
             catch { }
         }
 
+        /// <summary>
+        /// The exit countries the user picked in the drawer, as uppercase
+        /// two-letter codes. Empty means "any country", which is also what a
+        /// missing or unreadable file resolves to, so a corrupt setting can
+        /// never stop Tor from starting.
+        /// </summary>
+        private static List<string> ReadExitNodes()
+        {
+            var codes = new List<string>();
+            try
+            {
+                if (!File.Exists(ExitNodesFile)) return codes;
+                foreach (string raw in File.ReadAllText(ExitNodesFile).Split(','))
+                {
+                    string t = raw.Trim().ToUpperInvariant();
+                    if (t.Length != 2) continue;
+                    bool alpha = true;
+                    foreach (char ch in t)
+                        if (ch < 'A' || ch > 'Z') { alpha = false; break; }
+                    if (!alpha || codes.Contains(t)) continue;
+                    codes.Add(t);
+                }
+            }
+            catch { }
+            return codes;
+        }
+
         private static void PromptConfluxSets()
         {
             Console.WriteLine("  ConfluxNumSets = how many conflux sets to keep alive");
@@ -1542,6 +1572,20 @@ namespace StartTor
                 sb.AppendLine();
                 sb.AppendLine("# --- conflux: keep best " + confluxRttPct + "% of sets by RTT ---");
                 sb.AppendLine("ConfluxSetRttPct " + confluxRttPct);
+            }
+            // Exit-country steer. StrictNodes 0 on purpose: the list decides which
+            // countries an exit may come from, but it must never make a circuit
+            // impossible to build, so tor still falls back when a picked
+            // country has no reachable relay. Same pair Android emits.
+            List<string> exitCcs = ReadExitNodes();
+            if (exitCcs.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine();
+                sb.AppendLine("# --- exit countries: " + string.Join(",", exitCcs.ToArray()) + " ---");
+                sb.AppendLine("ExitNodes " + string.Join(",", exitCcs.ConvertAll(
+                    delegate(string c) { return "{" + c + "}"; }).ToArray()));
+                sb.AppendLine("StrictNodes 0");
             }
             return sb.ToString();
         }

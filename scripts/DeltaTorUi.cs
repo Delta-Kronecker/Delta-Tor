@@ -13,6 +13,7 @@ using System.Drawing.Drawing2D;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Globalization;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Windows.Forms;
@@ -389,7 +390,7 @@ namespace StartTor
         private sealed class MainForm : Form
         {
             private enum RunState { Idle, Connecting, Connected, Restarting, Stopping }
-            private enum Page { Main, Settings, Log, Torrc }
+            private enum Page { Main, Drawer, Log, Torrc }
 
             private RunState state = RunState.Idle;
             private Page page = Page.Main;
@@ -415,7 +416,26 @@ namespace StartTor
             private bool anyHover;
 
             private bool autoProxyEnabled;
-            private int settingsScrollY;
+
+            // ---- drawer (Android ControlDrawer parity) -------------------
+            // Both sections start collapsed, like Android: the drawer opens on
+            // its two headings, not on 248 countries.
+            private bool drawerShowLocation;
+            private bool drawerShowAdvanced;
+            private bool drawerShowAllCountries;
+            private int drawerScrollY;
+            // code -> name for every country in countries.tsv, and the
+            // capacity table for the ones that have exits. Loaded off the UI
+            // thread on open; empty until then, which the section heading says.
+            private readonly List<Country> drawerCountries = new List<Country>();
+            private readonly Dictionary<string, ExitCap> drawerCapacity =
+                new Dictionary<string, ExitCap>(StringComparer.OrdinalIgnoreCase);
+            // Codes the user picked, in tap order. Mirrors Android ExitNodes.
+            private readonly List<string> exitCodes = new List<string>();
+            private readonly Dictionary<string, string> exitNames =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            private bool geoipLoaded;
+            private string geoipError = "";
 
             private int editRow = -1;
             private string editBuf = "";
@@ -426,7 +446,7 @@ namespace StartTor
             private System.Windows.Forms.ContextMenuStrip trayMenu;
 
 private Rectangle rcClose, rcMin,
-                             rcProxy, rcTun, rcSettings, rcPower, rcBack, rcUpdateBtn;
+                             rcProxy, rcTun, rcPower, rcBack, rcUpdateBtn;
             // state block + ring label
             private Rectangle rcStateWord, rcStateSub, rcRingLabel, rcPortsLine;
             // bottom panel (Android BottomPanel parity)
@@ -518,11 +538,12 @@ private Rectangle rcClose, rcMin,
                 catch { }
 
                 string forced = Environment.GetEnvironmentVariable("DELTATOR_UI_PAGE");
-                if (forced == "settings") page = Page.Settings;
+                if (forced == "drawer" || forced == "settings") page = Page.Drawer;
                 else if (forced == "log") page = Page.Log;
                 else if (forced == "torrc") { page = Page.Torrc; torrcBuf = ReadTorrcTemplate(); }
 
                 Resize += delegate { LayoutPass(); };
+                HandleCreated += delegate { FlushUiQueue(); };
                 Paint += OnPaintAll;
                 MouseMove += OnMouseMoveAll;
                 MouseDown += OnMouseDownAll;
@@ -574,6 +595,11 @@ private Rectangle rcClose, rcMin,
                     uiModePos = ModeNames.Length;   // Auto race
                 }
                 autoProxyEnabled = ReadAutoProxySetting();
+                LoadExitSelection();
+                // Read the country tables at startup, like Android's
+                // loadDirectory() in onCreate, so the picker is already
+                // ordered the first time the drawer is opened.
+                LoadGeoTables();
                 LogLine("DeltaTor " + DeltaTorVersion.App);
             }
 
@@ -625,8 +651,10 @@ private Rectangle rcClose, rcMin,
                 rcProxy = new Rectangle(0, 0, 0, 0);
                 rcTun = new Rectangle(0, 0, 0, 0);
 
-                // ---- settings row directly above the panel -----------------
-                rcSettings = new Rectangle(24, py - 14 - 38, pw, 38);
+                // The state block centres in the space between the titlebar and
+                // the bottom panel. The panel's top edge is that bound; it used
+                // to be measured through the SETTINGS pill, which is gone.
+                int panelTop = py - 14;
 
                 // ---- update banner under the titlebar ----------------------
                 rcUpdateBtn = showUpd
@@ -635,7 +663,7 @@ private Rectangle rcClose, rcMin,
 
                 // ---- state block + ring centred in what is left -----------
                 int topLimit = showUpd ? 92 : 46;
-                int avail = rcSettings.Top - 14 - topLimit;
+                int avail = panelTop - 14 - topLimit;
                 int blockH = 34 + 16 + 10 + 104 + 22 + 18;
                 int by3 = topLimit + Math.Max(0, (avail - blockH) / 2);
                 rcStateWord = new Rectangle(0, by3, w, 34);
@@ -644,10 +672,16 @@ private Rectangle rcClose, rcMin,
                 rcRingLabel = new Rectangle(0, rcPower.Bottom + 8, w, 22);
                 rcPortsLine = new Rectangle(0, rcPower.Bottom + 30, w, 18);
 
-                // ---- settings rows -----------------------------------------
+// ---- settings rows -----------------------------------------
                 // Grouped into sections, so each new section pushes its rows
-                // down by one header band.
-                int ry = 78 - settingsScrollY;
+                // down by one header band. The rows live inside the drawer's
+                // ADVANCED section, so they start below it when it is open and
+                // at the top of the scroll area when it is not; the whole block
+                // is clipped to the drawer viewport in PaintDrawer.
+                int ry;
+                if (drawerShowAdvanced) ry = rcDrawerAdvanced.Bottom + 26;
+                else ry = rcDrawerAdvanced.Y + 54;
+                ry -= drawerScrollY;
                 int rowCount = SettingLabels.Length;
                 int lastSec = -1;
                 for (int i = 0; i < rowCount; i++)
@@ -676,6 +710,8 @@ private Rectangle rcClose, rcMin,
                 }
                 rcBack = new Rectangle(14, 42, 96, 26);
 
+                // ---- drawer geometry ----------------------------------------
+                LayoutDrawerPass();
                 // ---- log page ------------------------------------------------
                 rcLogCopy = new Rectangle(w - 84, 42, 70, 26);
 
@@ -816,7 +852,7 @@ private Rectangle rcClose, rcMin,
                 {
                     PaintTitlebar(g);
                     if (page == Page.Main) PaintMain(g);
-                    else if (page == Page.Settings) PaintSettings(g);
+                    else if (page == Page.Drawer) PaintDrawer(g);
                     else if (page == Page.Log) PaintLog(g);
                     else PaintTorrc(g);
                 }
@@ -844,14 +880,23 @@ private Rectangle rcClose, rcMin,
                 Theme.FillGradient(g, new Rectangle(0, 0, ClientSize.Width, 36),
                     Theme.SurfaceAlt, Theme.Surface);
 
+                // Android's top bar opens the controls drawer from a hamburger
+                // on the left. Windows had a SETTINGS pill in the body instead;
+                // the hamburger is where the same door is now.
+                if (page == Page.Main)
+                    DrawHamburger(g, rcHamburger, hoverId == 30);
+
+                // The dot and the word move right of the hamburger on Main and
+                // keep their old place on the sub-pages, which have no drawer.
+                int barLeft = page == Page.Main ? 52 : 30;
                 Color sc = StateColor();
-                Theme.DrawGlow(g, new Rectangle(11, 10, 14, 14), sc, 6, 40);
+                Theme.DrawGlow(g, new Rectangle(barLeft - 19, 10, 14, 14), sc, 6, 40);
                 g.SmoothingMode = SmoothingMode.AntiAlias;
                 using (SolidBrush b = new SolidBrush(sc))
-                    g.FillEllipse(b, 14, 13, 8, 8);
+                    g.FillEllipse(b, barLeft - 16, 13, 8, 8);
 
                 TextRenderer.DrawText(g, "DeltaTor", Theme.Title(),
-                    new Rectangle(30, 0, 120, 36), Theme.Text,
+                    new Rectangle(barLeft, 0, 120, 36), Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
 
                 // Android's StatusChip lives in the titlebar here, because the
@@ -1023,20 +1068,6 @@ private Rectangle rcClose, rcMin,
                         Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }
 
-// SETTINGS is navigation, not part of the stats panel, so it stays
-                // reachable while stopping — Android keeps its drawer live too.
-                bool hovSet = hoverId == 30;
-                Theme.PillGradient(g, rcSettings,
-                    hovSet ? Theme.SurfaceLight : Theme.SurfaceAlt,
-                    hovSet ? Theme.SurfaceAlt : Theme.Surface, Theme.Border);
-                TextRenderer.DrawText(g, "SETTINGS", Theme.H2(),
-                    new Rectangle(rcSettings.Left + 18, rcSettings.Y,
-                        rcSettings.Width - 36, rcSettings.Height),
-                    Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-                DrawChevron(g, new Rectangle(rcSettings.Right - 34,
-                    rcSettings.Y + (rcSettings.Height - 24) / 2, 24, 24),
-                    true, hovSet);
-
                 // Android renders nothing at all while stopping, and shows "--"
                 // for every stat that is not live. Same rules here.
                 if (state != RunState.Stopping)
@@ -1180,74 +1211,427 @@ private Rectangle rcClose, rcMin,
                 }
             }
 
-            private void PaintSettings(Graphics g)
+// ---- drawer layout ---------------------------------------------
+            // The drawer is a single scrollable column: the LOCATION heading,
+            // its body when it is open, a divider, the ADVANCED heading and the
+            // settings rows when that one is open. Android collapses both
+            // sections by default, so the drawer opens on two headings.
+            //
+            // Every rectangle is computed here rather than at paint time, and
+            // hit-testing reads the same fields, so a row cannot be drawn in
+            // one place and tapped in another.
+            private const int CountryRowHeight = 42;
+            // Country rows report CountryHitBase + index. It sits above the
+            // heading ids (3000/3001) and clear of 40, which is GoBack.
+            private const int CountryHitBase = 4000;
+            private const int ExitPickerTop = 25;
+            private int drawerContentHeight;
+            private readonly List<Rectangle> rcCountryRow = new List<Rectangle>();
+            private readonly List<string> countryRowCode = new List<string>();
+            private Rectangle rcHamburger, rcDrawerClose, rcDrawerLocation,
+                              rcDrawerAdvanced, rcDrawerGithub, rcDrawerScrollTrack,
+                              rcDrawerWarn;
+            private Rectangle rcRowAny, rcDrawerRestHeader, rcHeaderExits;
+
+            private void LayoutDrawerPass()
             {
-                bool hovBack = hoverId == 40;
-                TextRenderer.DrawText(g, hovBack ? "\u2039 BACK" : "\u2039 Back", Theme.Body(),
-                    rcBack, hovBack ? Theme.Text : Theme.Muted,
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
-                TextRenderer.DrawText(g, "SETTINGS", Theme.H2(),
-                    new Rectangle(0, 4, ClientSize.Width, 28), Theme.Text,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                int w = ClientSize.Width;
+                int hgt = ClientSize.Height;
+                rcHamburger = new Rectangle(8, 3, 34, 30);
+                rcDrawerClose = new Rectangle(w - 54, 46, 34, 34);
+                rcDrawerGithub = new Rectangle(20, hgt - 58, w - 40, 40);
+                rcRowAny = new Rectangle(0, 0, 0, 0);
+                rcDrawerRestHeader = new Rectangle(0, 0, 0, 0);
+                rcDrawerWarn = new Rectangle(0, 0, 0, 0);
 
-                int rowCount = SettingLabels.Length;
-                int settingsTop = 78;
-                int settingsBottom = ClientSize.Height - 8;
+                // The scroll area runs from under the drawer header to above the
+                // GITHUB pill, which is pinned to the bottom like Android's.
+                int top = 96;
+                int bottom = rcDrawerGithub.Top - 10;
+                int viewport = Math.Max(1, bottom - top);
+
+                rcCountryRow.Clear();
+                countryRowCode.Clear();
+
+                int y = top - drawerScrollY;
+                rcDrawerLocation = new Rectangle(0, y, w, 54);
+                y += 54;
+                if (drawerShowLocation)
+                {
+                    // The amber "use only when needed" card sits directly under
+                    // the heading, before any country, because it is a warning
+                    // about the whole section rather than about one row.
+                    rcDrawerWarn = new Rectangle(20, y, w - 40, 74);
+                    y += 74;
+                    rcRowAny = new Rectangle(20, y, w - 40, CountryRowHeight);
+                    y += CountryRowHeight;
+                    bool known = drawerCapacity.Count > 0;
+                    List<Country> withExits = WithExitCountries();
+                    List<Country> without = WithoutExitCountries();
+                    int shown = known ? Math.Min(ExitPickerTop, withExits.Count) : withExits.Count;
+                    // The group heading needs its own band, otherwise the
+                    // first row sits under the caption text.
+                    bool reading = !known && withExits.Count == 0 && without.Count == 0;
+                    rcHeaderExits = new Rectangle(20, y, w - 40, reading ? 30 : 22);
+                    y += rcHeaderExits.Height;
+                    for (int i = 0; i < shown; i++)
+                    {
+                        AddCountryRow(new Rectangle(20, y, w - 40, CountryRowHeight), withExits[i]);
+                        y += CountryRowHeight;
+                    }
+                    if (without.Count > 0)
+                    {
+                        // The header is tappable: it toggles the remainder and,
+                        // when the selection lives down there, it opens itself
+                        // instead of hiding the pick the user just made.
+                        rcDrawerRestHeader = new Rectangle(20, y, w - 40, 30);
+                        y += 30;
+                        bool openRest = drawerShowAllCountries || RestHoldsSelection();
+                        if (openRest)
+                            for (int i = 0; i < without.Count; i++)
+                            {
+                                AddCountryRow(new Rectangle(20, y, w - 40, CountryRowHeight), without[i]);
+                                y += CountryRowHeight;
+                            }
+                    }
+                    y += 8;
+                }
+                rcDrawerAdvanced = new Rectangle(0, y, w, 54);
+                y += 54;
+                if (drawerShowAdvanced)
+                {
+                    int lastSec = -1;
+                    for (int i = 0; i < SettingLabels.Length; i++)
+                    {
+                        int sec = SectionOf(i);
+                        if (sec != lastSec) { y += 26; lastSec = sec; }
+                        y += 37;
+                    }
+                    y += 10;
+                }
+
+                int contentH = Math.Max(0, y + drawerScrollY - top) + 14;
+                drawerContentHeight = contentH;
+                int maxScroll = Math.Max(0, contentH - viewport);
+                if (drawerScrollY > maxScroll) drawerScrollY = maxScroll;
+
+                if (contentH > viewport)
+                {
+                    int trackH = Math.Max(40, viewport * viewport / contentH);
+                    int span = viewport - trackH;
+                    int off = maxScroll > 0 ? span * drawerScrollY / maxScroll : 0;
+                    rcDrawerScrollTrack = new Rectangle(w - 6, top + off, 3, trackH);
+                }
+                else rcDrawerScrollTrack = new Rectangle(0, 0, 0, 0);
+
+            }
+
+            private void AddCountryRow(Rectangle r, Country c)
+            {
+                rcCountryRow.Add(r);
+                countryRowCode.Add(c.Code);
+            }
+
+            private int DrawerMaxScroll()
+            {
+                int viewport = Math.Max(1, rcDrawerGithub.Top - 10 - 96);
+                return Math.Max(0, drawerContentHeight - viewport);
+            }
+// ---- drawer painting -------------------------------------------
+            // Mirrors Android's ControlDrawer: a CONTROLS header with the
+            // "applies on the next connect" subline and a close box, then the
+            // two expandable sections, then a GITHUB pill pinned to the
+            // bottom. Both sections start collapsed.
+            private void PaintDrawer(Graphics g)
+            {
+                TextRenderer.DrawText(g, "CONTROLS", Theme.Big(), new Rectangle(20, 40, 260, 30),
+                    Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "Everything here applies on the next connect",
+                    Theme.Small(), new Rectangle(20, 68, rcDrawerClose.Left - 26, 18),
+                    Theme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+                DrawCloseIcon(g, rcDrawerClose, hoverId == 31);
+
+                int top = 96;
+                int bottom = rcDrawerGithub.Top - 10;
                 Region prevClip = g.Clip;
-                g.SetClip(new Rectangle(0, settingsTop, ClientSize.Width, settingsBottom - settingsTop));
+                g.SetClip(new Rectangle(0, top, ClientSize.Width, Math.Max(0, bottom - top)));
 
+                PaintSectionHeading(g, rcDrawerLocation, "LOCATION", LocationSummary(),
+                    drawerShowLocation, hoverId == 3000);
+                PaintSectionHeading(g, rcDrawerAdvanced, "ADVANCED",
+                    drawerShowAdvanced ? "TUNING AND TEMPLATES" : "HIDDEN",
+                    drawerShowAdvanced, hoverId == 3001);
+
+                if (drawerShowLocation)
+                {
+                    PaintLocationWarning(g);
+                    PaintCountryRow(g, new Rectangle(20, rcRowAny.Y, ClientSize.Width - 40,
+                        CountryRowHeight), "\U0001F310", "Any location \u00b7 default", "--",
+                        exitCodes.Count == 0, 0, 0f);
+                    bool known = drawerCapacity.Count > 0;
+                    List<Country> withExits = WithExitCountries();
+                    List<Country> without = WithoutExitCountries();
+                    int shown = known ? Math.Min(ExitPickerTop, withExits.Count) : withExits.Count;
+                    bool reading = !known && withExits.Count == 0 && without.Count == 0;
+                    if (reading)
+                        TextRenderer.DrawText(g, "Reading country list \u2026", Theme.Small(),
+                            rcHeaderExits, Theme.Muted,
+                            TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    else if (known)
+                        PaintGroupHeader(g, rcHeaderExits,
+                            "COUNTRIES WITH THE MOST EXIT BANDWIDTH",
+                            "TOP " + shown + " OF " + withExits.Count);
+                    else
+                        PaintGroupHeader(g, rcHeaderExits, "COUNTRIES",
+                            "EXIT DATA NOT LOADED", true);
+                    for (int i = 0; i < shown && i < withExits.Count; i++)
+                        PaintLoadedCountry(g, withExits[i]);
+                    if (without.Count > 0)
+                    {
+                        // The warning names the majority rather than claiming
+                        // there are no exits at all: the countries past the cut
+                        // that still have one are in this group too.
+                        bool hov = hoverId == 34;
+                        PaintGroupHeader(g, rcDrawerRestHeader,
+                            "REST OF WORLD \u00b7 MOST HAVE NO EXIT",
+                            drawerShowAllCountries ? "HIDE" : "SHOW ALL", true, hov);
+                        if (drawerShowAllCountries || RestHoldsSelection())
+                            for (int i = 0; i < without.Count; i++)
+                                PaintLoadedCountry(g, without[i]);
+                    }
+                }
+                DrawDivider(g, rcDrawerAdvanced.Y - 8);
+
+                if (drawerShowAdvanced)
+                    PaintSettingRows(g, rcDrawerAdvanced.Bottom, top, bottom);
+
+                g.Clip = prevClip;
+
+                if (rcDrawerScrollTrack.Height > 0)
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(90, Theme.BorderLight)))
+                        g.FillRectangle(b, rcDrawerScrollTrack);
+
+                bool hovGh = hoverId == 35;
+                Theme.PillGradient(g, rcDrawerGithub,
+                    hovGh ? Theme.Accent : Theme.AccentSoft,
+                    hovGh ? Theme.AccentSoft : Theme.AccentDark, Theme.Accent);
+                TextRenderer.DrawText(g, "GITHUB", Theme.H2(), rcDrawerGithub,
+                    hovGh ? Color.White : Theme.Text,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+
+            private void PaintLocationWarning(Graphics g)
+            {
+                Rectangle r = rcDrawerWarn;
+                if (r.Height <= 0) return;
+                using (GraphicsPath p = Theme.RoundRect(r, 12))
+                    using (SolidBrush b = new SolidBrush(Color.FromArgb(26, Theme.Amber.R, Theme.Amber.G, Theme.Amber.B)))
+                        g.FillPath(b, p);
+                TextRenderer.DrawText(g, "USE ONLY WHEN NEEDED", Theme.Caption(),
+                    new Rectangle(r.Left + 12, r.Y + 8, r.Width - 100, 16),
+                    Theme.Amber, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                bool hovClear = hoverId == 32;
+                TextRenderer.DrawText(g, "CLEAR", Theme.Caption(),
+                    new Rectangle(r.Right - 92, r.Y + 8, 80, 16),
+                    exitCodes.Count > 0 ? (hovClear ? Color.White : Theme.Red) : Theme.Muted,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g,
+                    "Picking a country sends your traffic through a relay there. " +
+                    "It can lower your speed and make the connection less stable.",
+                    Theme.Small(),
+                    new Rectangle(r.Left + 12, r.Y + 28, r.Width - 24, r.Height - 36),
+                    Theme.Muted, TextFormatFlags.Left | TextFormatFlags.Top |
+                    TextFormatFlags.WordBreak);
+            }
+
+            /// <summary>The two drawer sections: name, one-line state, chevron.</summary>
+            private void PaintSectionHeading(Graphics g, Rectangle r, string title, string summary,
+                bool open, bool hovered)
+            {
+                if (r.Height <= 0) return;
+                TextRenderer.DrawText(g, title, Theme.H2(),
+                    new Rectangle(r.Left + 20, r.Y + 6, r.Width - 90, 20), Theme.Text,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, summary, Theme.Small(),
+                    new Rectangle(r.Left + 20, r.Y + 26, r.Width - 90, 18), Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+                DrawChevron(g, new Rectangle(r.Right - 44, r.Y + (r.Height - 22) / 2, 22, 22),
+                    !open, hovered);
+            }
+
+            private void PaintGroupHeader(Graphics g, Rectangle r, string title, string right,
+                bool muted = false, bool hovered = false)
+            {
+                TextRenderer.DrawText(g, title, Theme.Caption(), r,
+                    muted ? Theme.Muted : Theme.AccentLight,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, right, Theme.Caption(), r,
+                    hovered ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+            }
+
+            // One country row: flag, name, the share and count that predict
+            // speed, then the code and the selection dot.
+            private void PaintCountryRow(Graphics g, Rectangle r, string flag, string name,
+                string code, bool selected, int exits, float share)
+            {
+                bool hov = hoverId >= CountryHitBase &&
+                           hoverId - CountryHitBase < countryRowCode.Count &&
+                           rcCountryRow[hoverId - CountryHitBase] == r;
+                if (selected)
+                {
+                    using (GraphicsPath p = Theme.RoundRect(r, 10))
+                        using (SolidBrush b = new SolidBrush(
+                            Color.FromArgb(30, Theme.Accent.R, Theme.Accent.G, Theme.Accent.B)))
+                            g.FillPath(b, p);
+                }
+                else if (hov)
+                {
+                    using (GraphicsPath p = Theme.RoundRect(r, 10))
+                        using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt))
+                            g.FillPath(b, p);
+                }
+
+                int midY = r.Y + r.Height / 2;
+                Rectangle dot = new Rectangle(r.Right - 28, midY - 8, 16, 16);
+                TextRenderer.DrawText(g, flag, Theme.Body(),
+                    new Rectangle(r.Left + 8, r.Y, 30, r.Height),
+                    Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, code, Theme.Caption(),
+                    new Rectangle(dot.Left - 42, r.Y, 34, r.Height),
+                    Theme.Muted, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+
+                if (exits > 0)
+                {
+                    TextRenderer.DrawText(g, (share * 100f).ToString("0.0") + "%", Theme.Caption(),
+                        new Rectangle(r.Right - 150, r.Y, 46, r.Height),
+                        selected ? Theme.AccentLight : Theme.Muted,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                    TextRenderer.DrawText(g, exits.ToString(), Theme.Caption(),
+                        new Rectangle(r.Right - 100, r.Y, 30, r.Height),
+                        Theme.Muted, TextFormatFlags.Right | TextFormatFlags.VerticalCenter);
+                }
+
+                TextRenderer.DrawText(g, name, Theme.Body(),
+                    new Rectangle(r.Left + 40, r.Y, r.Width - 190, r.Height),
+                    selected ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+
+                Color ring = selected ? Theme.AccentLight : Theme.Border;
+                using (Pen pen = new Pen(ring, 1f))
+                    g.DrawEllipse(pen, dot);
+                if (selected)
+                    using (Pen pen = new Pen(Color.White, 1.8f))
+                    {
+                        g.DrawLine(pen, dot.Left + 4, dot.Top + 8, dot.Left + 6, dot.Top + 11);
+                        g.DrawLine(pen, dot.Left + 6, dot.Top + 11, dot.Left + 12, dot.Top + 5);
+                    }
+            }
+
+            private void PaintLoadedCountry(Graphics g, Country c)
+            {
+                int idx = countryRowCode.IndexOf(c.Code);
+                if (idx < 0) return;
+                Rectangle r = rcCountryRow[idx];
+                PaintCountryRow(g, r, FlagEmoji(c.Code), c.Name, c.Code,
+                    exitCodes.Contains(c.Code), c.Cap.Exits, c.Cap.Weight);
+            }
+
+            // The settings rows, drawn into the drawer's ADVANCED section with
+            // the section headers that already group them.
+            private void PaintSettingRows(Graphics g, int fromY, int clipTop, int clipBottom)
+            {
+                int rowCount = SettingLabels.Length;
                 int lastSec = -1;
                 for (int i = 0; i < rowCount; i++)
                 {
                     Rectangle body = rcRowBody[i];
-                    if (body.Bottom < settingsTop || body.Y > settingsBottom) continue;
+                    if (body.Bottom < clipTop || body.Y > clipBottom) continue;
                     bool selected = editRow == i;
-
                     int sec = SectionOf(i);
                     if (sec != lastSec)
                     {
                         lastSec = sec;
-                        // Only draw the header when it is actually on screen.
-                        // Scrolled into the middle of a section the header sits
-                        // above the clip, and redrawing it there would float a
-                        // duplicate label over the first visible row.
                         int hy = body.Y - 24;
-                        if (hy >= settingsTop)
+                        if (hy >= clipTop)
                             TextRenderer.DrawText(g, SectionNames[sec], Theme.Caption(),
-                                new Rectangle(18, hy, body.Width, 18), Theme.AccentLight,
+                                new Rectangle(20, hy, body.Width, 18), Theme.AccentLight,
                                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
                     }
-
                     Color bgTop = i % 2 == 0 ? Theme.Surface : Theme.SurfaceAlt;
                     Color bgBot = i % 2 == 0 ? Theme.SurfaceAlt : Theme.Surface;
-                    Theme.FillGradient(g, new Rectangle(body.X - 12, body.Y, body.Width + 24, body.Height), bgTop, bgBot);
-
+                    Theme.FillGradient(g, new Rectangle(20, body.Y, body.Width, body.Height), bgTop, bgBot);
                     if (selected)
                     {
                         using (SolidBrush b = new SolidBrush(Theme.Accent))
-                            g.FillRectangle(b, body.X - 12, body.Y + 4, 4, body.Height - 8);
+                            g.FillRectangle(b, 20, body.Y + 4, 4, body.Height - 8);
                     }
-
                     using (Pen pen = new Pen(Theme.Border, 1f))
-                        g.DrawLine(pen, body.X - 12, body.Bottom, body.Right + 12, body.Bottom);
-
+                        g.DrawLine(pen, 20, body.Bottom, 20 + body.Width, body.Bottom);
                     TextRenderer.DrawText(g, SettingLabels[i], Theme.Body(),
-                        new Rectangle(body.Left + 8, body.Y, body.Width - 174, body.Height),
+                        new Rectangle(body.Left + 10, body.Y, body.Width - 174, body.Height),
                         Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
                         TextFormatFlags.EndEllipsis);
                     PaintSettingValue(g, i);
                 }
-                g.Clip = prevClip;
-
                 int lastRow = rowCount - 1;
-                if (rcRowBody[lastRow].Bottom < settingsBottom)
-                {
+                if (rcRowBody[lastRow].Bottom < clipBottom && rcRowBody[lastRow].Bottom > clipTop)
                     TextRenderer.DrawText(g, "applies on next connect", Theme.Small(),
                         new Rectangle(0, rcRowBody[lastRow].Bottom + 8, ClientSize.Width, 18),
                         Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
+            }
+
+            private void DrawDivider(Graphics g, int y)
+            {
+                using (Pen pen = new Pen(Theme.Border, 1f))
+                    g.DrawLine(pen, 20, y, ClientSize.Width - 20, y);
+            }
+
+            private void DrawCloseIcon(Graphics g, Rectangle r, bool hovered)
+            {
+                if (r.Width <= 0) return;
+                using (GraphicsPath p = Theme.RoundRect(r, 12))
+                using (SolidBrush b = new SolidBrush(hovered ? Theme.SurfaceLight : Theme.Surface))
+                using (Pen pen = new Pen(Theme.Border, 1f))
+                {
+                    g.FillPath(b, p);
+                    g.DrawPath(pen, p);
+                }
+                int midX = r.Left + r.Width / 2, midY = r.Top + r.Height / 2;
+                using (Pen pen = new Pen(Theme.Text, 1.8f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    g.DrawLine(pen, midX - 5, midY - 5, midX + 5, midY + 5);
+                    g.DrawLine(pen, midX + 5, midY - 5, midX - 5, midY + 5);
                 }
             }
 
+            // The three-line hamburger Android draws in its top bar.
+            private void DrawHamburger(Graphics g, Rectangle r, bool hovered)
+            {
+                using (GraphicsPath p = Theme.RoundRect(r, 11))
+                using (SolidBrush b = new SolidBrush(hovered ? Theme.SurfaceLight : Theme.Surface))
+                using (Pen pen = new Pen(Theme.Border, 1f))
+                {
+                    g.FillPath(b, p);
+                    g.DrawPath(pen, p);
+                }
+                using (Pen pen = new Pen(Theme.AccentLight, 1.7f))
+                {
+                    pen.StartCap = LineCap.Round;
+                    pen.EndCap = LineCap.Round;
+                    int x1 = r.Left + 10, x2 = r.Right - 10;
+                    int midY = r.Top + r.Height / 2;
+                    g.DrawLine(pen, x1, midY - 5, x2, midY - 5);
+                    g.DrawLine(pen, x1, midY, x2, midY);
+                    g.DrawLine(pen, x1, midY + 5, x2, midY + 5);
+                }
+            }
             private void PaintSettingValue(Graphics g, int i)
             {
                 Rectangle v = rcRowVal[i];
@@ -1708,11 +2092,86 @@ private Rectangle rcClose, rcMin,
             }
 
             // ---- navigation between pages ----------------------------------
+// ---- drawer actions --------------------------------------------
+            private void OpenDrawer()
+            {
+                CancelEdit();
+                page = Page.Drawer;
+                drawerScrollY = 0;
+                // The tables ship with the build, so this is a file read and it
+                // refines the picker in place rather than gating the drawer.
+                LoadGeoTables();
+                LayoutPass();
+                Invalidate();
+            }
+
+            private void CloseDrawer()
+            {
+                CancelEdit();
+                page = Page.Main;
+                drawerScrollY = 0;
+                LayoutPass();
+                Invalidate();
+            }
+
+            /// <summary>
+            /// Opening a section closes the other one. Android lets both be open
+            /// at once, but its drawer is a full screen of cards; here the two
+            /// bodies are hundreds of rows in a 400px window, so keeping both
+            /// open would push the second heading off the bottom.
+            /// </summary>
+            private void ToggleDrawerSection(bool location)
+            {
+                CancelEdit();
+                if (location)
+                {
+                    drawerShowLocation = !drawerShowLocation;
+                }
+                else
+                {
+                    drawerShowAdvanced = !drawerShowAdvanced;
+                    if (drawerShowAdvanced) RunBg(delegate { UpdateBridgeCard(false); });
+                }
+                drawerScrollY = 0;
+                LayoutPass();
+                Invalidate();
+            }
+
+            private void ToggleRestCountries()
+            {
+                // Opening the group on a pick keeps the chosen country in
+                // view; hiding it again must not throw that pick away, so the
+                // toggle only collapses the list.
+                drawerShowAllCountries = !drawerShowAllCountries;
+                LayoutPass();
+                Invalidate();
+            }
+
+            private string CountryName(string code)
+            {
+                string nm;
+                if (exitNames.TryGetValue(code, out nm)) return nm;
+                foreach (Country c in drawerCountries)
+                    if (c.Code == code) { exitNames[code] = c.Name; return c.Name; }
+                return code;
+            }
+
+            private void OpenRepo()
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(
+                        "https://github.com/Delta-Kronecker/Delta-Tor"));
+                }
+                catch { }
+            }
             private void GoBack()
             {
                 CancelEdit();
-                if (page == Page.Settings) { page = Page.Main; settingsScrollY = 0; }
-                else if (page == Page.Log || page == Page.Torrc) page = Page.Settings;
+                // The drawer replaced the Settings page, so Log and Torrc go
+                // back to it rather than to a page that is gone.
+                if (page == Page.Log || page == Page.Torrc) page = Page.Drawer;
+                else if (page == Page.Drawer) { page = Page.Main; drawerScrollY = 0; }
                 LayoutPass();
                 Invalidate();
             }
@@ -2040,15 +2499,12 @@ private Rectangle rcClose, rcMin,
                     if (tNext != torrcScrollY) { torrcScrollY = tNext; Invalidate(); }
                     return;
                 }
-                if (page != Page.Settings) return;
-                int rowCount = SettingLabels.Length;
-                int contentHeight = rowCount * 37 + 40 + SectionNames.Length * 26;
-                int visibleHeight = ClientSize.Height - 78;
-                int settingsMax = Math.Max(0, contentHeight - visibleHeight);
-                int newScrollY = Math.Max(0, Math.Min(settingsMax, settingsScrollY - notch * 37));
-                if (newScrollY != settingsScrollY)
+                if (page != Page.Drawer) return;
+                int newScrollY = Math.Max(0, Math.Min(DrawerMaxScroll(),
+                    drawerScrollY - notch * 56));
+                if (newScrollY != drawerScrollY)
                 {
-                    settingsScrollY = newScrollY;
+                    drawerScrollY = newScrollY;
                     LayoutPass();
                 }
             }
@@ -2075,15 +2531,29 @@ private Rectangle rcClose, rcMin,
                     case 5: OnConnectButton(); break;
                     case 20: ApplyProxyToggle(!ProxyIsOurs()); break;
                     case 21: ApplyTunToggle(); break;
-                    case 30: page = Page.Settings; settingsScrollY = 0; CancelEdit(); LayoutPass(); Invalidate();
-                        RunBg(delegate { UpdateBridgeCard(false); }); break;
+                    case 40: GoBack(); break;                   // Log / torrc back
+                    case 30: OpenDrawer(); break;
+                    case 31: CloseDrawer(); break;
+                    case 32: ClearExitCountries(); break;
+                    case 34: ToggleRestCountries(); break;
+                    case 35: OpenRepo(); break;
+                    case 36: ClearExitCountries(); break;
                     case 50: OpenReleases(); break;
-                    case 40: GoBack(); break;
                     case 60: CopyLogToClipboard(); break;
                     case 61: SaveTorrc(); break;
                     case 62: ResetTorrc(); break;
+                    case 3000: ToggleDrawerSection(true); break;
+                    case 3001: ToggleDrawerSection(false); break;
                     default:
-                        if (page != Page.Settings || h < 100) break;
+                        if (page != Page.Drawer) break;
+                        if (h >= CountryHitBase && h < CountryHitBase + 3000)
+                        {
+                            int cidx = h - CountryHitBase;
+                            if (cidx >= 0 && cidx < countryRowCode.Count)
+                                ToggleExitCountry(countryRowCode[cidx], CountryName(countryRowCode[cidx]));
+                            break;
+                        }
+                        if (h < 100) break;
                         if (h >= 300)
                         {
                             int arow = h - 300;
@@ -2178,7 +2648,7 @@ private Rectangle rcClose, rcMin,
                     return;
                 }
                 if (e.KeyCode == Keys.Escape &&
-                    (page == Page.Settings || page == Page.Log || page == Page.Torrc))
+                    (page == Page.Drawer || page == Page.Log || page == Page.Torrc))
                 {
                     GoBack();
                 }
@@ -2206,29 +2676,46 @@ private Rectangle rcClose, rcMin,
                         if (rcProxyBtn.Width > 0 && rcProxyBtn.Contains(p)) return 20;
                         if (rcTunBtn.Contains(p)) return 21;
                     }
-                    if (rcSettings.Contains(p)) return 30;
+                    if (rcHamburger.Contains(p)) return 30;
                     if (showUpdateBanner && updateVersion.Length > 0 &&
                         rcUpdateBtn.Contains(p)) return 50;
                 }
-                else if (page == Page.Settings)
+                else if (page == Page.Drawer)
                 {
-                    if (rcBack.Contains(p)) return 40;
-                    int rowCount = SettingLabels.Length;
-                    for (int i = 0; i < rowCount; i++)
+                    // The headings and the GITHUB pill are the only things that
+                    // answer taps above and below the scrolling body, so they
+                    // are tested before the rows.
+                    if (rcDrawerClose.Contains(p)) return 31;
+                    if (rcDrawerGithub.Contains(p)) return 35;
+                    if (rcDrawerLocation.Contains(p)) return 3000;
+                    if (rcDrawerWarn.Contains(p) && p.X >= rcDrawerWarn.Right - 96) return 32;
+                    if (rcDrawerRestHeader.Height > 0 &&
+                        rcDrawerRestHeader.Contains(p)) return 34;
+                    if (rcDrawerAdvanced.Contains(p)) return 3001;
+                    // A country row reports its index, so the click handler can
+                    // name the country without searching the list again.
+                    if (rcRowAny.Contains(p)) return 36;
+                    for (int i = 0; i < rcCountryRow.Count; i++)
+                        if (rcCountryRow[i].Contains(p)) return CountryHitBase + i;
+                    if (drawerShowAdvanced)
                     {
-                        if (RowIsAction(i))
+                        int rowCount = SettingLabels.Length;
+                        for (int i = 0; i < rowCount; i++)
                         {
-                            if (rcRowBody[i].Contains(p)) return 300 + i;
-                            continue;
+                            if (RowIsAction(i))
+                            {
+                                if (rcRowBody[i].Contains(p)) return 300 + i;
+                                continue;
+                            }
+                            if (i == 1 || i == 6 || i == 11)
+                            {
+                                if (rcRowVal[i].Contains(p)) return 200 + i;
+                                continue;
+                            }
+                            if (rcRowPrev[i].Contains(p)) return 100 + i * 3 + 1;
+                            if (rcRowNext[i].Contains(p)) return 100 + i * 3 + 2;
+                            if (RowIsNumeric(i) && rcRowVal[i].Contains(p)) return 100 + i * 3;
                         }
-                        if (i == 1 || i == 6 || i == 11)
-                        {
-                            if (rcRowVal[i].Contains(p)) return 200 + i;
-                            continue;
-                        }
-                        if (rcRowPrev[i].Contains(p)) return 100 + i * 3 + 1;
-                        if (rcRowNext[i].Contains(p)) return 100 + i * 3 + 2;
-                        if (RowIsNumeric(i) && rcRowVal[i].Contains(p)) return 100 + i * 3;
                     }
                 }
                 else if (page == Page.Log)
@@ -2292,9 +2779,19 @@ private Rectangle rcClose, rcMin,
             // ---- session wiring ----------------------------------------------
             private delegate void SimpleAction();
 
+            private readonly List<SimpleAction> uiQueue = new List<SimpleAction>();
+
             private void UiInvokeDelegate(SimpleAction d)
             {
-                try { BeginInvoke(d); } catch { }
+                if (!IsHandleCreated) { lock (uiQueue) uiQueue.Add(d); return; }
+                try { BeginInvoke(d); } catch { lock (uiQueue) uiQueue.Add(d); }
+            }
+
+            private void FlushUiQueue()
+            {
+                List<SimpleAction> pending;
+                lock (uiQueue) { pending = new List<SimpleAction>(uiQueue); uiQueue.Clear(); }
+                foreach (SimpleAction a in pending) BeginInvoke(a);
             }
 
             private void ApplyProxyToggle(bool want)
@@ -2394,6 +2891,218 @@ private Rectangle rcClose, rcMin,
                 AppendUiLogLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] " + line);
             }
 
+// ---- exit countries + geo tables -------------------------------
+            // Android keeps these two files as assets and this client keeps
+            // them next to tor.exe; the format is the same TSV, so the tables
+            // are shared rather than re-derived.
+            private struct Country
+            {
+                public string Code;
+                public string Name;
+                public ExitCap Cap;
+                public bool HasCap;
+            }
+
+            private struct ExitCap
+            {
+                public int Exits;
+                public float Weight;
+            }
+
+            // Picks are read once at construction so the drawer's summary line
+            // is right on first open, and written whenever the user taps.
+            private void LoadExitSelection()
+            {
+                try
+                {
+                    if (!File.Exists(ExitNodesFile)) return;
+                    foreach (string rawCc in File.ReadAllText(ExitNodesFile).Split(','))
+                    {
+                        string cc = rawCc.Trim().ToUpperInvariant();
+                        if (cc.Length != 2) continue;
+                        bool alpha = true;
+                        foreach (char ch in cc)
+                            if (ch < 'A' || ch > 'Z') { alpha = false; break; }
+                        if (!alpha || exitCodes.Contains(cc)) continue;
+                        exitCodes.Add(cc);
+                    }
+                }
+                catch { }
+            }
+
+            private void SaveExitSelection()
+            {
+                try
+                {
+                    File.WriteAllText(ExitNodesFile,
+                        string.Join(",", exitCodes.ToArray()), new UTF8Encoding(false));
+                }
+                catch
+                {
+                    try { FlashMessage("could not save location"); } catch { }
+                }
+            }
+
+            /// <summary>Add or remove one country. Order of selection is kept.</summary>
+            private void ToggleExitCountry(string code, string name)
+            {
+                string cc = code.ToUpperInvariant();
+                if (exitCodes.Remove(cc)) exitNames.Remove(cc);
+                else { exitCodes.Add(cc); exitNames[cc] = name; }
+                SaveExitSelection();
+                Invalidate();
+            }
+
+            private void ClearExitCountries()
+            {
+                exitCodes.Clear();
+                exitNames.Clear();
+                SaveExitSelection();
+                Invalidate();
+            }
+
+            /// <summary>
+            /// Reads countries.tsv and exit-capacity.tsv once. Both are static
+            /// tables shipped with the build, so this never hits the network:
+            /// a country list is not worth a round trip and a cache expiry on
+            /// every launch, and the numbers move on the scale of months.
+            /// </summary>
+            private void LoadGeoTables()
+            {
+                if (geoipLoaded) return;
+                geoipLoaded = true;
+                RunBg(delegate
+                {
+                    var countries = new List<Country>();
+                    var caps = new Dictionary<string, ExitCap>(StringComparer.OrdinalIgnoreCase);
+                    string err = "";
+                    try
+                    {
+                        foreach (string line in ReadTsvLines(Path.Combine(DataDir, "countries.tsv")))
+                        {
+                            string[] p = line.Split('\t');
+                            if (p.Length < 2) continue;
+                            var c = new Country();
+                            c.Code = p[0].Trim().ToUpperInvariant();
+                            c.Name = p[1].Trim();
+                            if (c.Code.Length != 2 || c.Name.Length == 0) continue;
+                            countries.Add(c);
+                        }
+                        foreach (string line in ReadTsvLines(Path.Combine(DataDir, "exit-capacity.tsv")))
+                        {
+                            string[] p = line.Split('\t');
+                            if (p.Length < 4) continue;
+                            int exits;
+                            float weight;
+                            if (!int.TryParse(p[2].Trim(), out exits)) continue;
+                            if (!float.TryParse(p[3].Trim(),
+                                    NumberStyles.Float, CultureInfo.InvariantCulture, out weight))
+                                continue;
+                            var cap = new ExitCap();
+                            cap.Exits = exits;
+                            cap.Weight = weight;
+                            caps[p[0].Trim().ToUpperInvariant()] = cap;
+                        }
+                    }
+                    catch (Exception ex) { err = ex.Message; }
+                    UiInvokeDelegate(delegate
+                    {
+                        // The picker order is Tor's own answer rather than a
+                        // curated list: countries with exits first, most exit
+                        // bandwidth first, everything else alphabetical. Past
+                        // the cut the numbers stop arguing with each other,
+                        // so the remainder is one tap away instead of padding
+                        // the list with places that could never be picked.
+                        for (int i = 0; i < countries.Count; i++)
+                        {
+                            Country c = countries[i];
+                            ExitCap cap;
+                            if (caps.TryGetValue(c.Code, out cap)) { c.Cap = cap; c.HasCap = true; }
+                            countries[i] = c;
+                        }
+                        countries.Sort(delegate(Country a, Country b)
+                        {
+                            if (a.HasCap != b.HasCap) return a.HasCap ? -1 : 1;
+                            if (a.HasCap && b.HasCap && a.Cap.Weight != b.Cap.Weight)
+                                return b.Cap.Weight.CompareTo(a.Cap.Weight);
+                            return string.Compare(a.Name, b.Name, StringComparison.OrdinalIgnoreCase);
+                        });
+                        drawerCountries.Clear();
+                        drawerCountries.AddRange(countries);
+                        drawerCapacity.Clear();
+                        foreach (var kv in caps) drawerCapacity[kv.Key] = kv.Value;
+                        // Names for the picks: from the table when it has them,
+                        // so the summary line can never show a bare code.
+                        foreach (string cc in exitCodes)
+                            if (!exitNames.ContainsKey(cc))
+                                foreach (Country c in drawerCountries)
+                                    if (c.Code == cc) { exitNames[cc] = c.Name; break; }
+                        geoipError = err;
+                        LayoutPass();
+                    });
+                });
+            }
+
+            private static IEnumerable<string> ReadTsvLines(string path)
+            {
+                foreach (string raw in File.ReadAllLines(path))
+                {
+                    string t = raw.TrimEnd('\r');
+                    if (t.Length == 0 || t.StartsWith("#")) continue;
+                    yield return t;
+                }
+            }
+
+            /// <summary>
+            /// The countries with exits, and the remainder. The cut is at 25,
+            /// not at every country that has an exit: the top 25 already hold
+            /// about 99% of the exit bandwidth, so ranks past that are
+            /// competing over the last fraction of a percent.
+            /// </summary>
+            private List<Country> WithExitCountries()
+            {
+                var list = new List<Country>();
+                foreach (Country c in drawerCountries) if (c.HasCap) list.Add(c);
+                return list;
+            }
+
+            private List<Country> WithoutExitCountries()
+            {
+                var list = new List<Country>();
+                foreach (Country c in drawerCountries) if (!c.HasCap) list.Add(c);
+                return list;
+            }
+
+            private bool RestHoldsSelection()
+            {
+                foreach (string cc in exitCodes)
+                    foreach (Country c in drawerCountries)
+                        if (!c.HasCap && c.Code == cc) return true;
+                return false;
+            }
+
+            /// <summary>The one-line summary the LOCATION heading carries.</summary>
+            private string LocationSummary()
+            {
+                if (exitCodes.Count == 0) return "Any location \u00b7 default";
+                if (exitCodes.Count == 1)
+                {
+                    string cc = exitCodes[0];
+                    string nm;
+                    return FlagEmoji(cc) + "  " + (exitNames.TryGetValue(cc, out nm) ? nm : cc);
+                }
+                return exitCodes.Count + " countries selected";
+            }
+
+            // Regional indicator symbols, same as Android's flagEmoji().
+            private static string FlagEmoji(string code)
+            {
+                if (code == null || code.Length != 2) return "\U0001F310";
+                StringBuilder sb = new StringBuilder();
+                foreach (char c in code.ToUpperInvariant())
+                    sb.Append(char.ConvertFromUtf32(0x1F1E6 + (c - 'A')));
+                return sb.ToString();
+            }
             private void RunBg(ThreadStart work)
             {
                 Thread t = new Thread(work) { IsBackground = true };

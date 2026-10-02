@@ -226,6 +226,10 @@ jobs:
           Copy-Item "configs\torrc.jet" "dist\data\torrc.template.default" -Force
           Copy-Item "bridges\snowflake_tested.txt" "dist\data\bridges\" -Force
           Copy-Item "README.md" "dist\data\README.md" -Force
+          # Country table + per-country exit capacity for the drawer's LOCATION
+          # picker. Same two files the Android client bundles as assets.
+          Copy-Item "scripts\geoip\countries.tsv" "dist\data\countries.tsv" -Force
+          Copy-Item "scripts\geoip\exit-capacity.tsv" "dist\data\exit-capacity.tsv" -Force
 
       - name: Download and combine bridges
         shell: pwsh
