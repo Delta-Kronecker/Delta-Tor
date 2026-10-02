@@ -1327,44 +1327,28 @@ private fun BottomPanel(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        when {
-            // Nothing is drawn while the cores are dying. connected and
-            // torRunning are both still true at this point, so they have to be
-            // excluded explicitly here rather than relying on the teardown
-            // having cleared them: the row would otherwise come straight back
-            // and hand the user a start button mid-teardown.
-            state.stopping -> Unit
-            state.connected -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        // The row is never removed. During teardown the left pill keeps its slot
+        // and just relabels to START VPN, dimmed until the cores are gone: a
+        // start click there would race the teardown for the ports, but hiding
+        // the row made both buttons blink out and back in on every stop.
+        if (state.connected || state.torRunning || state.stopping) {
+            val busy = state.connecting || state.stopping
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 GradientPill(
                     modifier = Modifier.weight(1f),
-                    label = "STOP VPN",
+                    label = if (state.connected && !state.stopping) "STOP VPN" else "START VPN",
                     filled = false,
-                    onClick = onStopVpn
+                    enabled = !busy,
+                    onClick = if (state.connected && !state.stopping) onStopVpn else onPrimary
                 )
                 GradientPill(
                     modifier = Modifier.weight(1f),
                     label = "DISCONNECT",
                     filled = false,
+                    enabled = !busy,
                     onClick = onDisconnect
                 )
             }
-            state.torRunning -> Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GradientPill(
-                    modifier = Modifier.weight(1f),
-                    label = "START VPN",
-                    filled = false,
-                    onClick = onPrimary
-                )
-                GradientPill(
-                    modifier = Modifier.weight(1f),
-                    label = "DISCONNECT",
-                    filled = false,
-                    onClick = onDisconnect
-                )
-            }
-        }
-
-        if (!state.stopping && (state.connected || state.torRunning)) {
             Spacer(Modifier.height(8.dp))
         }
         // Live speed on the home screen itself, not only in the notification.
@@ -1460,7 +1444,14 @@ private fun GradientPill(
                 letterSpacing = 1.2.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = if (filled) Color.White else DeltaTor.Text,
+            // A dimmed label is the only cue for a pill that is temporarily
+            // inert, so the button keeps its size and position instead of
+            // blinking out of the row while a teardown runs.
+            color = when {
+                !enabled -> DeltaTor.Text.copy(alpha = 0.4f)
+                filled -> Color.White
+                else -> DeltaTor.Text
+            },
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
