@@ -106,6 +106,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeStore
@@ -263,6 +265,31 @@ private fun MainScreen(
     val closeDrawer: () -> Unit = remember { { scope.launch { drawerState.close() }; Unit } }
     BackHandler(enabled = drawerState.isOpen) { closeDrawer() }
 
+    // The advisory used to be a line of amber text under the status word, which
+    // is easy to read past on a phone and impossible to act on: it says "open
+    // settings" while sitting nowhere near a button that does that. It is a
+    // modal sheet now, so it cannot be missed, and it carries the tap itself.
+    var openAdvanced by remember { mutableStateOf(false) }
+    var advisoryDismissed by remember { mutableStateOf(false) }
+    LaunchedEffect(state.advisory) {
+        // Latch on the message, not on "is set": AppState holds the advisory
+        // until the race resolves, so a plain null check would put the sheet
+        // back on screen every recomposition in between.
+        if (!state.advisory.isNullOrBlank()) advisoryDismissed = false
+    }
+    val advisory = state.advisory
+    if (!advisory.isNullOrBlank() && !advisoryDismissed) {
+        AdvisoryDialog(
+            message = advisory,
+            onDismiss = { advisoryDismissed = true },
+            onOpenAuto = {
+                advisoryDismissed = true
+                openAdvanced = true
+                openDrawer()
+            }
+        )
+    }
+
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
@@ -273,7 +300,8 @@ private fun MainScreen(
                 ControlDrawer(
                     onClose = closeDrawer,
                     onUpdateBridges = onUpdateBridges,
-                    onOpenLog = { closeDrawer(); onOpenLog() }
+                    onOpenLog = { closeDrawer(); onOpenLog() },
+                    openAdvanced = openAdvanced
                 )
             }
         }
@@ -312,7 +340,6 @@ private fun MainScreen(
                 peak = peakPct(state.connecting, state.torRunning, state.transports),
                 sc = scAnimated,
                 hasError = state.error != null,
-                advisory = state.advisory,
                 modifier = Modifier.align(Alignment.Center).offset(y = (-112).dp)
             )
 
@@ -407,11 +434,132 @@ private const val REPO_URL = "https://github.com/Delta-Kronecker/Delta-Tor"
  */
 private const val EXIT_PICKER_TOP = 25
 
+/**
+ * The blocked-transports advisory, as a sheet instead of a line of text.
+ *
+ * Two things changed on purpose. It is modal, because the message describes a
+ * stall the user is watching happen and a caption under the status word is the
+ * one place on this screen their eye already passes over. And it carries the
+ * action, because "Open Settings and add Snowflake to Auto" is only advice
+ * until something opens those settings; the primary button does exactly that.
+ *
+ * Dismissal is remembered by the caller, not here, so it survives recomposition
+ * without this composable holding state.
+ */
+@Composable
+private fun AdvisoryDialog(
+    message: String,
+    onDismiss: () -> Unit,
+    onOpenAuto: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    RoundedCornerShape(22.dp)
+                )
+                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(DeltaTor.Amber.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    WarnIcon(color = DeltaTor.Amber)
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "CONNECTIONS LOOK BLOCKED",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.AmberLight
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            Text(
+                message,
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AdvisoryButton(
+                    label = "LATER",
+                    primary = false,
+                    modifier = Modifier.weight(1f),
+                    onClick = onDismiss
+                )
+                Spacer(Modifier.width(10.dp))
+                AdvisoryButton(
+                    label = "OPEN AUTO RACERS",
+                    primary = true,
+                    modifier = Modifier.weight(1.45f),
+                    onClick = onOpenAuto
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdvisoryButton(
+    label: String,
+    primary: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val shape = RoundedCornerShape(13.dp)
+    Box(
+        modifier = modifier
+            .height(44.dp)
+            .clip(shape)
+            .then(
+                if (primary) Modifier.background(DeltaTor.Accent, shape)
+                else Modifier
+                    .background(DeltaTor.SurfaceAlt, shape)
+                    .border(1.dp, DeltaTor.BorderLight, shape)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.2.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = if (primary) Color.White else DeltaTor.Text,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
 @Composable
 private fun ControlDrawer(
     onClose: () -> Unit,
     onUpdateBridges: () -> Unit,
-    onOpenLog: () -> Unit
+    onOpenLog: () -> Unit,
+    openAdvanced: Boolean = false
 ) {
     val uriHandler = LocalUriHandler.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
@@ -443,6 +591,11 @@ private fun ControlDrawer(
     var showCountries by remember { mutableStateOf(false) }
     var showAllCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
+    // Opened from the advisory sheet so the tap that says "add Snowflake to
+    // Auto" lands on the row that does it, scrolled into view.
+    LaunchedEffect(openAdvanced) {
+        if (openAdvanced) showAdvanced = true
+    }
     val advancedForm = remember { AdvancedForm() }
     LaunchedEffect(advancedForm.saved) {
         if (advancedForm.saved) {
@@ -1086,7 +1239,6 @@ private fun StateBlock(
     peak: Int,
     sc: Color,
     hasError: Boolean,
-    advisory: String? = null,
     modifier: Modifier = Modifier
 ) {
     val word = wordFor(connecting, torRunning, connected, reconnecting, stopping, hasError)
@@ -1131,18 +1283,6 @@ private fun StateBlock(
             ),
             color = subColor
         )
-        // Advice, not an error: it sits under the status line, stays amber, and
-        // disappears on its own once the race resolves either way.
-        if (!advisory.isNullOrBlank()) {
-            Spacer(Modifier.height(10.dp))
-            Text(
-                advisory,
-                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
-                color = DeltaTor.AmberLight,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 28.dp)
-            )
-        }
     }
 }
 
