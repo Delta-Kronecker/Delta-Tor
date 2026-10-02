@@ -101,14 +101,29 @@ object Config {
         get() = prefs.getString("custom_bridges", "") ?: ""
         set(value) = prefs.edit().putString("custom_bridges", value).apply()
 
-    /**
+/**
      * Which transports take part in auto mode. Stored as a comma separated set so
      * an older install that never wrote the key falls back to the full default.
      * The memory runner is not listed: it only ever joins auto, and only when it
      * has bridges that provably worked.
      */
     val AUTO_TRANSPORT_CHOICES = listOf("vanilla", "obfs4", "webtunnel", "snowflake")
-    val AUTO_TRANSPORT_DEFAULTS: Set<String> = AUTO_TRANSPORT_CHOICES.toSet()
+
+    /**
+     * Snowflake is deliberately off by default, and this is the reason the whole
+     * distinction exists: it fronts Tor through a volunteer proxy in a browser, so
+     * it is both the slowest to bootstrap and the one that is not always reachable.
+     * Racing it by default means every connect pays for a fourth runner that mostly
+     * loses, and on a network where the other three are blocked it can be the only
+     * thing that works. So it is one tap away in settings, and the connect flow
+     * tells the user about that tap if a long auto race goes nowhere.
+     *
+     * Note this is only the default: an install whose stored set already includes
+     * snowflake keeps it, because silently dropping a transport the user picked on
+     * purpose would be worse than leaving one out.
+     */
+    val AUTO_TRANSPORT_DEFAULTS: Set<String> =
+        setOf("vanilla", "obfs4", "webtunnel")
 
     var autoTransports: Set<String>
         get() {

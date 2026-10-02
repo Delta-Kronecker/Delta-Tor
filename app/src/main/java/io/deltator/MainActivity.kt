@@ -312,6 +312,7 @@ private fun MainScreen(
                 peak = peakPct(state.connecting, state.torRunning, state.transports),
                 sc = scAnimated,
                 hasError = state.error != null,
+                advisory = state.advisory,
                 modifier = Modifier.align(Alignment.Center).offset(y = (-112).dp)
             )
 
@@ -1085,6 +1086,7 @@ private fun StateBlock(
     peak: Int,
     sc: Color,
     hasError: Boolean,
+    advisory: String? = null,
     modifier: Modifier = Modifier
 ) {
     val word = wordFor(connecting, torRunning, connected, reconnecting, stopping, hasError)
@@ -1129,6 +1131,18 @@ private fun StateBlock(
             ),
             color = subColor
         )
+        // Advice, not an error: it sits under the status line, stays amber, and
+        // disappears on its own once the race resolves either way.
+        if (!advisory.isNullOrBlank()) {
+            Spacer(Modifier.height(10.dp))
+            Text(
+                advisory,
+                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp),
+                color = DeltaTor.AmberLight,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 28.dp)
+            )
+        }
     }
 }
 

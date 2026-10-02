@@ -132,6 +132,16 @@ class TorVpnService : VpnService() {
          * covers the teardown itself when that is the slower of the two.
          */
         private const val STOPPING_MIN_MS = 3_000L
+
+        /**
+         * How long an auto-mode race may stall below 100% before the snowflake
+         * advice is worth showing. See [SNOWFLAKE_ADVICE].
+         */
+        private const val SNOWFLAKE_ADVICE_AFTER_MS = 5 * 60 * 1000L
+
+        private const val SNOWFLAKE_ADVICE =
+            "Your current transports look blocked on this network. " +
+                "Open Settings and add Snowflake to Auto."
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -307,6 +317,17 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Transport mode: $modeLabel")
         updateNotification("Connecting via $modeLabel \u2026", progress = true, progressValue = 0)
 
+        // Snowflake is out of auto by default, so a long race without it has a
+        // specific, actionable explanation: the transports that are racing are
+        // probably all blocked here. Surfacing that after five minutes is far
+        // more useful than staring at a progress bar that never moves.
+        val snowflakeInAuto = Config.autoTransports.contains(
+            ParallelTorManager.TRANSPORT_SNOWFLAKE
+        )
+        val adviseSnowflake = mode == ParallelTorManager.TRANSPORT_AUTO && !snowflakeInAuto
+        val raceStartedAt = SystemClock.elapsedRealtime()
+        var snowflakeAdvised = false
+
         val w = try {
             ParallelTorManager.race(
                 context = applicationContext,
@@ -322,16 +343,30 @@ class TorVpnService : VpnService() {
                 val detail = progress.entries.joinToString("  ") { (n, p) ->
                     "$n=${if (p < 0) "FAIL" else "$p%"}"
                 }
-                updateNotification(detail, progress = true, progressValue = maxProg)
+                if (adviseSnowflake && !snowflakeAdviced &&
+                    maxProg < 100 &&
+                    SystemClock.elapsedRealtime() - raceStartedAt >= SNOWFLAKE_ADVICE_AFTER_MS
+                ) {
+                    // Once per race: the progress callback fires every second, so
+                    // without this latch the user would get this line over and
+                    // over for the rest of the bootstrap.
+                    snowflakeAdvised = true
+                    Log.w(TAG, "auto race stalled below 100% for 5 min without snowflake")
+                    AppState.update { it.copy(advisory = SNOWFLAKE_ADVICE) }
+                    updateNotification(SNOWFLAKE_ADVICE, progress = true, progressValue = maxProg)
+                } else {
+                    updateNotification(detail, progress = true, progressValue = maxProg)
+                }
             }
         } catch (e: Exception) {
             fail(e.message ?: "All transports failed to bootstrap")
             return
         }
         activeRunner = w
-
+        // The race is over, so the advice has served its purpose. It must not
+        // linger on a working connection.
         AppState.update {
-            it.copy(transports = mapOf(w.name to 100), transport = w.name)
+            it.copy(transports = mapOf(w.name to 100), transport = w.name, advisory = null)
         }
         Log.i(TAG, "Winner transport: ${w.name} (SOCKS5 $proxyHost:${w.torSocksPort})")
 
@@ -435,43 +470,61 @@ class TorVpnService : VpnService() {
         }
     }
 
-    /** Tear down the VPN (TUN + tunnel) and every Tor core, with a real stop phase. */
+    /**
+     * Turn the VPN off without touching the Tor engine.
+     *
+     * The service, the SOCKS5 bridge and every Tor core stay exactly as they are;
+     * only the TUN interface and the tun2socks data path go away, so the device
+     * stops routing through Tor while the engine stays bootstrapped and ready.
+     * [startVpn] puts the VPN back on top of the same core without a re-bootstrap,
+     * which is the whole point of keeping this separate from [disconnect].
+     *
+     * Because no process is killed here, there is nothing to wait for: the state
+     * flips to torRunning straight away instead of holding the STOPPING word for
+     * the three seconds a real core teardown needs.
+     */
     private fun stopVpn() {
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring stop: a stop is already tearing the cores down")
+            return
+        }
         val s = AppState.state.value
-        if (s.stopping) {
-            Log.i(TAG, "A stop is already running")
+        if (!s.connected && !s.connecting && !s.reconnecting) {
+            Log.i(TAG, "Nothing to stop: the VPN is not up")
             return
         }
-        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning) {
-            Log.i(TAG, "Nothing to stop")
-            return
-        }
-        val startedAt = SystemClock.elapsedRealtime()
-        Log.i(TAG, "Stopping: TUN, tunnel and every Tor core")
+        Log.i(TAG, "Stopping the VPN only; Tor stays running")
         AppState.update {
             it.copy(
                 stopping = true,
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null
+                error = null,
+                advisory = null
             )
         }
-        updateNotification("Stopping", progress = true, progressValue = 0)
+        updateNotification("Turning the VPN off \u2026", progress = true, progressValue = 0)
         serviceScope.launch {
-            // Blocks until every Tor/lyrebird process has exited and every port
-            // is free, so the cores are provably down before the flag clears.
-            teardown()
-            val left = STOPPING_MIN_MS - (SystemClock.elapsedRealtime() - startedAt)
-            if (left > 0) {
-                Log.i(TAG, "cores are gone, holding STOPPING for another ${left}ms")
-                delay(left)
+            teardownVpn()
+            // The engine was never touched, so torRunning stays true on purpose.
+            AppState.update { it.copy(stopping = false, torRunning = activeRunner != null) }
+            Log.endSession("VPN off \u00b7 Tor still running")
+            Log.i(TAG, "VPN off: tor is still up, ready for a restart without re-bootstrapping")
+            if (activeRunner != null) {
+                // No stats poller here: the tunnel that fed it is gone, so it
+                // would only spin on a null stats handle and repaint nothing.
+                lastRenderedText = ""
+                updateNotification(
+                    "Tor running \u00b7 VPN off",
+                    progress = false,
+                    progressValue = 0
+                )
+            } else {
+                // No runner survived; drop to the fully stopped state.
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
-            Log.endSession("stopped by user \u00b7 cores down")
-            Log.i(TAG, "stopped: no Tor core is left running")
-            AppState.update { it.copy(stopping = false, torRunning = false) }
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
         }
     }
 
@@ -576,21 +629,41 @@ class TorVpnService : VpnService() {
 
     private fun notifyTraffic(text: String) {
         val parts = text.split('|')
-        postNotification(
-            NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
-                .setSmallIcon(R.drawable.ic_tor)
-                .setContentTitle(parts[0])
-                .setContentText(parts[1])
-                .setStyle(NotificationCompat.BigTextStyle())
-                .setContentIntent(mainPendingIntent)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
-                .addAction(0, "Stop VPN", stopVpnPendingIntent)
-                .addAction(0, "Disconnect", disconnectPendingIntent)
-                .build()
-        )
+        val builder = NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
+            .setSmallIcon(R.drawable.ic_tor)
+            .setContentTitle(parts[0])
+            .setContentText(parts[1])
+            .setStyle(NotificationCompat.BigTextStyle())
+            .setContentIntent(mainPendingIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+        postNotification(withStateActions(builder).build())
+    }
+
+    /**
+     * Give the notification the two actions that make sense right now.
+     *
+     * "Disconnect" is always there and always means the same thing: kill the VPN
+     * and every Tor core. The other action depends on which half of the engine is
+     * alive. With the VPN up, the useful one is to take the device off Tor while
+     * the core stays bootstrapped; with the VPN already off, it is the other way
+     * round. Offering "Stop VPN" on an already stopped VPN would be a button that
+     * can only ever answer "nothing to stop", and with the engine shut down
+     * neither action applies, so the row is left off.
+     */
+    private fun withStateActions(
+        builder: NotificationCompat.Builder
+    ): NotificationCompat.Builder {
+        val s = AppState.state.value
+        builder.addAction(0, "Disconnect", disconnectPendingIntent)
+        if (s.connected) {
+            builder.addAction(0, "Stop VPN", stopVpnPendingIntent)
+        } else if (s.torRunning) {
+            builder.addAction(0, "Start VPN", startVpnPendingIntent)
+        }
+        return builder
     }
 
     // --- Link loss and recovery ------------------------------------------------
@@ -1009,7 +1082,7 @@ class TorVpnService : VpnService() {
         }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
-        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message) }
+        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message, advisory = null) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -1034,7 +1107,8 @@ class TorVpnService : VpnService() {
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null
+                error = null,
+                advisory = null
             )
         }
         updateNotification("Stopping", progress = true, progressValue = 0)
@@ -1053,7 +1127,14 @@ class TorVpnService : VpnService() {
         }
     }
 
-    private fun teardown() {
+    /**
+     * Take down the TUN and the tun2socks data path, and nothing else.
+     *
+     * This is the half of [teardown] that [stopVpn] uses: the VPN interface is
+     * closed so the device stops routing through Tor, but the SOCKS5 bridge and
+     * every Tor core survive, still bound to their ports and still bootstrapped.
+     */
+    private fun teardownVpn() {
         statsJob?.cancel()
         statsJob = null
         linkWatchJob?.cancel()
@@ -1066,6 +1147,13 @@ class TorVpnService : VpnService() {
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
+        if (AppState.vpnStarted) {
+            AppState.markStopped()
+        }
+    }
+
+    private fun teardown() {
+        teardownVpn()
         try { TorSocksBridge.stop() } catch (_: Exception) {}
         // Blocks until every Tor/lyrebird process is really gone and the ports are
         // released, so a connect right after a stop cannot hit EADDRINUSE.
@@ -1078,18 +1166,18 @@ class TorVpnService : VpnService() {
     }
 
     private fun buildNotification(text: String, progress: Boolean, progressValue: Int = 0): Notification {
-        return NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
-            .setSmallIcon(R.drawable.ic_tor)
-            .setContentTitle("DeltaTor")
-            .setContentText(text)
-            .setContentIntent(mainPendingIntent)
-            .setOngoing(true)
-            .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setProgress(100, progressValue, progress)
-            .addAction(0, "Disconnect", disconnectPendingIntent)
-            .build()
+        return withStateActions(
+            NotificationCompat.Builder(this, CHANNEL_VPN_STATUS)
+                .setSmallIcon(R.drawable.ic_tor)
+                .setContentTitle("DeltaTor")
+                .setContentText(text)
+                .setContentIntent(mainPendingIntent)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setCategory(NotificationCompat.CATEGORY_SERVICE)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setProgress(100, progressValue, progress)
+        ).build()
     }
 
     /**
@@ -1145,6 +1233,19 @@ class TorVpnService : VpnService() {
         PendingIntent.getService(
             this,
             3,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Puts the VPN back on top of a core that is already bootstrapped. */
+    private val startVpnPendingIntent: PendingIntent by lazy {
+        val intent = Intent(this, TorVpnService::class.java).apply {
+            action = ACTION_START_VPN
+        }
+        PendingIntent.getService(
+            this,
+            4,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
