@@ -153,6 +153,13 @@ class TorVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
+    // Snowflake advisory state lives on the service rather than in locals: the
+    // transport race reports progress through a lambda, and keeping the latch
+    // here means the callback never has to reach out of its own frame.
+    private var snowflakeAdviceArmed = false
+    private var snowflakeAdviceFrom = 0L
+    private var snowflakeAdviceShown = false
+
     /** Outstanding [holdCpu] calls, so nested windows release only when both end. */
     private var cpuHolds = 0
 
@@ -324,9 +331,10 @@ class TorVpnService : VpnService() {
         val snowflakeInAuto = Config.autoTransports.contains(
             ParallelTorManager.TRANSPORT_SNOWFLAKE
         )
-        val adviseSnowflake = mode == ParallelTorManager.TRANSPORT_AUTO && !snowflakeInAuto
-        val raceStartedAt = SystemClock.elapsedRealtime()
-        var snowflakeAdvised = false
+        // Arm the advisory for this race only; a later connect starts over.
+        snowflakeAdviceArmed = mode == ParallelTorManager.TRANSPORT_AUTO && !snowflakeInAuto
+        snowflakeAdviceFrom = SystemClock.elapsedRealtime()
+        snowflakeAdviceShown = false
 
         val w = try {
             ParallelTorManager.race(
@@ -343,14 +351,14 @@ class TorVpnService : VpnService() {
                 val detail = progress.entries.joinToString("  ") { (n, p) ->
                     "$n=${if (p < 0) "FAIL" else "$p%"}"
                 }
-                if (adviseSnowflake && !snowflakeAdviced &&
+                if (snowflakeAdviceArmed && !snowflakeAdviceShown &&
                     maxProg < 100 &&
-                    SystemClock.elapsedRealtime() - raceStartedAt >= SNOWFLAKE_ADVICE_AFTER_MS
+                    SystemClock.elapsedRealtime() - snowflakeAdviceFrom >= SNOWFLAKE_ADVICE_AFTER_MS
                 ) {
                     // Once per race: the progress callback fires every second, so
                     // without this latch the user would get this line over and
                     // over for the rest of the bootstrap.
-                    snowflakeAdvised = true
+                    snowflakeAdviceShown = true
                     Log.w(TAG, "auto race stalled below 100% for 5 min without snowflake")
                     AppState.update { it.copy(advisory = SNOWFLAKE_ADVICE) }
                     updateNotification(SNOWFLAKE_ADVICE, progress = true, progressValue = maxProg)
