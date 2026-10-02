@@ -221,6 +221,9 @@ jobs:
         shell: pwsh
         run: |
           Copy-Item "configs\torrc.jet" "dist\data\torrc.template" -Force
+          # torrc.template.default is the pristine copy the in-app Torrc editor
+          # RESETS to, so a user edit can never destroy the shipped baseline.
+          Copy-Item "configs\torrc.jet" "dist\data\torrc.template.default" -Force
           Copy-Item "bridges\snowflake_tested.txt" "dist\data\bridges\" -Force
           Copy-Item "README.md" "dist\data\README.md" -Force
 

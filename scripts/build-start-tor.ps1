@@ -32,6 +32,7 @@ if (-not $csc) { Write-Host "[x] csc.exe ('.NET Framework 4.x') not found."; exi
 
 $src = Join-Path $PSScriptRoot "start-tor.cs"
 $srcUi = Join-Path $PSScriptRoot "DeltaTorUi.cs"
+$srcStats = Join-Path $PSScriptRoot "WindowsNetStats.cs"
 $versionSrc = Join-Path $env:TEMP "deltator-version.g.cs"
 $versionCode = @"
 namespace StartTor
@@ -52,7 +53,7 @@ try {
     & $csc -nologo -optimize+ -target:winexe `
         -r:System.Windows.Forms.dll -r:System.Drawing.dll `
         $iconArg $resArg `
-        -out:$OutFile $src $srcUi $versionSrc
+        -out:$OutFile $src $srcUi $srcStats $versionSrc
     if ($LASTEXITCODE -ne 0) { Write-Host "[x] compile failed ($LASTEXITCODE)"; exit $LASTEXITCODE }
     Write-Host "[ok] built $OutFile (version $Version)"
 
@@ -63,7 +64,7 @@ try {
     $cliOut = Join-Path $cliDir "DeltaTorCli.exe"
     & $csc -nologo -optimize+ -target:exe -define:CONSOLE_BUILD `
         -r:System.Windows.Forms.dll -r:System.Drawing.dll `
-        -out:$cliOut $src $srcUi $versionSrc
+        -out:$cliOut $src $srcUi $srcStats $versionSrc
     if ($LASTEXITCODE -ne 0) { Write-Host "[x] DeltaTorCli compile failed ($LASTEXITCODE)"; exit $LASTEXITCODE }
     Write-Host "[ok] built $cliOut (version $Version)"
 

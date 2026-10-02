@@ -192,10 +192,13 @@ namespace StartTor
             internal static readonly Color Accent = Color.FromArgb(138, 92, 246);
             internal static readonly Color AccentSoft = Color.FromArgb(96, 64, 190);
             internal static readonly Color AccentDark = Color.FromArgb(72, 48, 160);
+            internal static readonly Color AccentLight = Color.FromArgb(183, 156, 255);
             internal static readonly Color Green = Color.FromArgb(52, 211, 153);
             internal static readonly Color GreenDark = Color.FromArgb(38, 160, 118);
+            internal static readonly Color GreenLight = Color.FromArgb(125, 243, 192);
             internal static readonly Color Red = Color.FromArgb(239, 92, 112);
             internal static readonly Color Amber = Color.FromArgb(245, 178, 60);
+            internal static readonly Color AmberLight = Color.FromArgb(255, 213, 138);
             internal const string FontName = "Segoe UI";
             internal static Font Title() { return new Font(FontName, 11f, FontStyle.Bold); }
             internal static Font Big() { return new Font(FontName, 18f, FontStyle.Bold); }
@@ -203,6 +206,36 @@ namespace StartTor
             internal static Font Body() { return new Font(FontName, 9.25f, FontStyle.Regular); }
             internal static Font Small() { return new Font(FontName, 8f, FontStyle.Regular); }
             internal static Font Caption() { return new Font(FontName, 7.25f, FontStyle.Bold); }
+            internal static Font Mono() { return new Font("Consolas", 8.25f, FontStyle.Regular); }
+            internal static Font MonoBig() { return new Font("Consolas", 9.25f, FontStyle.Regular); }
+
+            // Mirrors MainActivity.formatBytes so both surfaces render the same
+            // numbers: "0 B", "1.5 KB", "12.4 MB".
+            internal static string FormatBytes(long b)
+            {
+                if (b < 0) b = 0;
+                if (b < 1024) return b + " B";
+                double v = b / 1024.0;
+                if (v < 1024) return v.ToString("0.0") + " KB";
+                v /= 1024.0;
+                if (v < 1024) return v.ToString("0.0") + " MB";
+                v /= 1024.0;
+                if (v < 1024) return v.ToString("0.0") + " GB";
+                v /= 1024.0;
+                return v.ToString("0.0") + " TB";
+            }
+
+            // Mirrors MainActivity.formatDuration: "mm:ss" under an hour, else "h:mm:ss".
+            internal static string FormatDuration(long ms)
+            {
+                if (ms < 0) ms = 0;
+                long s = ms / 1000;
+                long h = s / 3600;
+                int m = (int)((s % 3600) / 60);
+                int ss = (int)(s % 60);
+                if (h > 0) return h + ":" + m.ToString("00") + ":" + ss.ToString("00");
+                return m.ToString("00") + ":" + ss.ToString("00");
+            }
 
             internal static GraphicsPath RoundRect(Rectangle r, int radius)
             {
@@ -290,13 +323,73 @@ namespace StartTor
                     new Rectangle(r.X + ox, r.Y + oy, r.Width, r.Height), shadowColor, flags);
                 TextRenderer.DrawText(g, text, font, r, textColor, flags);
             }
+
+            // ---- bottom-panel primitives (mirror of the Android StatCard /
+            // InfoPill / ArrowIcon composables) --------------------------
+            internal static void StatArrow(Graphics g, Rectangle r, Color color, bool up)
+            {
+                using (Pen p = new Pen(color, 1.8f))
+                {
+                    p.StartCap = LineCap.Round;
+                    p.EndCap = LineCap.Round;
+                    int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
+                    if (up)
+                    {
+                        g.DrawLine(p, cx, cy + 4, cx, cy - 4);
+                        g.DrawLine(p, cx - 4, cy - 1, cx, cy - 5);
+                        g.DrawLine(p, cx + 4, cy - 1, cx, cy - 5);
+                    }
+                    else
+                    {
+                        g.DrawLine(p, cx, cy - 4, cx, cy + 4);
+                        g.DrawLine(p, cx - 4, cy + 1, cx, cy + 5);
+                        g.DrawLine(p, cx + 4, cy + 1, cx, cy + 5);
+                    }
+                }
+            }
+
+            internal static void StatCard(Graphics g, Rectangle r, string label,
+                string value, Color accent, bool up)
+            {
+                using (GraphicsPath p = RoundRect(r, 10))
+                {
+                    FillGradientPath(g, p, SurfaceAlt, Surface);
+                    using (Pen pen = new Pen(Border, 1f)) g.DrawPath(pen, p);
+                }
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                StatArrow(g, new Rectangle(r.Right - 22, r.Y + 8, 14, 14), accent, up);
+                TextRenderer.DrawText(g, label, Small(),
+                    new Rectangle(r.X + 12, r.Y + 7, r.Width - 34, 14), Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+                TextRenderer.DrawText(g, value, H2(),
+                    new Rectangle(r.X + 12, r.Y + 22, r.Width - 24, r.Height - 28), Text,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+            }
+
+            internal static void InfoPill(Graphics g, Rectangle r, string label, string value)
+            {
+                using (GraphicsPath p = RoundRect(r, 10))
+                {
+                    FillGradientPath(g, p, SurfaceAlt, Surface);
+                    using (Pen pen = new Pen(Border, 1f)) g.DrawPath(pen, p);
+                }
+                TextRenderer.DrawText(g, label, Small(),
+                    new Rectangle(r.X + 12, r.Y, r.Width - 24, 16), Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, value, Body(),
+                    new Rectangle(r.X + 12, r.Y + 16, r.Width - 24, r.Height - 20), Text,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
+            }
         }
 
         // ---- main form -------------------------------------------------------
         private sealed class MainForm : Form
         {
             private enum RunState { Idle, Connecting, Connected, Restarting, Stopping }
-            private enum Page { Main, Settings }
+            private enum Page { Main, Settings, Log, Torrc }
 
             private RunState state = RunState.Idle;
             private Page page = Page.Main;
@@ -334,25 +427,84 @@ namespace StartTor
 
 private Rectangle rcClose, rcMin,
                              rcProxy, rcTun, rcSettings, rcPower, rcBack, rcUpdateBtn;
-            private readonly Rectangle[] rcRowVal = new Rectangle[12];
-            private readonly Rectangle[] rcRowPrev = new Rectangle[12];
-            private readonly Rectangle[] rcRowNext = new Rectangle[12];
-            private readonly Rectangle[] rcRowBody = new Rectangle[12];
+            // state block + ring label
+            private Rectangle rcStateWord, rcStateSub, rcRingLabel, rcPortsLine;
+            // bottom panel (Android BottomPanel parity)
+            private Rectangle rcProxyBtn, rcTunBtn;
+            private Rectangle rcStatDown, rcStatUp, rcStatDl, rcStatUl, rcPillUpTime, rcPillExit;
+            // log page
+            private Rectangle rcLogCopy;
+            private int logScrollY;
+            // torrc editor page
+            private Rectangle rcTorrcBox, rcTorrcSave, rcTorrcReset;
+            private string torrcBuf = "";
+            private bool torrcDirty;
+            private int torrcScrollY;
+            private int torrcLine = -1;
+            private int torrcCaret;
+            private int torrcAnchor = -1;
+            // bridge store card
+            private int bridgeVanilla, bridgeObfs4, bridgeWebtunnel;
+            private DateTime bridgeChecked = DateTime.MinValue;
+            private string bridgeError = "";
+
+            // Live session stats, read off the Wintun adapter. rx/tx are the
+            // adapter totals, so a session total is the delta taken at connect.
+            private long rxBytes, txBytes, rxSessionBase, txSessionBase;
+            private double rxSpeed, txSpeed;
+            private long lastRxSample, lastTxSample;
+            private DateTime lastNetSample = DateTime.MinValue;
+            private DateTime connectedAt = DateTime.MinValue;
+            private string exitCode = "", exitName = "";
+            private bool exitLocating;
+            private DateTime lastExitLookup = DateTime.MinValue;
+            private readonly Rectangle[] rcRowVal = new Rectangle[15];
+            private readonly Rectangle[] rcRowPrev = new Rectangle[15];
+            private readonly Rectangle[] rcRowNext = new Rectangle[15];
+            private readonly Rectangle[] rcRowBody = new Rectangle[15];
 
             private static readonly string[] SettingLabels =
             {
                 "Mode", "Auto proxy",
                 "Strategy level", "Conflux sets", "Conflux legs", "Linked-set cap",
                 "Keep-alive", "Set select", "Skip slow sets (RTT)", "Best % of sets",
-                "Weak legs (top %)", "Isolate SOCKS"
+                "Weak legs (top %)", "Isolate SOCKS",
+                "Torrc template", "Bridge store", "Connection log"
             };
+
+            // Same grouping idea as Android's CONTROL DRAWER sections: the
+            // Windows rows stay native (conflux knobs have no Android peer) but
+            // they now read as sections instead of one flat list.
+            private static readonly string[] SectionNames =
+            {
+                "CONNECTION", "CONFLUX", "SYSTEM", "ADVANCED"
+            };
+
+            private const int RowTorrc = 12, RowBridges = 13, RowLog = 14;
+
+            private static int SectionOf(int i)
+            {
+                switch (i)
+                {
+                    case 0: case 2: case 7: return 0;                        // CONNECTION
+                    case 3: case 4: case 5: case 8: case 9: case 10: return 1;  // CONFLUX
+                    case 1: case 6: case 11: return 2;                       // SYSTEM
+                    default: return 3;                                        // ADVANCED
+                }
+            }
+
+            private static bool RowIsAction(int i)
+            {
+                return i == RowTorrc || i == RowBridges || i == RowLog;
+            }
 
             public MainForm()
             {
                 Text = "DeltaTor";
                 FormBorderStyle = FormBorderStyle.None;
                 StartPosition = FormStartPosition.CenterScreen;
-                ClientSize = new Size(400, 470);
+                ClientSize = new Size(400, 620);
+                MinimumSize = new Size(400, 620);
                 BackColor = Theme.Bg;
                 ForeColor = Theme.Text;
                 Font = Theme.Body();
@@ -367,6 +519,8 @@ private Rectangle rcClose, rcMin,
 
                 string forced = Environment.GetEnvironmentVariable("DELTATOR_UI_PAGE");
                 if (forced == "settings") page = Page.Settings;
+                else if (forced == "log") page = Page.Log;
+                else if (forced == "torrc") { page = Page.Torrc; torrcBuf = ReadTorrcTemplate(); }
 
                 Resize += delegate { LayoutPass(); };
                 Paint += OnPaintAll;
@@ -375,6 +529,8 @@ private Rectangle rcClose, rcMin,
                 MouseWheel += OnMouseWheelAll;
                 MouseLeave += delegate { anyHover = false; hoverId = -1; Invalidate(); };
                 KeyDown += OnKeyDownAll;
+                KeyPress += OnKeyPressAll;
+                MouseDoubleClick += OnMouseDoubleClickAll;
                 FormClosing += OnFormClosing;
 
                 trayMenu = new System.Windows.Forms.ContextMenuStrip();
@@ -431,50 +587,103 @@ private Rectangle rcClose, rcMin,
                 int cx = w / 2;
                 bool showProxy = !autoProxyEnabled;
                 bool showUpd = showUpdateBanner && updateVersion.Length > 0;
-
-                // vertical flow: ring -> connect -> proxy? -> tun -> settings -> update?
-                // connect text is drawn at rcPower.Bottom + 8 with height 22.
-                int total = 104 + 30 + 24;              // ring + connect region + gap
-                if (showProxy) total += 42 + 14;        // proxy row + gap
-                total += 42 + 14;                       // TUN row + gap
-                total += 38;                            // settings row
-                if (showUpd) total += 14 + 38;          // gap + update banner row
-
-                int y = 78 + Math.Max(0, (ClientSize.Height - 24 - 78 - total) / 2);
-                rcPower = new Rectangle(cx - 52, y, 104, 104);
-                y += 104 + 30 + 24;
+                int hgt = ClientSize.Height;
                 int pw = Math.Max(32, w - 48);
+
+                // ---- bottom panel, pinned to the bottom edge ----------------
+                // Android lays this out as a fixed stack of rows under the ring;
+                // anchoring it to the bottom keeps the numbers still while the
+                // state block above re-centres on window resize.
+                int side = 20, gap = 8;
+                int pillH = 40, statH = 52, infoH = 40;
+                int panelH = pillH + gap + statH + gap + statH + gap + infoH;
+                int py = hgt - 14 - panelH;
+                int halfW = (w - side * 2 - gap) / 2;
+
                 if (showProxy)
                 {
-                    rcProxy = new Rectangle(24, y, pw, 42);
-                    y += 42 + 14;
+                    rcProxyBtn = new Rectangle(side, py, halfW, pillH);
+                    rcTunBtn = new Rectangle(side + halfW + gap, py, halfW, pillH);
                 }
                 else
-                    rcProxy = new Rectangle(0, 0, 0, 0);
-                rcTun = new Rectangle(24, y, pw, 42);
-                y += 42 + 14;
-                rcSettings = new Rectangle(24, y, pw, 38);
-                y += 38;
-                if (showUpd)
                 {
-                    y += 14;
-                    rcUpdateBtn = new Rectangle(24, y, pw, 38);
+                    rcProxyBtn = new Rectangle(0, 0, 0, 0);
+                    rcTunBtn = new Rectangle(side, py, w - side * 2, pillH);
                 }
-                else
-                    rcUpdateBtn = new Rectangle(0, 0, 0, 0);
+                int by2 = py + pillH + gap;
+                rcStatDown = new Rectangle(side, by2, halfW, statH);
+                rcStatUp = new Rectangle(side + halfW + gap, by2, halfW, statH);
+                by2 += statH + gap;
+                rcStatDl = new Rectangle(side, by2, halfW, statH);
+                rcStatUl = new Rectangle(side + halfW + gap, by2, halfW, statH);
+                by2 += statH + gap;
+                rcPillUpTime = new Rectangle(side, by2, halfW, infoH);
+                rcPillExit = new Rectangle(side + halfW + gap, by2, halfW, infoH);
 
+                // the old in-flow proxy/tun rows are gone from the drawing code,
+                // so leave them zeroed and unreachable by HitTest
+                rcProxy = new Rectangle(0, 0, 0, 0);
+                rcTun = new Rectangle(0, 0, 0, 0);
+
+                // ---- settings row directly above the panel -----------------
+                rcSettings = new Rectangle(24, py - 14 - 38, pw, 38);
+
+                // ---- update banner under the titlebar ----------------------
+                rcUpdateBtn = showUpd
+                    ? new Rectangle(24, 44, pw, 38)
+                    : new Rectangle(0, 0, 0, 0);
+
+                // ---- state block + ring centred in what is left -----------
+                int topLimit = showUpd ? 92 : 46;
+                int avail = rcSettings.Top - 14 - topLimit;
+                int blockH = 34 + 16 + 10 + 104 + 22 + 18;
+                int by3 = topLimit + Math.Max(0, (avail - blockH) / 2);
+                rcStateWord = new Rectangle(0, by3, w, 34);
+                rcStateSub = new Rectangle(0, by3 + 36, w, 16);
+                rcPower = new Rectangle(cx - 52, by3 + 60, 104, 104);
+                rcRingLabel = new Rectangle(0, rcPower.Bottom + 8, w, 22);
+                rcPortsLine = new Rectangle(0, rcPower.Bottom + 30, w, 18);
+
+                // ---- settings rows -----------------------------------------
+                // Grouped into sections, so each new section pushes its rows
+                // down by one header band.
                 int ry = 78 - settingsScrollY;
                 int rowCount = SettingLabels.Length;
+                int lastSec = -1;
                 for (int i = 0; i < rowCount; i++)
                 {
+                    int sec = SectionOf(i);
+                    if (sec != lastSec)
+                    {
+                        ry += 26;
+                        lastSec = sec;
+                    }
                     rcRowBody[i] = new Rectangle(18, ry, w - 36, 36);
                     int valW = 152;
                     rcRowVal[i] = new Rectangle(w - 18 - valW, ry + 3, valW, 30);
-                    rcRowPrev[i] = new Rectangle(rcRowVal[i].Left, ry + 3, 26, 30);
-                    rcRowNext[i] = new Rectangle(rcRowVal[i].Right - 26, ry + 3, 26, 30);
+                    if (RowIsAction(i))
+                    {
+                        rcRowVal[i] = new Rectangle(18, ry, w - 36, 36);
+                        rcRowPrev[i] = new Rectangle(0, 0, 0, 0);
+                        rcRowNext[i] = new Rectangle(0, 0, 0, 0);
+                    }
+                    else
+                    {
+                        rcRowPrev[i] = new Rectangle(rcRowVal[i].Left, ry + 3, 26, 30);
+                        rcRowNext[i] = new Rectangle(rcRowVal[i].Right - 26, ry + 3, 26, 30);
+                    }
                     ry += 37;
                 }
                 rcBack = new Rectangle(14, 42, 96, 26);
+
+                // ---- log page ------------------------------------------------
+                rcLogCopy = new Rectangle(w - 84, 42, 70, 26);
+
+                // ---- torrc editor page ---------------------------------------
+                int tTop = 78;
+                rcTorrcReset = new Rectangle(24, tTop, 90, 26);
+                rcTorrcSave = new Rectangle(w - 114, tTop, 90, 26);
+                rcTorrcBox = new Rectangle(20, tTop + 36, w - 40, hgt - tTop - 36 - 62);
 
                 try
                 {
@@ -490,6 +699,16 @@ private Rectangle rcClose, rcMin,
             }
 
             // ---- painting ---------------------------------------------------
+            // These four mirror MainActivity's stateColor / statusLabel / wordFor /
+            // sublineFor / labelText so both clients speak the same language.
+            // Windows has no VPN pause state, so Android's READY /
+            // "TOR RUNNING · VPN PAUSED" pair has no counterpart here: on
+            // Windows the proxy and TUN pills already carry that meaning.
+            private bool HasUiError()
+            {
+                return errorMsg.Length > 0 && DateTime.UtcNow < errorMsgUntil;
+            }
+
             private Color StateColor()
             {
                 if (uiRaceActive) return Theme.Amber;
@@ -497,9 +716,23 @@ private Rectangle rcClose, rcMin,
                 {
                     case RunState.Connected: return Theme.Green;
                     case RunState.Connecting: return Theme.Amber;
-                    case RunState.Restarting: return Theme.Red;
+                    case RunState.Restarting: return Theme.AmberLight;
                     case RunState.Stopping: return Theme.Amber;
-                    default: return Theme.Muted;
+                    default: return HasUiError() ? Theme.Red : Theme.Muted;
+                }
+            }
+
+            // Android falls through to OFFLINE while reconnecting, which reads
+            // wrong on a live link; LINK LOST is the honest label here.
+            private string StatusLabel()
+            {
+                switch (state)
+                {
+                    case RunState.Stopping: return "";
+                    case RunState.Connecting: return "CONNECTING";
+                    case RunState.Connected: return "CONNECTED";
+                    case RunState.Restarting: return "LINK LOST";
+                    default: return "OFFLINE";
                 }
             }
 
@@ -509,13 +742,68 @@ private Rectangle rcClose, rcMin,
                     return bootPct > 0 ? "RACE " + bootPct + "%" : "RACING";
                 switch (state)
                 {
-                    case RunState.Connected: return "CONNECTED";
-                    case RunState.Connecting:
-                        return bootPct > 0 ? "BOOTSTRAP " + bootPct + "%" : "BOOTSTRAP";
-                    case RunState.Restarting:
-                        return "RESTART " + restartAttempts + "/3";
                     case RunState.Stopping: return "STOPPING";
-                    default: return "OFFLINE";
+                    case RunState.Connected: return "CONNECTED";
+                    case RunState.Connecting: return "CONNECTING";
+                    case RunState.Restarting: return "LINK LOST";
+                    default: return HasUiError() ? "ERROR" : "OFFLINE";
+                }
+            }
+
+            private string ActiveModeLabel()
+            {
+                int m = lastWinnerMode >= 0
+                        ? lastWinnerMode
+                        : (uiModePos < ModeNames.Length ? uiModePos : -1);
+                if (m < 0 || m >= ModeNames.Length) return "AUTO RACE";
+                return PrettyMode(ModeNames[m]).ToUpperInvariant();
+            }
+
+            private string SublineText()
+            {
+                if (state == RunState.Stopping) return "";
+                if (HasUiError()) return "BOOTSTRAP FAILED";
+                switch (state)
+                {
+                    case RunState.Connecting:
+                    {
+                        if (uiRaceActive)
+                        {
+                            string r = bootPct > 0 ? "RACING · " + bootPct + "%" : "RACING";
+                            return r + (bootTag.Length > 0 ? " · " + bootTag : "");
+                        }
+                        string pct = "TUNNEL BOOTSTRAPPING · " +
+                                     (bootPct > 0 ? bootPct + "%" : "0%");
+                        if (fallbackPending) return pct + " · FALLBACK";
+                        if (uiCanFallback && bootPct > 0 && bootPct < 100)
+                        {
+                            int secs = (int)Math.Max(0, Math.Ceiling(
+                                (FallbackSpan - (DateTime.UtcNow - bootPctSince)).TotalSeconds));
+                            return pct + " · FALLBACK IN " + secs + "s";
+                        }
+                        return pct + (bootTag.Length > 0 ? " · " + bootTag : "");
+                    }
+                    case RunState.Restarting:
+                        return "RESTORING THE TUNNEL";
+                    case RunState.Connected:
+                        return ActiveModeLabel() + " · GATEWAY ACTIVE";
+                    default:
+                        return "YOUR PRIVATE GATEWAY";
+                }
+            }
+
+            // Label under the ring. Empty while stopping so STOPPING appears in
+            // exactly one place, matching the Android fix in e681511.
+            private string RingLabelText()
+            {
+                if (state == RunState.Stopping) return "";
+                if (HasUiError()) return errorMsg;
+                switch (state)
+                {
+                    case RunState.Connecting: return "CANCEL";
+                    case RunState.Connected: return "DISCONNECT";
+                    case RunState.Restarting: return "CANCEL";
+                    default: return "CONNECT";
                 }
             }
 
@@ -528,7 +816,9 @@ private Rectangle rcClose, rcMin,
                 {
                     PaintTitlebar(g);
                     if (page == Page.Main) PaintMain(g);
-                    else PaintSettings(g);
+                    else if (page == Page.Settings) PaintSettings(g);
+                    else if (page == Page.Log) PaintLog(g);
+                    else PaintTorrc(g);
                 }
                 catch (Exception ex)
                 {
@@ -563,6 +853,30 @@ private Rectangle rcClose, rcMin,
                 TextRenderer.DrawText(g, "DeltaTor", Theme.Title(),
                     new Rectangle(30, 0, 120, 36), Theme.Text,
                     TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                // Android's StatusChip lives in the titlebar here, because the
+                // borderless window already owns the top strip. It is hidden on
+                // the sub-pages, matching Android's main-screen-only chip.
+                string chipTxt = page == Page.Main ? StatusLabel() : "";
+                if (chipTxt.Length > 0)
+                {
+                    Font cf = Theme.Caption();
+                    int cw = TextRenderer.MeasureText(g, chipTxt, cf).Width + 30;
+                    int cxr = ClientSize.Width - 192 - cw;
+                    Rectangle chipR = new Rectangle(Math.Max(152, cxr), 9, cw, 18);
+                    using (GraphicsPath p = Theme.RoundRect(chipR, chipR.Height / 2))
+                    {
+                        Theme.FillGradientPath(g, p, Theme.SurfaceLight, Theme.Surface);
+                        using (Pen pen = new Pen(Theme.Border, 1f)) g.DrawPath(pen, p);
+                    }
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    using (SolidBrush b = new SolidBrush(sc))
+                        g.FillEllipse(b, chipR.X + 9, chipR.Y + 6, 6, 6);
+                    TextRenderer.DrawText(g, chipTxt, cf,
+                        new Rectangle(chipR.X + 20, chipR.Y,
+                            chipR.Width - 24, chipR.Height), Theme.Text,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                }
 
                 string ver = DeltaTorVersion.App;
                 TextRenderer.DrawText(g, "v" + ver, Theme.Small(),
@@ -601,13 +915,18 @@ private Rectangle rcClose, rcMin,
                 string stateTxt = StateText();
                 Color stateCol = StateColor();
                 Theme.DrawTextShadow(g, stateTxt, Theme.Big(),
-                    new Rectangle(0, 58, ClientSize.Width, 36), stateCol,
+                    rcStateWord, stateCol,
                     Color.FromArgb(60, 0, 0, 0),
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter,
                     1, 2);
 
-                if (state == RunState.Connecting && !uiRaceActive)
-                    PaintBootstrapLine(g);
+                // StateBlock subline: Android draws it right under the big word.
+                string sub = SublineText();
+                if (sub.Length > 0)
+                    TextRenderer.DrawText(g, sub, Theme.Caption(),
+                        rcStateSub, stateCol,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis);
 
                 Rectangle ring = rcPower;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -623,7 +942,7 @@ private Rectangle rcClose, rcMin,
                     switch (state)
                     {
                         case RunState.Connected: ringColor = Theme.Green; glowColor = Theme.Green; break;
-                        case RunState.Restarting: ringColor = Theme.Red; glowColor = Theme.Red; break;
+                        case RunState.Restarting: ringColor = Theme.AmberLight; glowColor = Theme.AmberLight; break;
                         case RunState.Stopping: ringColor = Theme.Amber; glowColor = Theme.Amber; break;
                         default: ringColor = Theme.BorderLight; glowColor = Color.Transparent; break;
                     }
@@ -684,42 +1003,44 @@ private Rectangle rcClose, rcMin,
                     g.DrawLine(p, cx(), rcPower.Top + 16, cx(), rcPower.Top + 46);
                 }
 
-                string cap = ErrorOr(state == RunState.Idle ? "CONNECT" :
-                                     state == RunState.Connected ? "DISCONNECT" :
-                                     state == RunState.Stopping ? "STOPPING" : "CANCEL");
-                TextRenderer.DrawText(g, cap, Theme.Body(),
-                    new Rectangle(0, rcPower.Bottom + 8, ClientSize.Width, 22),
-                    HasError() ? (errorMsgIsError ? Theme.Red : Theme.Text) : Theme.Muted,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-                    TextFormatFlags.EndEllipsis);
+                // Ring label. Deliberately not ErrorOr(): while stopping this slot must stay
+                // empty so STOPPING is not repeated, and a flash message must
+                // not be able to hijack it.
+                string cap = RingLabelText();
+                if (cap.Length > 0)
+                    TextRenderer.DrawText(g, cap, Theme.Body(),
+                        rcRingLabel,
+                        HasError() ? (errorMsgIsError ? Theme.Red : Theme.Text) : Theme.Muted,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis);
 
                 if (state == RunState.Connected)
                 {
                     TextRenderer.DrawText(g, "SOCKS 127.0.0.1:" + liveSocksPort +
                         "   HTTP 127.0.0.1:" + liveHttpPort +
                         "   DNS 127.0.0.1:" + liveDnsPort,
-                        Theme.Small(), new Rectangle(0, rcPower.Bottom + 30, ClientSize.Width, 18),
+                        Theme.Small(), rcPortsLine,
                         Theme.Muted, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }
 
-                if (!autoProxyEnabled)
-                    PaintTogglePill(g, rcProxy, "PROXY", ProxyIsOurs(), hoverId == 20, false);
-
-                bool tunReady = state == RunState.Connected || state == RunState.Restarting;
-                string tunName = tunReady || !TunPending() ? "TUN" : "TUN \u2026";
-                PaintTogglePill(g, rcTun, tunName, TunOnNow(), hoverId == 21,
-                    TunPending() || tunLocalPending);
-
+// SETTINGS is navigation, not part of the stats panel, so it stays
+                // reachable while stopping — Android keeps its drawer live too.
                 bool hovSet = hoverId == 30;
                 Theme.PillGradient(g, rcSettings,
                     hovSet ? Theme.SurfaceLight : Theme.SurfaceAlt,
                     hovSet ? Theme.SurfaceAlt : Theme.Surface, Theme.Border);
                 TextRenderer.DrawText(g, "SETTINGS", Theme.H2(),
-                    new Rectangle(rcSettings.Left + 18, rcSettings.Y, rcSettings.Width - 36, rcSettings.Height),
+                    new Rectangle(rcSettings.Left + 18, rcSettings.Y,
+                        rcSettings.Width - 36, rcSettings.Height),
                     Theme.Text, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
                 DrawChevron(g, new Rectangle(rcSettings.Right - 34,
                     rcSettings.Y + (rcSettings.Height - 24) / 2, 24, 24),
                     true, hovSet);
+
+                // Android renders nothing at all while stopping, and shows "--"
+                // for every stat that is not live. Same rules here.
+                if (state != RunState.Stopping)
+                    PaintBottomPanel(g);
 
                 if (showUpdateBanner && updateVersion.Length > 0)
                 {
@@ -748,60 +1069,68 @@ private Rectangle rcClose, rcMin,
 
             private int cx() { return rcPower.Left + rcPower.Width / 2; }
 
+            // ---- bottom panel -----------------------------------------------
+            // Row order matches Android's BottomPanel exactly: the two toggles,
+            // then the speed cards, then the totals, then the info pills.
+            private void PaintBottomPanel(Graphics g)
+            {
+                bool tunPend = TunPending() || tunLocalPending;
+                string tunName = tunPend ? "TUN …" : "TUN";
+
+                if (!autoProxyEnabled)
+                    PaintTogglePill(g, rcProxyBtn, "PROXY", ProxyIsOurs(),
+                        hoverId == 20, false, true);
+                PaintTogglePill(g, rcTunBtn, tunName, TunOnNow(), hoverId == 21, tunPend, true);
+
+                bool live = state == RunState.Connected || state == RunState.Restarting;
+                string dash = "--";
+                string down = dash, up = dash, dl = dash, ul = dash;
+                if (live)
+                {
+                    down = Theme.FormatBytes((long)rxSpeed) + "/s";
+                    up = Theme.FormatBytes((long)txSpeed) + "/s";
+                    dl = Theme.FormatBytes(rxBytes);
+                    ul = Theme.FormatBytes(txBytes);
+                }
+                Theme.StatCard(g, rcStatDown, "SPEED DOWN", down, Theme.GreenLight, false);
+                Theme.StatCard(g, rcStatUp, "SPEED UP", up, Theme.AccentLight, true);
+                Theme.StatCard(g, rcStatDl, "DOWNLOADED", dl, Theme.Green, false);
+                Theme.StatCard(g, rcStatUl, "UPLOADED", ul, Theme.Accent, true);
+
+                string upTime = dash;
+                if (connectedAt != DateTime.MinValue)
+                    upTime = Theme.FormatDuration((long)(DateTime.UtcNow - connectedAt).TotalMilliseconds);
+
+                string ex = dash;
+                if (state == RunState.Connected || state == RunState.Restarting)
+                {
+                    if (exitName.Length > 0) ex = exitCode + " " + exitName;
+                    else if (exitLocating) ex = "Locating …";
+                }
+                Theme.InfoPill(g, rcPillUpTime, "UP TIME", upTime);
+                Theme.InfoPill(g, rcPillExit, "EXIT", ex);
+            }
+
             // Must match start-tor.cs StuckFallbackMinutes (2 minutes): how long a
             // frozen bootstrap percentage is tolerated before the fallback restart.
             private static readonly TimeSpan FallbackSpan = TimeSpan.FromMinutes(2.0);
 
-            private void PaintBootstrapLine(Graphics g)
-            {
-                int pct = bootPct;
-                string line;
-                // Timer text is drawn white so it stands out on the main screen.
-                Color col = Theme.Text;
-
-                if (fallbackPending)
-                {
-                    line = "FALLBACK - trying all bridges";
-                }
-                else if (pct <= 0)
-                {
-                    line = "starting tor...";
-                }
-                else if (pct >= 100)
-                {
-                    line = "connected";
-                }
-                else if (uiCanFallback)
-                {
-                    TimeSpan remaining = FallbackSpan - (DateTime.UtcNow - bootPctSince);
-                    int secs = (int)Math.Max(0, Math.Ceiling(remaining.TotalSeconds));
-                    line = "fallback in " + secs + "s" +
-                           (string.IsNullOrEmpty(bootTag) ? "" : "  " + bootTag);
-                }
-                else
-                {
-                    line = "bootstrap " + pct + "%" +
-                           (string.IsNullOrEmpty(bootTag) ? "" : "  " + bootTag);
-                }
-
-                TextRenderer.DrawText(g, line, Theme.Small(),
-                    new Rectangle(0, 96, ClientSize.Width, 18),
-                    col, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
-                         TextFormatFlags.EndEllipsis);
-            }
 
             private void PaintTogglePill(Graphics g, Rectangle r, string name, bool on,
-                                         bool hovered, bool pending)
+                                         bool hovered, bool pending, bool compact)
             {
                 Theme.PillGradient(g, r,
                     hovered ? Theme.SurfaceLight : Theme.SurfaceAlt,
                     Theme.Surface, pending ? Theme.Amber : Theme.Border);
+                int pad = compact ? 12 : 16;
+                int swW = compact ? 40 : 44, swH = compact ? 20 : 22;
                 TextRenderer.DrawText(g, name, Theme.H2(),
-                    new Rectangle(r.Left + 16, r.Y, r.Width - 40, r.Height),
+                    new Rectangle(r.Left + pad, r.Y, r.Width - pad - swW - 16, r.Height),
                     pending ? Theme.Amber : (on ? Theme.Text : Theme.Muted),
-                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                    TextFormatFlags.EndEllipsis);
 
-                int swW = 44, swH = 22, swX = r.Right - 56, swY = r.Y + (r.Height - swH) / 2;
+                int swX = r.Right - swW - 12, swY = r.Y + (r.Height - swH) / 2;
                 Rectangle sw = new Rectangle(swX, swY, swW, swH);
 
                 Color bg = pending ? Theme.Amber : (on ? Theme.Green : Theme.SurfaceLight);
@@ -814,7 +1143,7 @@ private Rectangle rcClose, rcMin,
                     Theme.DrawGlow(g, new Rectangle(swX - 2, swY - 2, swW + 4, swH + 4),
                         Theme.Green, 4, 20);
 
-                int knobD = 16;
+                int knobD = compact ? 14 : 16;
                 int knobX = (on && !pending) ? swX + swW - knobD - 3 : swX + 3;
                 int knobY = swY + (swH - knobD) / 2;
                 Rectangle knob = new Rectangle(knobX, knobY, knobD, knobD);
@@ -867,11 +1196,27 @@ private Rectangle rcClose, rcMin,
                 Region prevClip = g.Clip;
                 g.SetClip(new Rectangle(0, settingsTop, ClientSize.Width, settingsBottom - settingsTop));
 
+                int lastSec = -1;
                 for (int i = 0; i < rowCount; i++)
                 {
                     Rectangle body = rcRowBody[i];
                     if (body.Bottom < settingsTop || body.Y > settingsBottom) continue;
                     bool selected = editRow == i;
+
+                    int sec = SectionOf(i);
+                    if (sec != lastSec)
+                    {
+                        lastSec = sec;
+                        // Only draw the header when it is actually on screen.
+                        // Scrolled into the middle of a section the header sits
+                        // above the clip, and redrawing it there would float a
+                        // duplicate label over the first visible row.
+                        int hy = body.Y - 24;
+                        if (hy >= settingsTop)
+                            TextRenderer.DrawText(g, SectionNames[sec], Theme.Caption(),
+                                new Rectangle(18, hy, body.Width, 18), Theme.AccentLight,
+                                TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    }
 
                     Color bgTop = i % 2 == 0 ? Theme.Surface : Theme.SurfaceAlt;
                     Color bgBot = i % 2 == 0 ? Theme.SurfaceAlt : Theme.Surface;
@@ -906,6 +1251,26 @@ private Rectangle rcClose, rcMin,
             private void PaintSettingValue(Graphics g, int i)
             {
                 Rectangle v = rcRowVal[i];
+                if (RowIsAction(i))
+                {
+                    bool hov = hoverId == 300 + i;
+                    Theme.PillGradient(g, v,
+                        hov ? Theme.SurfaceLight : Theme.SurfaceAlt, Theme.Surface, Theme.Border);
+                    string val =
+                        i == RowTorrc ? (torrcDirty ? "Edit torrc •" : "Edit torrc") :
+                        i == RowLog ? "View log" : BridgeCardSummary();
+                    TextRenderer.DrawText(g, SettingLabels[i], Theme.Body(),
+                        new Rectangle(v.Left + 14, v.Y, v.Width - 120, v.Height), Theme.Text,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                    TextRenderer.DrawText(g, val, Theme.Small(),
+                        new Rectangle(v.Left + v.Width - 200, v.Y, 160, v.Height),
+                        bridgeError.Length > 0 && i == RowBridges ? Theme.Red : Theme.Muted,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis);
+                    DrawChevron(g, new Rectangle(v.Right - 30, v.Y + (v.Height - 22) / 2, 22, 22),
+                        true, hov);
+                    return;
+                }
                 if (i == 1 || i == 6 || i == 11)
                 {
                     bool on = i == 1 ? autoProxyEnabled : (i == 6 ? keepAliveEnabled : isolateSocksAuth);
@@ -959,6 +1324,591 @@ private Rectangle rcClose, rcMin,
             }
 
             // ---- settings model ---------------------------------------------
+            // ---- torrc line editor -------------------------------------------
+            // The template is edited line by line: a double-click drops the
+            // caret on that line, then the normal WinForms KeyDown path drives
+            // it. torrcBuf is the single source of truth, so PASTE, SELECT ALL
+            // and COPY behave the way a text box would.
+            private List<string> TorrcLines()
+            {
+                return new List<string>(
+                    (torrcBuf ?? "").Replace("\r\n", "\n").Split('\n'));
+            }
+
+            private void SetTorrcLines(List<string> l)
+            {
+                torrcBuf = string.Join("\r\n", l.ToArray());
+                torrcDirty = true;
+            }
+
+            private void TorrcBeginLine(int idx)
+            {
+                List<string> l = TorrcLines();
+                if (idx < 0 || idx >= l.Count) return;
+                torrcLine = idx;
+                torrcAnchor = -1;
+                torrcCaret = l[idx].Length;
+                ScrollTorrcToLine(idx);
+            }
+
+            private void ScrollTorrcToLine(int idx)
+            {
+                int lh = 13;
+                int top = idx * lh - torrcScrollY;
+                int view = rcTorrcBox.Height - 12;
+                if (top < 0) torrcScrollY = idx * lh;
+                else if (top + lh > view) torrcScrollY = idx * lh + lh - view;
+                int maxScrollY = Math.Max(0, TorrcLines().Count * lh - rcTorrcBox.Height);
+                torrcScrollY = Math.Max(0, Math.Min(maxScrollY, torrcScrollY));
+            }
+
+            private void TorrcSelRange(string line, out int a, out int b)
+            {
+                a = Math.Max(0, Math.Min(torrcCaret, line.Length));
+                b = a;
+                if (torrcAnchor >= 0)
+                {
+                    int x = Math.Max(0, Math.Min(torrcAnchor, line.Length));
+                    a = Math.Min(a, x);
+                    b = Math.Max(b, x);
+                }
+            }
+
+            private void TorrcReplaceSel(string s)
+            {
+                List<string> l = TorrcLines();
+                if (torrcLine < 0 || torrcLine >= l.Count) return;
+                string line = l[torrcLine];
+                int a, b;
+                TorrcSelRange(line, out a, out b);
+                l[torrcLine] = line.Substring(0, a) + s + line.Substring(b);
+                torrcCaret = a + s.Length;
+                torrcAnchor = -1;
+                SetTorrcLines(l);
+                Invalidate();
+            }
+
+            private void TorrcDeleteSel()
+            {
+                List<string> l = TorrcLines();
+                if (torrcLine < 0 || torrcLine >= l.Count) return;
+                string line = l[torrcLine];
+                int a, b;
+                TorrcSelRange(line, out a, out b);
+                if (a == b && torrcCaret == 0)
+                {
+                    // Backspace at column 0 joins the line with the previous one.
+                    if (torrcLine == 0) return;
+                    string prev = l[torrcLine - 1];
+                    l[torrcLine - 1] = prev + line;
+                    l.RemoveAt(torrcLine);
+                    torrcLine--;
+                    torrcCaret = prev.Length;
+                    torrcAnchor = -1;
+                    SetTorrcLines(l);
+                    return;
+                }
+                l[torrcLine] = line.Substring(0, a) + line.Substring(b);
+                torrcCaret = a;
+                torrcAnchor = -1;
+                SetTorrcLines(l);
+            }
+
+            private void TorrcMoveLine(int delta)
+            {
+                List<string> l = TorrcLines();
+                int dst = torrcLine + delta;
+                if (torrcLine < 0 || dst < 0 || dst >= l.Count) return;
+                string cur = l[torrcLine];
+                l[torrcLine] = l[dst];
+                l[dst] = cur;
+                torrcLine = dst;
+                torrcAnchor = -1;
+                SetTorrcLines(l);
+                ScrollTorrcToLine(dst);
+            }
+
+            private string TorrcSelectedText()
+            {
+                List<string> l = TorrcLines();
+                if (torrcLine < 0 || torrcLine >= l.Count) return "";
+                int a, b;
+                TorrcSelRange(l[torrcLine], out a, out b);
+                return l[torrcLine].Substring(a, b - a);
+            }
+
+            private void OnMouseDoubleClickAll(object s, MouseEventArgs e)
+            {
+                if (page != Page.Torrc) return;
+                if (!rcTorrcBox.Contains(e.Location)) return;
+                int lh = 13;
+                int idx = (e.Location.Y - (rcTorrcBox.Y + 6) + torrcScrollY) / lh;
+                TorrcBeginLine(idx);
+                Invalidate();
+            }
+
+            private bool TorrcKeyDown(KeyEventArgs e)
+            {
+                // Ctrl+S always saves, whether or not a line is focused.
+                if (e.Control && e.KeyCode == Keys.S)
+                {
+                    SaveTorrc();
+                    return true;
+                }
+                if (torrcLine < 0) return false;
+                List<string> l = TorrcLines();
+                if (torrcLine >= l.Count) { torrcLine = -1; return false; }
+                string line = l[torrcLine];
+
+                if (e.Control && e.KeyCode == Keys.A)
+                {
+                    torrcAnchor = 0;
+                    torrcCaret = line.Length;
+                    Invalidate();
+                    return true;
+                }
+                if (e.Control && e.KeyCode == Keys.C)
+                {
+                    string t = TorrcSelectedText();
+                    if (t.Length > 0) try { Clipboard.SetText(t); } catch { }
+                    return true;
+                }
+                if (e.Control && e.KeyCode == Keys.X)
+                {
+                    string t = TorrcSelectedText();
+                    if (t.Length > 0)
+                    {
+                        try { Clipboard.SetText(t); } catch { }
+                        TorrcReplaceSel("");
+                    }
+                    return true;
+                }
+                if (e.Control && e.KeyCode == Keys.V)
+                {
+                    string t = null;
+                    try { if (Clipboard.ContainsText()) t = Clipboard.GetText(); }
+                    catch { }
+                    if (t != null)
+                        TorrcReplaceSel(t.Replace("\r\n", "\n").Replace("\n", " ").Replace("\r", " "));
+                    return true;
+                }
+
+                switch (e.KeyCode)
+                {
+                    case Keys.Escape:
+                        torrcLine = -1;
+                        torrcAnchor = -1;
+                        Invalidate();
+                        return true;
+                    case Keys.Enter:
+                    {
+                        string ind = "";
+                        foreach (char ch in line)
+                        {
+                            if (ch != ' ' && ch != '\t') break;
+                            ind += ch;
+                        }
+                        l.Insert(torrcLine + 1, ind);
+                        torrcLine++;
+                        torrcCaret = ind.Length;
+                        torrcAnchor = -1;
+                        SetTorrcLines(l);
+                        ScrollTorrcToLine(torrcLine);
+                        return true;
+                    }
+                    case Keys.Back:
+                        TorrcDeleteSel();
+                        return true;
+                    case Keys.Delete:
+                    {
+                        int a, b;
+                        TorrcSelRange(line, out a, out b);
+                        if (b < line.Length) TorrcReplaceSel("");
+                        return true;
+                    }
+                    case Keys.Left:
+                        torrcCaret = Math.Max(0, torrcCaret - 1);
+                        if (!e.Shift) torrcAnchor = -1;
+                        Invalidate();
+                        return true;
+                    case Keys.Right:
+                        torrcCaret = Math.Min(line.Length, torrcCaret + 1);
+                        if (!e.Shift) torrcAnchor = -1;
+                        Invalidate();
+                        return true;
+                    case Keys.Home:
+                        torrcCaret = 0;
+                        if (!e.Shift) torrcAnchor = -1;
+                        Invalidate();
+                        return true;
+                    case Keys.End:
+                        torrcCaret = line.Length;
+                        if (!e.Shift) torrcAnchor = -1;
+                        Invalidate();
+                        return true;
+                    case Keys.Up:
+                        if (torrcLine > 0)
+                        {
+                            torrcLine--;
+                            torrcCaret = Math.Min(torrcCaret, TorrcLines()[torrcLine].Length);
+                            torrcAnchor = -1;
+                            ScrollTorrcToLine(torrcLine);
+                        }
+                        return true;
+                    case Keys.Down:
+                        if (torrcLine < l.Count - 1)
+                        {
+                            torrcLine++;
+                            torrcCaret = Math.Min(torrcCaret, TorrcLines()[torrcLine].Length);
+                            torrcAnchor = -1;
+                            ScrollTorrcToLine(torrcLine);
+                        }
+                        return true;
+                    default:
+                        break;
+                }
+
+                // Alt+Up / Alt+Down reorder the focused line, which is how a
+                // torrc flag usually gets moved.
+                if (e.Alt && e.KeyCode == Keys.Up) { TorrcMoveLine(-1); return true; }
+                if (e.Alt && e.KeyCode == Keys.Down) { TorrcMoveLine(1); return true; }
+                return false;
+            }
+
+            private void OnKeyPressAll(object s, KeyPressEventArgs e)
+            {
+                if (page != Page.Torrc || torrcLine < 0) return;
+                if ((e.KeyChar < 32) || e.KeyChar == 127) return;   // handled by KeyDown
+                if ((ModifierKeys & (Keys.Control | Keys.Alt)) != 0) return;
+                TorrcReplaceSel(e.KeyChar.ToString());
+                e.Handled = true;
+            }
+
+            // ---- torrc template I/O -----------------------------------------
+            // RESET restores data\torrc.template.default, which the build ships
+            // alongside the working copy so a user edit never destroys the
+            // original.
+            private static string TorrcDefaultFile()
+            {
+                return Path.Combine(DataDir, "torrc.template.default");
+            }
+
+            private string ReadTorrcTemplate()
+            {
+                try
+                {
+                    if (File.Exists(TorrcTemplate))
+                        return File.ReadAllText(TorrcTemplate);
+                }
+                catch { }
+                return "";
+            }
+
+            private void SaveTorrc()
+            {
+                try
+                {
+                    File.WriteAllText(TorrcTemplate, torrcBuf, new UTF8Encoding(false));
+                    torrcDirty = false;
+                    FlashMessage("torrc saved", false);
+                    LogLine("[ui] torrc template saved");
+                }
+                catch (Exception ex)
+                {
+                    FlashMessage("torrc save failed: " + ex.Message);
+                }
+                Invalidate();
+            }
+
+            private void ResetTorrc()
+            {
+                RunBg(delegate
+                {
+                    string txt = "";
+                    try
+                    {
+                        if (File.Exists(TorrcDefaultFile()))
+                            txt = File.ReadAllText(TorrcDefaultFile());
+                        else if (File.Exists(TorrcTemplate))
+                            txt = File.ReadAllText(TorrcTemplate);
+                    }
+                    catch { }
+                    bool same = txt.Length > 0 && txt == ReadTorrcTemplate();
+                    UiInvokeDelegate(delegate
+                    {
+                        torrcBuf = txt;
+                        torrcDirty = false;
+                        Invalidate();
+                        FlashMessage(same ? "already the shipped default" : "torrc reset", false);
+                    });
+                });
+            }
+
+            // ---- bridge store ------------------------------------------------
+            private string BridgeCardSummary()
+            {
+                if (bridgeError.Length > 0) return "update failed";
+                if (bridgeChecked == DateTime.MinValue) return "tap to check";
+                string ago = RelativeTime(bridgeChecked);
+                return bridgeVanilla + "/" + bridgeObfs4 + "/" + bridgeWebtunnel + " · " + ago;
+            }
+
+            private static string RelativeTime(DateTime t)
+            {
+                if (t == DateTime.MinValue) return "never";
+                double s = (DateTime.Now - t).TotalSeconds;
+                if (s < 90) return "just now";
+                if (s < 5400) return ((int)(s / 60)) + "m ago";
+                if (s < 172800) return ((int)(s / 3600)) + "h ago";
+                return ((int)(s / 86400)) + "d ago";
+            }
+
+            private void UpdateBridgeCard(bool refresh)
+            {
+                int v = 0, o = 0, w = 0;
+                string err = "";
+                try
+                {
+                    // Only an explicit tap downloads; opening Settings just
+                    // counts whatever is already on disk.
+                    if (refresh) UpdateBridges();
+                    foreach (string mf in new string[] { "vanilla", "obfs4", "webtunnel" })
+                    {
+                        int n = 0;
+                        try
+                        {
+                            string[] files = Directory.Exists(BridgesDir)
+                                ? Directory.GetFiles(BridgesDir, "*" + mf + "*") : new string[0];
+                            foreach (string bf in files)
+                            {
+                                foreach (string ln in File.ReadAllLines(bf))
+                                {
+                                    if (ln.Trim().Length == 0) continue;
+                                    if (ln.TrimStart().StartsWith("#")) continue;
+                                    n++;
+                                }
+                            }
+                        }
+                        catch { }
+                        if (mf == "vanilla") v = n;
+                        else if (mf == "obfs4") o = n;
+                        else w = n;
+                    }
+                }
+                catch (Exception ex) { err = ex.Message; }
+
+                string ferr = err;
+                UiInvokeDelegate(delegate
+                {
+                    bridgeVanilla = v; bridgeObfs4 = o; bridgeWebtunnel = w;
+                    bridgeError = ferr;
+                    bridgeChecked = DateTime.UtcNow;
+                    Invalidate();
+                });
+            }
+
+            // ---- navigation between pages ----------------------------------
+            private void GoBack()
+            {
+                CancelEdit();
+                if (page == Page.Settings) { page = Page.Main; settingsScrollY = 0; }
+                else if (page == Page.Log || page == Page.Torrc) page = Page.Settings;
+                LayoutPass();
+                Invalidate();
+            }
+
+            private void OpenLog()
+            {
+                CancelEdit();
+                page = Page.Log;
+                logScrollY = 0;
+                LayoutPass();
+                Invalidate();
+            }
+
+            private void OpenTorrc()
+            {
+                CancelEdit();
+                page = Page.Torrc;
+                torrcDirty = false;
+                RunBg(delegate
+                {
+                    string txt = ReadTorrcTemplate();
+                    UiInvokeDelegate(delegate
+                    {
+                        torrcBuf = txt;
+                        torrcDirty = false;
+                        Invalidate();
+                    });
+                });
+                LayoutPass();
+                Invalidate();
+            }
+
+            // ---- log page ---------------------------------------------------
+            private List<string> UiLogSnapshot()
+            {
+                lock (uiLogLock)
+                    return new List<string>(uiLogBuffer);
+            }
+
+            private void CopyLogToClipboard()
+            {
+                List<string> lines = UiLogSnapshot();
+                try
+                {
+                    string all = string.Join(Environment.NewLine, lines.ToArray());
+                    if (all.Length == 0) all = "(no log lines yet)";
+                    Clipboard.SetText(all);
+                    FlashMessage("log copied", false);
+                }
+                catch
+                {
+                    try { FlashMessage("clipboard unavailable"); } catch { }
+                }
+            }
+
+            private void PaintLog(Graphics g)
+            {
+                bool hovBack = hoverId == 40;
+                TextRenderer.DrawText(g, hovBack ? "‹ BACK" : "‹ Back", Theme.Body(),
+                    rcBack, hovBack ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "CONNECTION LOG", Theme.H2(),
+                    new Rectangle(0, 4, ClientSize.Width, 28), Theme.Text,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                bool hovCopy = hoverId == 60;
+                Theme.PillGradient(g, rcLogCopy,
+                    hovCopy ? Theme.SurfaceLight : Theme.SurfaceAlt,
+                    Theme.Surface, Theme.Border);
+                TextRenderer.DrawText(g, "COPY", Theme.Caption(), rcLogCopy,
+                    hovCopy ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                int top = 78;
+                int bottom = ClientSize.Height - 8;
+                List<string> lines = UiLogSnapshot();
+                if (lines.Count == 0)
+                {
+                    TextRenderer.DrawText(g, "No log lines captured yet. Start a connection.", Theme.Small(),
+                        new Rectangle(20, top + 12, ClientSize.Width - 40, 40), Theme.Muted,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.Top);
+                    return;
+                }
+
+                Font f = Theme.Mono();
+                int lh = 13;
+                Region prev = g.Clip;
+                g.SetClip(new Rectangle(0, top, ClientSize.Width, bottom - top));
+                int y = top - logScrollY;
+                using (SolidBrush b = new SolidBrush(Theme.Bg))
+                    g.FillRectangle(b, 12, top - logScrollY,
+                        ClientSize.Width - 24, lines.Count * lh + 12);
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    int ly = y + i * lh;
+                    if (ly + lh < top || ly > bottom) continue;
+                    TextRenderer.DrawText(g, lines[i], f,
+                        new Rectangle(18, ly, ClientSize.Width - 36, lh),
+                        LogLineColor(lines[i]),
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                }
+                g.Clip = prev;
+            }
+
+            private static Color LogLineColor(string s)
+            {
+                if (s == null) return Theme.Muted;
+                if (s.Contains("[x]") || s.Contains("ERROR") || s.Contains("failed"))
+                    return Theme.Red;
+                if (s.Contains("[!]") || s.Contains("WARN")) return Theme.Amber;
+                return Theme.Muted;
+            }
+
+            // ---- torrc editor page -------------------------------------------
+            private void PaintTorrc(Graphics g)
+            {
+                bool hovBack = hoverId == 40;
+                TextRenderer.DrawText(g, hovBack ? "‹ BACK" : "‹ Back", Theme.Body(),
+                    rcBack, hovBack ? Theme.Text : Theme.Muted,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+                TextRenderer.DrawText(g, "TORRC TEMPLATE", Theme.H2(),
+                    new Rectangle(0, 4, ClientSize.Width, 28), Theme.Text,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+
+                DrawActionButton(g, rcTorrcReset, "RESET", hoverId == 62, false);
+                DrawActionButton(g, rcTorrcSave,
+                    torrcDirty ? "SAVE •" : "SAVED ✓", hoverId == 61, true);
+
+                TextRenderer.DrawText(g,
+                    "The full torrc, editable here · applied on next connect",
+                    Theme.Small(), new Rectangle(24, rcTorrcBox.Y - 20, ClientSize.Width - 48, 18),
+                    Theme.Muted, TextFormatFlags.Left | TextFormatFlags.VerticalCenter);
+
+                using (GraphicsPath p = Theme.RoundRect(rcTorrcBox, 10))
+                {
+                    Theme.FillGradientPath(g, p, Theme.Surface, Theme.Bg);
+                    using (Pen pen = new Pen(Theme.Border, 1f)) g.DrawPath(pen, p);
+                }
+                Region prev = g.Clip;
+                Rectangle inner = Rectangle.Inflate(rcTorrcBox, -8, -6);
+                g.SetClip(inner);
+                string[] ls = (torrcBuf ?? "").Replace("\r\n", "\n").Split('\n');
+                int lh = 13;
+                using (SolidBrush b = new SolidBrush(Theme.SurfaceAlt))
+                    g.FillRectangle(b, inner.X, inner.Y, 92, inner.Height);
+                int first = Math.Max(0, torrcScrollY / lh);
+                Font mf = Theme.Mono();
+                for (int i = first; i < ls.Length; i++)
+                {
+                    int ly = inner.Y + i * lh - torrcScrollY;
+                    if (ly > inner.Bottom) break;
+                    if (i == torrcLine)
+                    {
+                        int ca, cb;
+                        TorrcSelRange(ls[i], out ca, out cb);
+                        int selX = TextRenderer.MeasureText(ls[i].Substring(0, ca), mf).Width;
+                        int selW = TextRenderer.MeasureText(
+                            ls[i].Substring(ca, cb - ca), mf).Width;
+                        using (SolidBrush sb = new SolidBrush(Theme.Accent))
+                            g.FillRectangle(sb, inner.X + 98 + selX, ly, selW, lh);
+                        using (SolidBrush sb = new SolidBrush(Theme.SurfaceAlt))
+                            g.FillRectangle(sb, inner.X + 4, ly, 92, lh);
+                        if (caretOn)
+                        {
+                            using (SolidBrush cb2 = new SolidBrush(Theme.Text))
+                                g.FillRectangle(cb2, inner.X + 98 + selX, ly, 1, lh);
+                        }
+                    }
+                    TextRenderer.DrawText(g, (i + 1).ToString(), Theme.Small(),
+                        new Rectangle(inner.X + 4, ly, 40, lh),
+                        i == torrcLine ? Theme.Text : Theme.Muted,
+                        TextFormatFlags.Right | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.NoPrefix);
+                    TextRenderer.DrawText(g, ls[i], mf,
+                        new Rectangle(inner.X + 98, ly, inner.Width - 104, lh),
+                        Theme.Text,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter |
+                        TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+                }
+                g.Clip = prev;
+            }
+
+            private void DrawActionButton(Graphics g, Rectangle r, string text,
+                bool hovered, bool accent)
+            {
+                Theme.PillGradient(g, r,
+                    accent ? (hovered ? Theme.Accent : Theme.AccentSoft) :
+                             (hovered ? Theme.SurfaceLight : Theme.SurfaceAlt),
+                    accent ? (hovered ? Theme.AccentSoft : Theme.AccentDark) : Theme.Surface,
+                    accent ? Theme.Accent : Theme.Border);
+                TextRenderer.DrawText(g, text, Theme.Caption(), r,
+                    accent ? Theme.Text : (hovered ? Theme.Text : Theme.Muted),
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+
             private static readonly int[] RttSteps =
             {
                 0, 50, 100, 150, 200, 250, 300, 400, 500, 650, 800, 1000, 1250,
@@ -1073,16 +2023,32 @@ private Rectangle rcClose, rcMin,
 
             private void OnMouseWheelAll(object s, MouseEventArgs e)
             {
+                int notch = e.Delta > 0 ? -1 : 1;
+                if (page == Page.Log)
+                {
+                    int logMax = Math.Max(0,
+                        UiLogSnapshot().Count * 13 - (ClientSize.Height - 96));
+                    int logNext = Math.Max(0, Math.Min(logMax, logScrollY - notch * 78));
+                    if (logNext != logScrollY) { logScrollY = logNext; Invalidate(); }
+                    return;
+                }
+                if (page == Page.Torrc)
+                {
+                    string[] ls = (torrcBuf ?? "").Replace("\r\n", "\n").Split('\n');
+                    int tMax = Math.Max(0, ls.Length * 13 - rcTorrcBox.Height);
+                    int tNext = Math.Max(0, Math.Min(tMax, torrcScrollY - notch * 39));
+                    if (tNext != torrcScrollY) { torrcScrollY = tNext; Invalidate(); }
+                    return;
+                }
                 if (page != Page.Settings) return;
                 int rowCount = SettingLabels.Length;
-                int contentHeight = rowCount * 37 + 40;
+                int contentHeight = rowCount * 37 + 40 + SectionNames.Length * 26;
                 int visibleHeight = ClientSize.Height - 78;
-                int maxScroll = Math.Max(0, contentHeight - visibleHeight);
-                int delta = e.Delta > 0 ? -37 : 37;
-                int newScroll = Math.Max(0, Math.Min(maxScroll, settingsScrollY + delta));
-                if (newScroll != settingsScrollY)
+                int settingsMax = Math.Max(0, contentHeight - visibleHeight);
+                int newScrollY = Math.Max(0, Math.Min(settingsMax, settingsScrollY - notch * 37));
+                if (newScrollY != settingsScrollY)
                 {
-                    settingsScrollY = newScroll;
+                    settingsScrollY = newScrollY;
                     LayoutPass();
                 }
             }
@@ -1109,12 +2075,23 @@ private Rectangle rcClose, rcMin,
                     case 5: OnConnectButton(); break;
                     case 20: ApplyProxyToggle(!ProxyIsOurs()); break;
                     case 21: ApplyTunToggle(); break;
-                    case 30: page = Page.Settings; settingsScrollY = 0; CancelEdit(); LayoutPass(); Invalidate(); break;
+                    case 30: page = Page.Settings; settingsScrollY = 0; CancelEdit(); LayoutPass(); Invalidate();
+                        RunBg(delegate { UpdateBridgeCard(false); }); break;
                     case 50: OpenReleases(); break;
-                    case 40: page = Page.Main; CancelEdit(); LayoutPass(); Invalidate(); break;
+                    case 40: GoBack(); break;
+                    case 60: CopyLogToClipboard(); break;
+                    case 61: SaveTorrc(); break;
+                    case 62: ResetTorrc(); break;
                     default:
                         if (page != Page.Settings || h < 100) break;
-                        if (h >= 200 && h < 300)
+                        if (h >= 300)
+                        {
+                            int arow = h - 300;
+                            if (arow == RowTorrc) OpenTorrc();
+                            else if (arow == RowLog) OpenLog();
+                            else if (arow == RowBridges) RunBg(delegate { UpdateBridgeCard(true); });
+                        }
+                        else if (h >= 200 && h < 300)
                         {
                             int row = h - 200;
                             if (row == 1)
@@ -1178,6 +2155,7 @@ private Rectangle rcClose, rcMin,
 
             private void OnKeyDownAll(object s, KeyEventArgs e)
             {
+                if (page == Page.Torrc && TorrcKeyDown(e)) { e.Handled = true; return; }
                 if (editRow >= 0)
                 {
                     if (e.KeyCode == Keys.Escape) { CancelEdit(); e.Handled = true; return; }
@@ -1199,9 +2177,10 @@ private Rectangle rcClose, rcMin,
                     }
                     return;
                 }
-                if (e.KeyCode == Keys.Escape && page == Page.Settings)
+                if (e.KeyCode == Keys.Escape &&
+                    (page == Page.Settings || page == Page.Log || page == Page.Torrc))
                 {
-                    page = Page.Main; LayoutPass(); Invalidate();
+                    GoBack();
                 }
             }
 
@@ -1215,21 +2194,33 @@ private Rectangle rcClose, rcMin,
             {
                 if (rcClose.Contains(p)) return 1;
                 if (rcMin.Contains(p)) return 2;
-                if (page == Page.Main && rcPower.Contains(p)) return 5;
+                bool inert = state == RunState.Stopping;
                 if (page == Page.Main)
                 {
-                    if (!autoProxyEnabled && rcProxy.Contains(p)) return 20;
-                    if (rcTun.Contains(p)) return 21;
+                    // While stopping the ring and the two toggles are dead: no
+                    // hover, no hand cursor, no click. Mirrors Android's
+                    // `enabled = !state.stopping` on the ring button.
+                    if (!inert)
+                    {
+                        if (rcPower.Contains(p)) return 5;
+                        if (rcProxyBtn.Width > 0 && rcProxyBtn.Contains(p)) return 20;
+                        if (rcTunBtn.Contains(p)) return 21;
+                    }
                     if (rcSettings.Contains(p)) return 30;
                     if (showUpdateBanner && updateVersion.Length > 0 &&
                         rcUpdateBtn.Contains(p)) return 50;
                 }
-                else
+                else if (page == Page.Settings)
                 {
                     if (rcBack.Contains(p)) return 40;
                     int rowCount = SettingLabels.Length;
                     for (int i = 0; i < rowCount; i++)
                     {
+                        if (RowIsAction(i))
+                        {
+                            if (rcRowBody[i].Contains(p)) return 300 + i;
+                            continue;
+                        }
                         if (i == 1 || i == 6 || i == 11)
                         {
                             if (rcRowVal[i].Contains(p)) return 200 + i;
@@ -1239,6 +2230,17 @@ private Rectangle rcClose, rcMin,
                         if (rcRowNext[i].Contains(p)) return 100 + i * 3 + 2;
                         if (RowIsNumeric(i) && rcRowVal[i].Contains(p)) return 100 + i * 3;
                     }
+                }
+                else if (page == Page.Log)
+                {
+                    if (rcBack.Contains(p)) return 40;
+                    if (rcLogCopy.Contains(p)) return 60;
+                }
+                else
+                {
+                    if (rcBack.Contains(p)) return 40;
+                    if (rcTorrcSave.Contains(p)) return 61;
+                    if (rcTorrcReset.Contains(p)) return 62;
                 }
                 return -1;
             }
@@ -1297,6 +2299,9 @@ private Rectangle rcClose, rcMin,
 
             private void ApplyProxyToggle(bool want)
             {
+                // Mirrors Android's guard chain: nothing may turn the system
+                // proxy on while tearing down or with no session up.
+                if (state == RunState.Stopping) return;
                 bool ours = ProxyIsOurs();
                 if (want && !ours)
                 {
@@ -1364,6 +2369,10 @@ private Rectangle rcClose, rcMin,
 
             private void FlashMessage(string msg, bool asError = true)
             {
+                // While stopping, the ring label slot must stay empty and the
+                // state word must stay STOPPING, so transient messages are
+                // dropped instead of hijacking the surface.
+                if (state == RunState.Stopping) return;
                 errorMsg = msg;
                 errorMsgIsError = asError;
                 errorMsgUntil = DateTime.UtcNow.AddSeconds(6);
@@ -1405,6 +2414,11 @@ private Rectangle rcClose, rcMin,
             {
                 if (sessionBusy) return;
                 sessionBusy = true;
+                // Disconnect() raises autoAbort to cancel an in-flight race, and
+                // AutoRace() only clears it for the auto mode. Clear it here as
+                // well, or every single-mode connect after the first stop would
+                // kill itself on the new stop guards.
+                autoAbort = false;
                 restartAttempts = 0;
                 bootPct = 0;
                 bootTag = "";
@@ -1550,7 +2564,10 @@ private Rectangle rcClose, rcMin,
                     }, out err, out aborted);
                     if (proc == null)
                     {
-                        if (!stoppingBusy)
+                        // `aborted` is StartTorAndWait's own "user stopped
+                        // during bootstrap" signal. The console callers all read
+                        // it; the UI used to write it and drop it on the floor.
+                        if (!stoppingBusy && !autoAbort)
                         {
                             sessionBusy = false;
                             UiInvokeDelegate(delegate
@@ -1563,6 +2580,16 @@ private Rectangle rcClose, rcMin,
                     }
                 }
                 circuitWatchStop = false;
+                // Everything below brings the session UP. If the user asked to
+                // stop while this bootstrap was still running, tear the fresh
+                // process down again instead of stomp-ing STOPPING.
+                if (stoppingBusy || autoAbort)
+                {
+                    try { proc.Kill(); } catch { }
+                    proc = null;
+                    torProc = null;
+                    return;
+                }
                 circuitWatchWarmup = true;
                 if (circuitWatchEnabled)
                 {
@@ -1579,6 +2606,20 @@ private Rectangle rcClose, rcMin,
                 warmupEnd.Start();
 
                 BackupLastSuccessFull(mode, strategy);
+                // A stop that landed inside the bring-up window still wins. Undo
+                // exactly what was armed above, otherwise the keeper, watchdog
+                // and circuit watcher outlive a tor that is already gone.
+                if (stoppingBusy || autoAbort)
+                {
+                    watchdogStop = true;
+                    circuitWatchStop = true;
+                    circuitWatchWarmup = false;
+                    StopKeepAlive();
+                    try { if (proc != null) proc.Kill(); } catch { }
+                    torProc = null;
+                    sessionBusy = false;
+                    return;
+                }
                 if (autoProxyEnabled)
                     UiInvokeDelegate(delegate { ApplyProxyToggle(true); });
                 sessionBusy = false;
@@ -1586,6 +2627,8 @@ private Rectangle rcClose, rcMin,
                 {
                     bootPct = 100;
                     fallbackPending = false;
+                    ResetStats();
+                    connectedAt = DateTime.UtcNow;
                     SetState(RunState.Connected);
                 });
             }
@@ -1598,13 +2641,18 @@ private Rectangle rcClose, rcMin,
                 SetState(RunState.Stopping);
                 watchdogStop = true;
                 circuitWatchStop = true;
+                // Kill tor FIRST. It used to happen after keep-alive teardown,
+                // TUN release and the proxy reset, which left a window where a
+                // still-starting tor survived the stop and could still reach
+                // 100% and stomp STOPPING with CONNECTED.
+                try { if (torProc != null) torProc.Kill(); } catch { }
+                torProc = null;
                 StopKeepAlive();
                 TunRequestOff();    // leaves the elevated keeper to tear down
                 tunLocalPending = false;
                 if (autoProxyEnabled && ProxyIsOurs()) SetSystemProxy(false);
-                try { if (torProc != null) torProc.Kill(); } catch { }
-                torProc = null;
                 LogLine("tor stopped (" + why + ")");
+                ResetStats();
                 RunBg(delegate
                 {
                     Cleanup();
@@ -1617,6 +2665,8 @@ private Rectangle rcClose, rcMin,
                             bootPct = 0;
                             stoppingBusy = false;
                             sessionBusy = false;
+                            connectedAt = DateTime.MinValue;
+                            exitCode = ""; exitName = ""; exitLocating = false;
                             SetState(RunState.Idle);
                         }
                         else
@@ -1715,7 +2765,14 @@ private Rectangle rcClose, rcMin,
                                 try { if (File.Exists(LockFile)) File.Delete(LockFile); } catch { }
                                 cleaned = false;
                                 SessionWorker(mode, strat, false);
-                                UiInvokeDelegate(delegate { SetState(RunState.Connected); });
+                                // SessionWorker already flips to CONNECTED on
+                                // its own; only clear the busy flags, and never
+                                // if a stop is in flight.
+                                UiInvokeDelegate(delegate
+                                {
+                                    if (!stoppingBusy && !autoAbort)
+                                        SetState(RunState.Connected);
+                                });
                             });
                         }
                         else if (!watchdogTriggered)
@@ -1726,6 +2783,213 @@ private Rectangle rcClose, rcMin,
                         }
                     }
                 }
+
+                SampleStats();
+                UpdateExitLookup();
+            }
+
+            // ---- live stats --------------------------------------------------
+            // The TUN adapter carries the counters. Proxy-only sessions have no
+            // adapter, so the panel shows "--" exactly like Android does when
+            // the tunnel itself is not up.
+            private const string TunAdapterName = "DeltaTor";
+
+            private void ResetStats()
+            {
+                rxSpeed = 0; txSpeed = 0;
+                rxBytes = 0; txBytes = 0;
+                exitCode = ""; exitName = ""; exitLocating = false;
+                lastNetSample = DateTime.UtcNow;
+                long rx, tx;
+                if (WindowsNetStats.TryGetCounters(TunAdapterName, out rx, out tx))
+                {
+                    // Adapter totals are cumulative since the adapter came up;
+                    // the session total is the delta from this baseline.
+                    rxSessionBase = rx;
+                    txSessionBase = tx;
+                    lastRxSample = rx;
+                    lastTxSample = tx;
+                }
+                else
+                {
+                    rxSessionBase = 0;
+                    txSessionBase = 0;
+                    lastRxSample = 0;
+                    lastTxSample = 0;
+                }
+            }
+
+            private void SampleStats()
+            {
+                if (state != RunState.Connected && state != RunState.Restarting)
+                    return;
+                DateTime now = DateTime.UtcNow;
+                if ((now - lastNetSample).TotalMilliseconds < 1000) return;
+                double dt = (now - lastNetSample).TotalSeconds;
+                lastNetSample = now;
+
+                if (!TunOnNow())
+                {
+                    rxSpeed = 0; txSpeed = 0;
+                    return;
+                }
+
+                long rx, tx;
+                if (!WindowsNetStats.TryGetCounters(TunAdapterName, out rx, out tx))
+                {
+                    rxSpeed = 0; txSpeed = 0;
+                    return;
+                }
+
+                rxBytes = Math.Max(0, rx - rxSessionBase);
+                txBytes = Math.Max(0, tx - txSessionBase);
+                if (dt > 0.05)
+                {
+                    rxSpeed = Math.Max(0, (rx - lastRxSample) / dt);
+                    txSpeed = Math.Max(0, (tx - lastTxSample) / dt);
+                }
+                lastRxSample = rx;
+                lastTxSample = tx;
+                Invalidate();
+            }
+
+            // ---- exit node ---------------------------------------------------
+            private void UpdateExitLookup()
+            {
+                if (state != RunState.Connected) return;
+                if (exitCode.Length > 0 || exitLocating) return;
+                if ((DateTime.UtcNow - lastExitLookup).TotalSeconds < 10) return;
+                lastExitLookup = DateTime.UtcNow;
+                exitLocating = true;
+                Invalidate();
+                RunBg(delegate
+                {
+                    string code = "";
+                    try
+                    {
+                        List<string> cs = ControlCommand("GETINFO circuit-status");
+                        if (cs != null)
+                        {
+                            foreach (string ln in cs)
+                            {
+                                if (ln.IndexOf("BUILT ", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                                string fp = FingerprintFrom(ln);
+                                if (fp.Length == 0) continue;
+                                List<string> idl = ControlCommand("GETINFO ns/id/" + fp);
+                                if (idl != null)
+                                    foreach (string cl in idl)
+                                    {
+                                        string t = cl.Trim();
+                                        if (t.Length == 0 || t.StartsWith("+") || t.StartsWith("5")) continue;
+                                        code = t.ToLowerInvariant();
+                                        break;
+                                    }
+                                if (code.Length > 0) break;
+                            }
+                        }
+                    }
+                    catch { }
+                    string cc = code;
+                    UiInvokeDelegate(delegate
+                    {
+                        exitLocating = false;
+                        if (cc.Length > 0)
+                        {
+                            exitCode = cc.ToUpperInvariant();
+                            exitName = CountryNameFor(cc);
+                        }
+                        Invalidate();
+                    });
+                });
+            }
+
+            // Pulls the 40 hex relay fingerprint out of a circuit-status line.
+            private static string FingerprintFrom(string line)
+            {
+                if (line == null) return "";
+                var parts = line.Split(' ');
+                foreach (string p in parts)
+                {
+                    string t = p.Trim();
+                    if (t.Length != 40) continue;
+                    bool hex = true;
+                    foreach (char ch in t)
+                        if (!Uri.IsHexDigit(ch)) { hex = false; break; }
+                    if (hex) return t;
+                }
+                return "";
+            }
+
+            private static string CountryNameFor(string cc)
+            {
+                if (cc == null || cc.Length == 0) return "";
+                switch (cc.ToLowerInvariant())
+                {
+                    case "ar": return "Argentina";
+                    case "at": return "Austria";
+                    case "au": return "Australia";
+                    case "be": return "Belgium";
+                    case "bg": return "Bulgaria";
+                    case "br": return "Brazil";
+                    case "ca": return "Canada";
+                    case "ch": return "Switzerland";
+                    case "cl": return "Chile";
+                    case "cn": return "China";
+                    case "co": return "Colombia";
+                    case "cy": return "Cyprus";
+                    case "cz": return "Czechia";
+                    case "de": return "Germany";
+                    case "dk": return "Denmark";
+                    case "ee": return "Estonia";
+                    case "eg": return "Egypt";
+                    case "es": return "Spain";
+                    case "fi": return "Finland";
+                    case "fr": return "France";
+                    case "gb": return "United Kingdom";
+                    case "gr": return "Greece";
+                    case "hk": return "Hong Kong";
+                    case "hr": return "Croatia";
+                    case "hu": return "Hungary";
+                    case "id": return "Indonesia";
+                    case "ie": return "Ireland";
+                    case "il": return "Israel";
+                    case "in": return "India";
+                    case "ir": return "Iran";
+                    case "is": return "Iceland";
+                    case "it": return "Italy";
+                    case "jp": return "Japan";
+                    case "kg": return "Kyrgyzstan";
+                    case "kp": return "North Korea";
+                    case "kr": return "South Korea";
+                    case "lt": return "Lithuania";
+                    case "lu": return "Luxembourg";
+                    case "lv": return "Latvia";
+                    case "md": return "Moldova";
+                    case "mx": return "Mexico";
+                    case "my": return "Malaysia";
+                    case "nl": return "Netherlands";
+                    case "no": return "Norway";
+                    case "nz": return "New Zealand";
+                    case "ph": return "Philippines";
+                    case "pl": return "Poland";
+                    case "pt": return "Portugal";
+                    case "ro": return "Romania";
+                    case "rs": return "Serbia";
+                    case "ru": return "Russia";
+                    case "se": return "Sweden";
+                    case "sg": return "Singapore";
+                    case "si": return "Slovenia";
+                    case "sk": return "Slovakia";
+                    case "tr": return "Turkey";
+                    case "tw": return "Taiwan";
+                    case "ua": return "Ukraine";
+                    case "us": return "United States";
+                    case "uz": return "Uzbekistan";
+                    case "ve": return "Venezuela";
+                    case "vn": return "Vietnam";
+                    case "za": return "South Africa";
+                }
+                return cc.ToUpperInvariant();
             }
 
             private void CheckForUpdateFromUi()
