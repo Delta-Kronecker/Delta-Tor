@@ -114,13 +114,13 @@ object TorrcSettings {
         ConfluxEnabled 0
 
         MaxCircuitDirtiness 600
-NewCircuitPeriod 10
+        NewCircuitPeriod 10
         SocksTimeout 30
         CircuitsAvailableTimeout 4320
         CircuitStreamTimeout 60
         CircuitBuildTimeout 40
         NumPrimaryGuards 15
-Schedulers Vanilla
+        Schedulers Vanilla
         MaxClientCircuitsPending 128
     """.trimIndent()
 
