@@ -41,7 +41,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -87,6 +89,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -95,8 +98,11 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -111,6 +117,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.deltator.tunnel.BridgeStore
+import androidx.core.graphics.drawable.toBitmap
+import io.deltator.tunnel.InstalledApps
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.ExitCapacityIndex
 import io.deltator.tunnel.ExitNodes
@@ -120,65 +128,10 @@ import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
 import io.deltator.util.LogEntry
 import io.deltator.util.LogSession
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-
-/**
- * The one-time first-run explainer, in the three languages this app is read in.
- *
- * All three are shown, English first, rather than picked from the system locale.
- * That is a deliberate trade: the app ships no translation resources at all, so a
- * locale-selected string would fall back to English for everyone except the two
- * locales someone remembered to write, which is the worst outcome -- a user who
- * cannot read the one language they picked gets English, and a user who cannot
- * read English gets a screen they have to guess at. Showing all three means the
- * text is readable in whichever of the three the reader knows, and costs nothing
- * but a scroll.
- *
- * Three lines per language, not three paragraphs. The screen has one job: stop
- * the user reading a slow first connect as a hang. It only has to say be patient,
- * be slower now, faster later. An earlier version explained that at length in
- * each language and turned a reassurance into a wall of text to get past before
- * the first tap, which is the wrong first impression on the one screen that
- * decides whether they keep going.
- *
- * Kept as one function per field so the three stay in step: a claim added to one
- * language and forgotten in the other two is the failure mode here.
- *
- * Inline rather than in strings.xml because the app keeps its user-facing strings
- * inline throughout; see the rest of this file.
- */
-private fun firstRunNoticeTitle(): String = buildString {
-    appendLine("Before your first connect")
-    appendLine()
-    appendLine("پیش از اولین اتصال")
-    appendLine()
-    append("Перед первым подключением")
-}
-
-private fun firstRunNoticeBody(): String = buildString {
-    appendLine(
-        "Please be patient on your first connection\n" +
-            "After a successful connection, DeltaTor remembers the connection paths " +
-            "and adds them as «Memory Mode»\n" +
-            "As a result, the time needed to connect will decrease in later attempts"
-    )
-    appendLine()
-    appendLine(
-        "لطفا در اولین اتصال صبور باشید\n" +
-            "پس از یک اتصال موفق دلتاتور مسیر های اتصال را به یاد می سپارد و آن‌ها " +
-            "را به عنوان «حالت حافظه» اضافه می‌کند\n" +
-            "در نتیجه در تلاش های بعدی زمان لازم برای اتصال کاهش خواهد یافت"
-    )
-    appendLine()
-    append(
-        "Пожалуйста, будьте терпеливы при первом подключении\n" +
-            "После успешного подключения DeltaTor запоминает пути подключения и " +
-            "добавляет их в режим «памяти»\n" +
-            "В результате время, необходимое для подключения, сократится при следующих " +
-            "попытках"
-    )
-}
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -198,7 +151,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
-        maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
@@ -208,6 +160,12 @@ class MainActivity : ComponentActivity() {
                             // The cores are being killed right now; a start here
                             // would race the teardown for the ports.
                             s.stopping -> Unit
+                            // A live SOCKS endpoint means proxy mode, where there
+                            // is no VPN to start. Must be checked before torRunning,
+                            // which is also true in this state and would otherwise
+                            // send a start the service declines to act on.
+                            s.socksEndpoint.isNotEmpty() ->
+                                sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.torRunning -> sendAction(TorVpnService.ACTION_START_VPN)
                             else -> requestVpnPermissionAndConnect()
@@ -219,24 +177,6 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
-    }
-
-    /**
-     * Tell a first-time user why their first connect is the slow one, once.
-     *
-     * The flag is written before the notice is posted rather than when it is
-     * dismissed, so a rotation or a process death mid-dialog cannot turn it into a
-     * dialog that reappears every launch until the user happens to survive one
-     * long enough to close it.
-     */
-    private fun maybeShowFirstRunNotice() {
-        if (Config.firstRunNoticeShown) return
-        Config.firstRunNoticeShown = true
-        AppState.postNotice(
-            AppState.NoticeKind.FirstRun,
-            firstRunNoticeTitle(),
-            firstRunNoticeBody()
-        )
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -260,7 +200,15 @@ class MainActivity : ComponentActivity() {
             return
         }
         val vpnIntent = VpnService.prepare(this)
-        if (vpnIntent != null) {
+        if (Config.proxyOnlyMode) {
+            // No tunnel will be built, so do not ask for the permission that
+            // authorises one. Android's VPN consent dialog says the app can
+            // "monitor all network traffic" and route it through a VPN, which in
+            // proxy mode is false: nothing is captured and nothing is routed. Ask
+            // anyway and the user grants standing consent for a power the app is
+            // explicitly not using, then has to find Settings to revoke it.
+            startConnect()
+        } else if (vpnIntent != null) {
             vpnPermissionLauncher.launch(vpnIntent)
         } else {
             startConnect()
@@ -286,7 +234,7 @@ class MainActivity : ComponentActivity() {
 // store panel. Dark, borderless, owner-drawn and fully professional.
 // ---------------------------------------------------------------------------
 
-private enum class Screen { Main, Log }
+private enum class Screen { Main, Log, SplitTunnel }
 
 @Composable
 fun DeltaTorScreen(
@@ -302,6 +250,7 @@ fun DeltaTorScreen(
     // body each time AppState ticks (the speed counter does, once a second).
     val goMain = remember { { screen = Screen.Main } }
     val goLog = remember { { screen = Screen.Log } }
+    val goSplit = remember { { screen = Screen.SplitTunnel } }
 
     Crossfade(targetState = screen, label = "screen") { s ->
         when (s) {
@@ -310,9 +259,11 @@ fun DeltaTorScreen(
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
                 onUpdateBridges = onUpdateBridges,
-                onOpenLog = goLog
+                onOpenLog = goLog,
+                onOpenSplitTunnel = goSplit
             )
             Screen.Log -> LogScreen(onBack = goMain)
+            Screen.SplitTunnel -> SplitTunnelScreen(onBack = goMain)
         }
     }
 }
@@ -323,7 +274,8 @@ private fun MainScreen(
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
     onUpdateBridges: () -> Unit,
-    onOpenLog: () -> Unit
+    onOpenLog: () -> Unit,
+    onOpenSplitTunnel: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
@@ -363,7 +315,8 @@ private fun MainScreen(
                 ControlDrawer(
                     onClose = closeDrawer,
                     onUpdateBridges = onUpdateBridges,
-                    onOpenLog = { closeDrawer(); onOpenLog() }
+                    onOpenLog = { closeDrawer(); onOpenLog() },
+                    onOpenSplitTunnel = { closeDrawer(); onOpenSplitTunnel() }
                 )
             }
         }
@@ -608,10 +561,13 @@ private fun NoticeButton(
 private fun ControlDrawer(
     onClose: () -> Unit,
     onUpdateBridges: () -> Unit,
-    onOpenLog: () -> Unit
+    onOpenLog: () -> Unit,
+    onOpenSplitTunnel: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
+    val clipboard = LocalClipboardManager.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
+    val state by AppState.state.collectAsStateWithLifecycle()
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
     val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     val countries by ExitNodes.directory.collectAsStateWithLifecycle()
@@ -867,8 +823,11 @@ private fun ControlDrawer(
                 AdvancedItems(
                     form = advancedForm,
                     bridges = bridges,
+                    state = state,
+                    clipboard = clipboard,
                     onUpdateBridges = onUpdateBridges,
-                    onOpenLog = onOpenLog
+                    onOpenLog = onOpenLog,
+                    onOpenSplitTunnel = onOpenSplitTunnel
                 )
             }
         }
@@ -1058,6 +1017,11 @@ private fun labelText(state: AppState.VpnState): String = when {
     state.error != null -> state.error
     state.connecting -> "CANCEL"
     state.connected -> "DISCONNECT"
+    // Proxy mode is a live state of its own, not a half-finished VPN. Without
+    // this the ring reads START VPN, because Tor is up but no tunnel exists, and
+    // pressing it would do nothing: the service refuses a start when proxy mode
+    // is on. Offering DISCONNECT is the only action that actually stops anything.
+    state.socksEndpoint.isNotEmpty() -> "DISCONNECT"
     state.torRunning -> "START VPN"
     else -> "CONNECT"
 }
@@ -1517,23 +1481,49 @@ private fun BottomPanel(
         // the row made both buttons blink out and back in on every stop.
         if (state.connected || state.torRunning || state.stopping) {
             val busy = state.connecting || state.stopping
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GradientPill(
-                    modifier = Modifier.weight(1f),
-                    label = if (state.connected && !state.stopping) "STOP VPN" else "START VPN",
-                    filled = false,
-                    enabled = !busy,
-                    onClick = if (state.connected && !state.stopping) onStopVpn else onPrimary
-                )
-                GradientPill(
-                    modifier = Modifier.weight(1f),
-                    label = "DISCONNECT",
-                    filled = false,
-                    enabled = !busy,
-                    onClick = onDisconnect
-                )
+            // In proxy mode there is no tunnel, so the left pill would offer
+            // START VPN, which the service refuses, or STOP VPN, which it also
+            // refuses because it would kill the proxy the user is pointing an app
+            // at. Hide it rather than ship a button that does nothing.
+            val proxyLive = state.socksEndpoint.isNotEmpty()
+            if (!proxyLive) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GradientPill(
+                        modifier = Modifier.weight(1f),
+                        label = if (state.connected && !state.stopping) "STOP VPN" else "START VPN",
+                        filled = false,
+                        enabled = !busy,
+                        onClick = if (state.connected && !state.stopping) onStopVpn else onPrimary
+                    )
+                    GradientPill(
+                        modifier = Modifier.weight(1f),
+                        label = "DISCONNECT",
+                        filled = false,
+                        enabled = !busy,
+                        onClick = onDisconnect
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GradientPill(
+                        modifier = Modifier.weight(1f),
+                        label = "SOCKS5 " + state.socksEndpoint
+                            .substringAfter("://", state.socksEndpoint),
+                        filled = false,
+                        enabled = !busy,
+                        onClick = {}
+                    )
+                    GradientPill(
+                        modifier = Modifier.weight(1f),
+                        label = "DISCONNECT",
+                        filled = false,
+                        enabled = !busy,
+                        onClick = onDisconnect
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
             }
-            Spacer(Modifier.height(8.dp))
         }
         // Live speed on the home screen itself, not only in the notification.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1931,6 +1921,254 @@ private fun relativeTime(ms: Long): String {
 
 // ---- settings & log screens -------------------------------------------------
 
+/**
+ * Per-app routing: every installed app is set to VPN or BYPASS.
+ *
+ * The list is the installed set, read live rather than cached, so a package that
+ * was uninstalled since the last visit cannot leave a dead entry that silently
+ * fails on every connect.
+ *
+ * Each row names both states outright. "Split tunnelling" suggests that the
+ * marked apps are the protected ones, which is the reverse of what a bypass list
+ * means, and a banking app on the wrong side of that guess sends its traffic in
+ * the clear while the user believes Tor has it.
+ */
+@Composable
+private fun SplitTunnelScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    var excluded by remember { mutableStateOf(Config.splitTunnelExcluded) }
+    var loading by remember { mutableStateOf(true) }
+    var query by remember { mutableStateOf("") }
+    var apps by remember { mutableStateOf<List<InstalledApps.App>>(emptyList()) }
+
+    // Off the main thread: getInstalledApplications is a binder call per package
+    // plus an icon load for each, which is long enough to drop frames visibly.
+    LaunchedEffect(Unit) {
+        val loaded = withContext(Dispatchers.IO) {
+            InstalledApps.load(context, Config.splitTunnelExcluded)
+        }
+        apps = loaded
+        loading = false
+    }
+
+    val visible = remember(apps, query) {
+        if (query.isBlank()) apps
+        else apps.filter {
+            it.label.contains(query, ignoreCase = true) ||
+                it.packageName.contains(query, ignoreCase = true)
+        }
+    }
+
+    BackHandler(onBack = onBack)
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.systemBars)
+            .background(
+                Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
+            )
+    ) {
+        Column(Modifier.fillMaxSize()) {
+            ScreenTopBar("SPLIT TUNNELLING", onBack) {
+                Text(
+                    if (excluded.isEmpty()) "ALL TUNNELLED" else "${excluded.size} BYPASS",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.1.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (excluded.isEmpty()) DeltaTor.Green else DeltaTor.Amber
+                )
+            }
+
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
+                Text(
+                    "Pick per app where its traffic goes. VPN sends it through " +
+                        "Tor. BYPASS lets it reach the internet directly and Tor " +
+                        "never sees it \u2014 usually wanted for a banking or " +
+                        "streaming app that refuses to work over Tor.",
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted
+                )
+                if (excluded.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "CLEAR ALL",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                excluded = emptySet()
+                                Config.splitTunnelExcluded = emptySet()
+                            }
+                            .padding(vertical = 4.dp)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 14.sp, color = DeltaTor.Text),
+                    colors = AdvancedFieldColors(),
+                    placeholder = { Text("Search apps", fontSize = 14.sp) }
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            when {
+                loading -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text(
+                        "Reading installed apps \u2026",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = DeltaTor.Muted
+                    )
+                }
+
+                visible.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text(
+                        if (apps.isEmpty()) "No apps found."
+                        else "Nothing matches \"$query\".",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = DeltaTor.Muted
+                    )
+                }
+
+                else -> LazyColumn(
+                    Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 20.dp, end = 20.dp, bottom = 28.dp
+                    )
+                ) {
+                    items(visible, key = { it.packageName }) { app ->
+                        val on = app.packageName in excluded
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 6.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(38.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(DeltaTor.Surface),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val icon = app.icon
+                                if (icon != null) {
+                                    Image(
+                                        bitmap = icon.toBitmap().asImageBitmap(),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(30.dp)
+                                    )
+                                } else {
+                                    Text(
+                                        app.label.take(1).uppercase(),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = DeltaTor.Muted
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    app.label,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        letterSpacing = 0.2.sp
+                                    ),
+                                    color = DeltaTor.Text,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    app.packageName,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        letterSpacing = 0.1.sp
+                                    ),
+                                    color = DeltaTor.Muted.copy(alpha = 0.7f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            SplitModeToggle(
+                                bypass = on,
+                                onBypassChange = { want ->
+                                    excluded = if (want) {
+                                        excluded + app.packageName
+                                    } else {
+                                        excluded - app.packageName
+                                    }
+                                    Config.splitTunnelExcluded = excluded
+                                }
+                            )
+                        }
+                        DividerLine()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Per-app VPN / BYPASS choice.
+ *
+ * Both states are named rather than a tick box for one of them. A checkbox can
+ * only ever say "on" and leaves the user guessing what off means, and the guess
+ * is expensive here: if they read a cleared box as "this app is protected" when
+ * it actually means "this app goes straight to the internet", they have handed
+ * their traffic to the local network in the belief that Tor has it. Saying VPN
+ * and BYPASS on the control removes the ambiguity at the point of the choice.
+ *
+ * Only BYPASS is stored. VpnService.Builder takes an exclusion list, so an app
+ * that is not named in it goes through the tunnel -- VPN is the absence of an
+ * entry, and the UI still shows it as a state the user picked.
+ */
+@Composable
+private fun SplitModeToggle(bypass: Boolean, onBypassChange: (Boolean) -> Unit) {
+    Row(
+        Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(8.dp))
+            .padding(2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        ModeChip("VPN", active = !bypass, activeColor = DeltaTor.Green) { onBypassChange(false) }
+        ModeChip("BYPASS", active = bypass, activeColor = DeltaTor.Amber) { onBypassChange(true) }
+    }
+}
+
+@Composable
+private fun RowScope.ModeChip(
+    label: String,
+    active: Boolean,
+    activeColor: Color,
+    onClick: () -> Unit
+) {
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall.copy(
+            fontSize = 9.5.sp,
+            letterSpacing = 0.8.sp,
+            fontWeight = FontWeight.Bold
+        ),
+        color = if (active) Color(0xFF08111A) else DeltaTor.Muted,
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (active) activeColor else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 6.dp)
+    )
+}
+
 @Composable
 private fun BackArrowIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.Text) {
     Canvas(modifier) {
@@ -2273,6 +2511,8 @@ private class AdvancedForm {
     var customBridges by mutableStateOf(Config.customBridges)
     var autoTransports by mutableStateOf(Config.autoTransports)
     var loggingOn by mutableStateOf(Config.loggingEnabled)
+    var proxyOnly by mutableStateOf(Config.proxyOnlyMode)
+    var splitExcluded by mutableStateOf(Config.splitTunnelExcluded)
 }
 
 @Composable
@@ -2302,8 +2542,15 @@ private fun AdvancedFieldColors() = OutlinedTextFieldDefaults.colors(
 private fun LazyListScope.AdvancedItems(
     form: AdvancedForm,
     bridges: AppState.BridgeState,
+    state: AppState.VpnState,
+    // Read by the composable caller and passed in. This function is a
+    // LazyListScope builder, not a @Composable one, so it cannot call
+    // LocalClipboardManager.current itself -- and cannot do so inside a
+    // clickable lambda either, since that lambda is not composable.
+    clipboard: ClipboardManager,
     onUpdateBridges: () -> Unit,
-    onOpenLog: () -> Unit
+    onOpenLog: () -> Unit,
+    onOpenSplitTunnel: () -> Unit
 ) {
     item(key = "adv-transport") {
         Column(Modifier.fillMaxWidth()) {
@@ -2473,6 +2720,174 @@ private fun LazyListScope.AdvancedItems(
                         style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
                         color = if (customCount == 0) DeltaTor.Amber else DeltaTor.Green,
                         modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+    item(key = "adv-proxy-only") {
+        Column(Modifier.fillMaxWidth()) {
+            SettingsCardHeader(
+                "PROXY ONLY",
+                "Tor as a local SOCKS5 server \u00b7 no VPN"
+            )
+            SettingsCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Do not start the VPN",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            if (form.proxyOnly) {
+                                "Tor will bootstrap normally and listen on a local " +
+                                    "address. No tunnel is created and nothing on " +
+                                    "this device is routed automatically \u2014 you " +
+                                    "point each app at the address yourself."
+                            } else {
+                                "The whole device is routed through Tor when " +
+                                    "connected. Turn this on if you would rather " +
+                                    "choose which apps go through it."
+                            },
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.proxyOnly,
+                        onCheckedChange = {
+                            form.proxyOnly = it
+                            Config.proxyOnlyMode = it
+                        }
+                    )
+                }
+                if (form.proxyOnly) {
+                    DividerLine()
+                    val endpoint = state.socksEndpoint
+                    Text(
+                        if (endpoint.isNotEmpty()) endpoint else "socks5://127.0.0.1:${Config.proxyPort}",
+                        style = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (endpoint.isNotEmpty()) DeltaTor.Green else DeltaTor.Muted,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+                    )
+                    Text(
+                        if (endpoint.isNotEmpty()) {
+                            "Live. Set this as SOCKS5 in a browser or another app."
+                        } else {
+                            "Not running yet \u2014 connect and this address becomes live."
+                        },
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Your own apps can also reach Tor at this address, which " +
+                            "is what an app with its own proxy setting needs.",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted.copy(alpha = 0.8f),
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // Copy the whole host:port pair, always including the port.
+                    // Copying the bare host and leaving the port to be found in
+                    // Settings means the paste into another app's SOCKS5 field is
+                    // incomplete, and an app given a host with no port either falls
+                    // back to 1080 (where Tor is not listening) or refuses to connect.
+                    val copyTarget = if (endpoint.isNotEmpty()) {
+                        endpoint
+                    } else {
+                        "127.0.0.1:${Config.proxyPort}"
+                    }
+                    Text(
+                        "Tap to copy this address",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                clipboard.setText(AnnotatedString(copyTarget))
+                                AppLog.i("UI", "Copied SOCKS endpoint $copyTarget")
+                            }
+                            .padding(vertical = 4.dp)
+                    )
+                    Text(
+                        "Paste it into the app's network settings as the SOCKS5 " +
+                            "host and port. Turning proxy mode off needs a " +
+                            "reconnect.",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+    }
+    item(key = "adv-split") {
+        Column(Modifier.fillMaxWidth()) {
+            SettingsCardHeader(
+                "SPLIT TUNNELLING",
+                "Per-app routing \u00b7 applied on next connect"
+            )
+            SettingsCard {
+                Text(
+                    if (form.splitExcluded.isEmpty()) {
+                        "Every app goes through Tor. Nothing is listed below, so " +
+                            "nothing is leaking."
+                    } else {
+                        "${form.splitExcluded.size} app(s) bypass Tor and reach the " +
+                            "internet directly. Their traffic is not encrypted by Tor."
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = if (form.splitExcluded.isEmpty()) DeltaTor.Muted else DeltaTor.Amber,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                )
+                if (form.proxyOnly) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "This has no effect while Proxy Only is on: without a " +
+                            "tunnel there is nothing to bypass.",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Amber,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .clickable { onOpenSplitTunnel() }
+                        .padding(horizontal = 6.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "CHOOSE APPS",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        if (form.splitExcluded.isEmpty()) "ALL APPS" else "${form.splitExcluded.size} SELECTED",
+                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
+                        color = DeltaTor.Muted
                     )
                 }
             }

@@ -2,11 +2,13 @@
 <!--
   Adaptive launcher icon.
 
-  All three layers come from the supplied artwork:
+  Two of the three layers come from the supplied artwork:
     background  - a flat colour lifting the dark navy out of the source PNG
     foreground  - the neon artwork, shipped as ic_launcher_foreground.png in
                   every density rather than as a vector
-    monochrome   - the same foreground, used by Android 13+ themed icons
+  The third does not, and cannot:
+    monochrome   - ic_launcher_monochrome.png, the same mark reduced to a white
+                  alpha silhouette at 62% of the layer
 
   The foreground is the source PNG at full bleed, 108dp. That is deliberate and
   it is what makes the icon look the same on every launcher instead of being
@@ -15,10 +17,13 @@
   mask discards. Anything inset here would show up as a gap on some launchers
   and not on others, which is the problem this icon was meant to fix.
 
-  Monochrome points at the colour foreground. Android 13 tints it by alpha, and
-  the neon art is drawn light on the dark navy field, so the alpha channel
-  carries the shape on its own. The themed icon is therefore the same Delta
-  mark rather than a filled square.
+  The monochrome layer is a separate file rather than a second reference to the
+  colour foreground. Android 13 tints a themed icon with one colour and uses the
+  layer's alpha as the mask, and the supplied PNG has no alpha at all: it is a
+  flat RGB image in which the dark navy field is as opaque as the neon strokes.
+  Pointing monochrome at it therefore produced a themed icon that was a solid
+  filled square, because every pixel had alpha 255. The foreground stays full
+  bleed for the colour icon and only the mask needs transparency.
 
   The background colour is the exact navy sampled from the PNG (RGB 5,9,26).
   It has to be exact: the foreground is that same artwork at full bleed, so any
@@ -28,5 +33,5 @@
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
     <foreground android:drawable="@mipmap/ic_launcher_foreground" />
-    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_monochrome" />
 </adaptive-icon>

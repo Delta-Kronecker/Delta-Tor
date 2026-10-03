@@ -113,13 +113,38 @@ object Config {
         set(value) = prefs.edit().putString("transport_mode", value).apply()
 
     /**
-     * Whether the one-time "your first connect is the slow one" explainer has been
-     * shown. Persisted rather than held in memory so it cannot come back on the
-     * next launch after the user has already dismissed it.
+     * Run Tor as a plain local SOCKS5 proxy and never bring up the VPN interface.
+     *
+     * Off by default, because the VPN is the reason most people install this: with
+     * it on, no app's traffic moves unless the app says so. Proxy mode is for the
+     * cases the VPN cannot serve -- a browser or a desktop tool that takes a SOCKS
+     * address, or a user who would rather decide per application than hand the
+     * whole device over.
+     *
+     * The engine side is identical either way. Tor still bootstraps through the
+     * same transports and still listens on [proxyPort]; the only difference is
+     * that nothing calls VpnService.Builder.establish(), so the system draws no
+     * tunnel and no traffic is captured.
      */
-    var firstRunNoticeShown: Boolean
-        get() = prefs.getBoolean("first_run_notice_v1", false)
-        set(value) = prefs.edit().putBoolean("first_run_notice_v1", value).apply()
+    var proxyOnlyMode: Boolean
+        get() = prefs.getBoolean("proxy_only_mode", false)
+        set(value) = prefs.edit().putBoolean("proxy_only_mode", value).apply()
+
+    /**
+     * Which installed applications bypass the tunnel, by package name.
+     *
+     * Empty means "everything goes through Tor", which is the only safe default:
+     * a split-tunnel list that starts populated would silently leak the traffic of
+     * whatever the user did not look at. An app named here is excluded with
+     * VpnService.Builder.addDisallowedApplication, so its traffic leaves the
+     * device directly and unencrypted.
+     *
+     * Persisted as a set because the list is consulted on every connect and
+     * rewritten in full whenever it changes; there is no incremental case.
+     */
+    var splitTunnelExcluded: Set<String>
+        get() = prefs.getStringSet("split_tunnel_excluded", emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet("split_tunnel_excluded", value).apply()
 
     var customBridges: String
         get() = prefs.getString("custom_bridges", "") ?: ""

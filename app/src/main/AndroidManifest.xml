@@ -13,6 +13,14 @@
     <!-- Notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Split tunnelling: the app list has to name every installed app so the user
+         can route each one. Android 11 (API 30) hides packages from
+         getInstalledApplications unless the app holds this permission, which would
+         silently truncate the list and quietly send traffic through the tunnel for
+         apps the user put on the bypass list. This permission has no runtime
+         prompt; it is granted at install time. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+
     <!-- Wakelock to keep CPU alive during bootstrap -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 

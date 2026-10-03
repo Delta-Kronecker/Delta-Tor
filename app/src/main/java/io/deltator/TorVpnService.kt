@@ -311,7 +311,7 @@ class TorVpnService : VpnService() {
         AppState.markStarted()
         currentSession = Log.beginSession("connect")
         recoveriesSpent.clear()
-        AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
+        AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "", socksEndpoint = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
@@ -503,8 +503,6 @@ class TorVpnService : VpnService() {
                     Config.autoTransports + ParallelTorManager.TRANSPORT_SNOWFLAKE
                 Log.i(TAG, "Recovery: auto stalled without snowflake, adding it to auto")
             }
-            // Not a recovery the service can perform; posted by the UI instead.
-            AppState.NoticeKind.FirstRun -> return
         }
 
         // The old attempt's runners are already gone and the per-transport map
@@ -538,7 +536,6 @@ class TorVpnService : VpnService() {
                         "direct bridges do not.\n\n" +
                         "Auto now includes Snowflake for every future connect. You can " +
                         "remove it again in Settings."
-                AppState.NoticeKind.FirstRun -> ""
             }
         )
         updateNotification("Restarting in auto \u2026", progress = true, progressValue = 0)
@@ -546,6 +543,40 @@ class TorVpnService : VpnService() {
 
     /** Establish the TUN interface and tun2socks on top of the running Tor engine. */
     private suspend fun establishTunnel(w: TorRunner, proxyHost: String, proxyPort: Int) {
+        // Proxy mode never brings up a tunnel, so it must not announce one and must
+        // not report the missing descriptor as a failure. Tor is bootstrapped and
+        // listening at this point either way; all that differs is whether the
+        // device is pointed at it.
+        if (Config.proxyOnlyMode) {
+            val endpoint = "socks5://$proxyHost:$proxyPort"
+            AppState.update {
+                it.copy(
+                    connecting = false,
+                    connected = false,
+                    reconnecting = false,
+                    error = null,
+                    transports = mapOf(w.name to 100),
+                    connectedAtMillis = System.currentTimeMillis(),
+                    socksEndpoint = endpoint
+                )
+            }
+            startForeground(
+                NOTIFICATION_ID,
+                buildNotification("Proxy ready \u00b7 $endpoint", progress = false)
+            )
+            lastRenderedText = ""
+            quietProbes = 0
+            bytesAtLastProbe = 0L
+            startExitLocator(proxyHost, proxyPort)
+            Log.i(TAG, "Proxy mode ready. Winner: ${w.name}, SOCKS5 at $endpoint")
+            Log.endSession("proxy ready via ${w.name}")
+            // No stats poller and no link watch: both read bytes off the tunnel,
+            // which does not exist here, so they would spin on a null handle and
+            // paint nothing. The exit lookup above still works, because it talks
+            // to Tor over SOCKS rather than through the tunnel.
+            return
+        }
+
         updateNotification("Establishing VPN \u2026", progress = true, progressValue = 0)
 
         vpnInterface = establishVpnInterface()
@@ -579,7 +610,8 @@ class TorVpnService : VpnService() {
                 connectedAtMillis = System.currentTimeMillis(),
                 exitCode = "",
                 exitName = "",
-                exitIp = ""
+                exitIp = "",
+                socksEndpoint = ""
             )
         }
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
@@ -601,6 +633,14 @@ class TorVpnService : VpnService() {
         }
         if (AppState.state.value.connected) {
             Log.i(TAG, "VPN already active")
+            return
+        }
+        // In proxy mode the tunnel is never what "stopped", so restarting it
+        // cannot be what brings it back either. Say so instead of silently
+        // returning, because the button is still on screen and pressing it and
+        // watching nothing happen is the worst possible answer.
+        if (Config.proxyOnlyMode) {
+            Log.i(TAG, "Ignoring start: proxy mode is on, there is no VPN to start")
             return
         }
         val w = activeRunner
@@ -638,6 +678,15 @@ class TorVpnService : VpnService() {
             Log.i(TAG, "Ignoring stop: a stop is already tearing the cores down")
             return
         }
+        // Stopping the VPN tears the tunnel down. In proxy mode there is no tunnel,
+        // and the listener the user was told to point their browser at is the
+        // thing being kept, so honouring this would shut the proxy off and leave
+        // them with a dead address and no error. Disconnect is what stops proxy
+        // mode, and it goes through the normal path below.
+        if (Config.proxyOnlyMode) {
+            Log.i(TAG, "Ignoring stop: proxy mode is on, use Disconnect to shut the proxy down")
+            return
+        }
         val s = AppState.state.value
         if (!s.connected && !s.connecting && !s.reconnecting) {
             Log.i(TAG, "Nothing to stop: the VPN is not up")
@@ -650,7 +699,8 @@ class TorVpnService : VpnService() {
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null
+                error = null,
+                socksEndpoint = ""
             )
         }
         updateNotification("Turning the VPN off \u2026", progress = true, progressValue = 0)
@@ -678,6 +728,16 @@ class TorVpnService : VpnService() {
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
+        // Guard, not the feature itself. establishTunnel returns before ever
+        // calling this when proxy mode is on, and it is what makes the proxy
+        // branch a single early return rather than a condition threaded through
+        // the builder below. If it ever were reached, the null it returns is a
+        // clean failure: the caller reports "Failed to establish VPN interface"
+        // and stops, rather than handing a null descriptor to tun2socks.
+        if (Config.proxyOnlyMode) {
+            Log.i(TAG, "Proxy mode: not establishing a TUN, SOCKS5 stays on $proxyHost:$proxyPort")
+            return null
+        }
         return try {
             val builder = Builder()
                 .setSession("DeltaTor")
@@ -690,6 +750,26 @@ class TorVpnService : VpnService() {
                 builder.addDisallowedApplication(packageName)
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to exclude self from VPN", e)
+            }
+            // Split tunnelling: every app the user put on the bypass list is
+            // excluded the same way this app excludes itself. A package that was
+            // uninstalled since the list was written makes the builder throw, and
+            // one bad entry must not cost the user the whole tunnel, so each is
+            // applied on its own and the rest still go through.
+            var excluded = 1
+            var failed = 0
+            for (pkg in Config.splitTunnelExcluded) {
+                if (pkg == packageName) continue
+                try {
+                    builder.addDisallowedApplication(pkg)
+                    excluded++
+                } catch (e: Exception) {
+                    failed++
+                    Log.w(TAG, "Split tunnel: cannot exclude $pkg, skipping it", e)
+                }
+            }
+            if (excluded > 1 || failed > 0) {
+                Log.i(TAG, "Split tunnel: $excluded app(s) bypass the tunnel, $failed skipped")
             }
             builder.setBlocking(false)
             builder.establish()
@@ -811,9 +891,13 @@ class TorVpnService : VpnService() {
         // ROMs -- which is what made these buttons appear on some phones and not
         // others. See the ic_notification_* drawables.
         builder.addAction(R.drawable.ic_notification_disconnect, "Disconnect", disconnectPendingIntent)
+        // In proxy mode there is no tunnel, so neither VPN action has anything to
+        // act on: startVpn and stopVpn both refuse while Config.proxyOnlyMode is
+        // set. Shipping them anyway put a live-looking button in the shade that
+        // did nothing when tapped. Disconnect is the only action that still works.
         if (s.connected) {
             builder.addAction(R.drawable.ic_notification_stop, "Stop VPN", stopVpnPendingIntent)
-        } else if (s.torRunning) {
+        } else if (s.torRunning && !Config.proxyOnlyMode) {
             builder.addAction(R.drawable.ic_notification_start, "Start VPN", startVpnPendingIntent)
         }
         return builder
@@ -1243,7 +1327,7 @@ class TorVpnService : VpnService() {
         }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
-        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message) }
+        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message, socksEndpoint = "") }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -1256,7 +1340,7 @@ class TorVpnService : VpnService() {
             return
         }
         val s = AppState.state.value
-        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning) {
+        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning && s.socksEndpoint.isEmpty()) {
             Log.i(TAG, "Nothing to disconnect")
             return
         }
@@ -1268,7 +1352,8 @@ class TorVpnService : VpnService() {
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null
+                error = null,
+                socksEndpoint = ""
             )
         }
         updateNotification("Stopping", progress = true, progressValue = 0)

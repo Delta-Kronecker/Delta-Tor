@@ -23,10 +23,7 @@ object AppState {
          * or left the choice to the app and the app's own default set was not
          * enough here.
          */
-        SnowflakeRecovery,
-
-        /** One-time explainer shown the first time the app is ever opened. */
-        FirstRun
+        SnowflakeRecovery
     }
 
     /**
@@ -76,7 +73,17 @@ object AppState {
         val connectedAtMillis: Long = 0,
         val exitCode: String = "",
         val exitName: String = "",
-        val exitIp: String = ""
+        val exitIp: String = "",
+        /**
+         * Set while proxy mode is on and Tor is up, as the address to configure a
+         * client with: "socks5://127.0.0.1:9050".
+         *
+         * A separate field rather than something the UI derives from transport
+         * state, because the whole point of proxy mode is that the user has to be
+         * told the address somewhere. There is no tunnel to imply it, and the
+         * notification is the one surface guaranteed to be on screen.
+         */
+        val socksEndpoint: String = ""
     )
 
     data class BridgeState(
