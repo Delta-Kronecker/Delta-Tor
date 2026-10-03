@@ -806,11 +806,15 @@ class TorVpnService : VpnService() {
         builder: NotificationCompat.Builder
     ): NotificationCompat.Builder {
         val s = AppState.state.value
-        builder.addAction(0, "Disconnect", disconnectPendingIntent)
+        // Real icons, not addAction(0, ...). Zero is a resource id that resolves to
+        // nothing, and a row whose icon cannot be loaded is dropped whole by some
+        // ROMs -- which is what made these buttons appear on some phones and not
+        // others. See the ic_notification_* drawables.
+        builder.addAction(R.drawable.ic_notification_disconnect, "Disconnect", disconnectPendingIntent)
         if (s.connected) {
-            builder.addAction(0, "Stop VPN", stopVpnPendingIntent)
+            builder.addAction(R.drawable.ic_notification_stop, "Stop VPN", stopVpnPendingIntent)
         } else if (s.torRunning) {
-            builder.addAction(0, "Start VPN", startVpnPendingIntent)
+            builder.addAction(R.drawable.ic_notification_start, "Start VPN", startVpnPendingIntent)
         }
         return builder
     }

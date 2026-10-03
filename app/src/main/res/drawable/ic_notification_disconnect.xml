@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification action icon: disconnect (power symbol).
+
+  This exists because the notification rows were being built with addAction(0, ...).
+  Icon resource 0 is not "no icon", it is a resource id that resolves to nothing,
+  and a notification action without a usable icon is dropped by some ROMs
+  outright. That is why the Disconnect / Stop VPN / Start VPN rows were invisible
+  on part of the device population while working everywhere else.
+
+  Same rules as ic_tor.xml: no android:tint, so the system can tint the row for a
+  light or dark status bar, and solid fills only, because an action icon is
+  rendered at 24dp through the same alpha mask as the small icon.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Rounded body with its top face cut out, leaving the power symbol ring. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,3C7.6,3 4.2,6.4 4.2,10.8L4.2,19C4.2,20.2 5,21 6.2,21L17.8,21C19,21 19.8,20.2 19.8,19L19.8,10.8C19.8,6.4 16.4,3 12,3Z M12,5.4C15,5.4 17.4,7.8 17.4,10.8L17.4,18.6L6.6,18.6L6.6,10.8C6.6,7.8 9,5.4 12,5.4Z" />
+    <!-- The stem, as a filled bar so it survives the mask. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M10.9,6.6L13.1,6.6L13.1,12.4L10.9,12.4Z" />
+</vector>

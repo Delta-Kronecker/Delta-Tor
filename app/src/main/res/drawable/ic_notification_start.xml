@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Notification action icon: start VPN (triangle), the mirror of the stop square.
+  Paired with ic_notification_stop.xml so the two states of the same toggle are
+  distinguishable without reading the label.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M7.5,4.9C7.5,4.2 8.3,3.8 8.8,4.2L19.3,11.7C19.8,12.1 19.8,12.9 19.3,13.3L8.8,20.8C8.3,21.2 7.5,20.8 7.5,20.1Z" />
+</vector>
