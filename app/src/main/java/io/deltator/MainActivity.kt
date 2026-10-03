@@ -191,19 +191,14 @@ class MainActivity : ComponentActivity() {
     private fun maybeShowFirstRunNotice() {
         if (Config.firstRunNoticeShown) return
         Config.firstRunNoticeShown = true
+        // No title. The heading lines that used to sit above this body said the
+        // same thing three times in three languages, and the body below already
+        // opens with the instruction in all three.
         AppState.postNotice(
             AppState.NoticeKind.FirstRun,
-            firstRunNoticeTitle(),
+            "",
             firstRunNoticeBody()
         )
-    }
-
-    private fun firstRunNoticeTitle(): String = buildString {
-        appendLine("Before your first connect")
-        appendLine()
-        appendLine("پیش از اولین اتصال")
-        appendLine()
-        append("Перед первым подключением")
     }
 
     private fun firstRunNoticeBody(): String = buildString {
@@ -548,14 +543,20 @@ private fun NoticeDialog(
                     WarnIcon(color = DeltaTor.Amber)
                 }
                 Spacer(Modifier.width(12.dp))
-                Text(
-                    notice.title,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.5.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.AmberLight
-                )
+                // Skipped when the notice carries no title, rather than rendered
+                // as an empty line. A Text with a blank string still takes its
+                // full line height and its 1.5sp letter spacing, which leaves a
+                // conspicuous gap under the icon where a heading should be.
+                if (notice.title.isNotBlank()) {
+                    Text(
+                        notice.title,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AmberLight
+                    )
+                }
             }
             Spacer(Modifier.height(14.dp))
             Text(
