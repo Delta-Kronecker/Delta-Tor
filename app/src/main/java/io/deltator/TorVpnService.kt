@@ -817,6 +817,7 @@ class TorVpnService : VpnService() {
                         // implementations rely on the default behavior: allowed apps
                         // get their traffic routed through TUN. Let us try without
                         // blanket route first.
+                        builder.addRoute(VPN_ROUTE, 0)
                         Log.i(
                             TAG,
                             "Split tunnel: VPN-only, $applied app(s) through Tor, " +
