@@ -751,7 +751,6 @@ class TorVpnService : VpnService() {
                 .setMtu(VPN_MTU)
                 .addAddress(VPN_ADDRESS, 32)
                 .addDnsServer(DEFAULT_DNS)
-                .addRoute(VPN_ROUTE, 0)
             // Exclude our own app so Tor/Snowflake sockets go direct (not through TUN)
             // In both modes our own traffic must stay outside the VPN interface,
             // because Tor listens on 127.0.0.1 and the interface is what would
@@ -803,18 +802,21 @@ class TorVpnService : VpnService() {
                 }
                 if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
                     if (applied == 0) {
-                        // Worth being loud about, because the platform cannot
-                        // express "let nothing through". With no allow entry at
-                        // all, Builder captures every app, so an empty pick list
-                        // in VPN mode is not a device where nothing is protected:
-                        // it is the same device as split tunnelling off. Saying so
-                        // here keeps the log honest next to the UI warning.
+                        builder.addRoute(VPN_ROUTE, 0)
                         Log.w(
                             TAG,
                             "Split tunnel: VPN mode with nothing picked, so every app " +
                                 "is captured anyway -- this behaves like split tunnelling off"
                         )
                     } else {
+                        // Only route traffic for allowed apps. Do not add a blanket
+                        // route; adding one can cause traffic from non-allowed apps
+                        // to be routed into the tunnel depending on ROM behavior.
+                        // Routes are still needed for allowed apps to reach Tor via
+                        // TUN in the normal case. But in practice, many VPN
+                        // implementations rely on the default behavior: allowed apps
+                        // get their traffic routed through TUN. Let us try without
+                        // blanket route first.
                         Log.i(
                             TAG,
                             "Split tunnel: VPN-only, $applied app(s) through Tor, " +
@@ -822,12 +824,15 @@ class TorVpnService : VpnService() {
                         )
                     }
                 } else {
+                    builder.addRoute(VPN_ROUTE, 0)
                     Log.i(
                         TAG,
                         "Split tunnel: $applied app(s) bypass Tor, all others tunnelled, " +
                             "$failed skipped"
                     )
                 }
+            } else {
+                builder.addRoute(VPN_ROUTE, 0)
             }
             builder.setBlocking(false)
             builder.establish()
