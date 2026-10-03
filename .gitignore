@@ -19,4 +19,23 @@ Thumbs.db
 keystore.properties
 rel.json
 runs.json
-dist/
+
+# build output
+/dist/
+/bin/
+*.log
+
+# benchmark results (step 0 harness)
+/results/
+
+# tor runtime data. Anchored on purpose: a bare data/ would also swallow the
+# Android app's own data dirs and any tracked data/ in the tree.
+/data/
+/app/src/main/assets/data/
+scripts/data/
+
+# locally compiled launcher (CI builds it into the artifact)
+/scripts/DeltaTor.exe
+
+# local scratch trees
+/portable/

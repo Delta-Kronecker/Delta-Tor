@@ -1,0 +1,422 @@
+name: Build Tor for Windows
+
+on:
+  push:
+    branches: [main, master, remove-xray]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.0.0). Leave empty for a build-only run.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  transports:
+    name: pluggable-transports (Windows x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs (version in comment) for
+      # reproducible, supply-chain-safe builds. To bump: verify the new tag,
+      # then swap SHA + comment together.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0 (node24)
+        with:
+          go-version: "1.24"
+          # This repo has no go.sum; the built-in module cache would just warn
+          # and skip. The whole job runs in under a minute anyway.
+          cache: false
+
+      - name: Build pluggable transports
+        run: |
+          set -e
+          mkdir -p out
+          GOPATH_BIN="$(go env GOPATH)/bin/windows_amd64"
+
+          echo "=== obfs4 ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.com/yawning/obfs4.git/obfs4proxy@v0.0.0-20231012084234-c3e2d44b1033
+          cp "$GOPATH_BIN/obfs4proxy.exe" out/obfs4proxy.exe
+
+          echo "=== snowflake client ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/snowflake/v2/client@v2.14.1
+          cp "$GOPATH_BIN/client.exe" out/snowflake-client.exe
+
+          echo "=== webtunnel client ==="
+          GOOS=windows GOARCH=amd64 \
+            go install gitlab.torproject.org/tpo/anti-censorship/pluggable-transports/webtunnel/main/client@v0.0.6
+          cp "$GOPATH_BIN/client.exe" out/webtunnel.exe
+
+          ls -la out/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        with:
+          name: transports-win64
+          path: out/
+
+  tor-win64:
+    name: deltator-win64 (single release artifact)
+    runs-on: windows-latest
+    needs: [transports]
+    steps:
+      # On workflow_dispatch with a tag input, check out EXACTLY that tag so
+      # the published binary always matches its tagged source.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (node24)
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Verify requested tag was checked out
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.tag != ''
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          case "$INPUT_TAG" in
+            v[0-9][0-9A-Za-z._-]*) ;;
+            *) echo "::error::refusing unsafe tag '$INPUT_TAG'"; exit 1;;
+          esac
+          ACTUAL="$(git describe --tags --exact-match 2>/dev/null || true)"
+          if [ "$ACTUAL" != "$INPUT_TAG" ]; then
+            echo "::error::tag '$INPUT_TAG' not found (HEAD is '$ACTUAL'). Create/push the tag first."
+            exit 1
+          fi
+          echo "Building exactly $ACTUAL"
+
+      # Package versions are pinned (pkg=ver-rel) against the CURRENT MSYS2
+      # sync databases (verify with: tar -xOf <pkg>.db.tar <pkg-dir>/desc |
+      # grep -A1 %VERSION%). update:true is REQUIRED: without a fresh
+      # `pacman -Sy` the preinstalled image's stale database cannot see the
+      # pinned versions and every target resolves as "target not found".
+      # Bump pins together whenever you want a newer toolchain; if pacman
+      # ever reports "target not found", re-check the .db and adjust.
+      - uses: msys2/setup-msys2@66cd2cce69caa17b53920067426061ca1de3a884 # v2.32.0 (node24)
+        with:
+          msystem: MINGW64
+          update: true
+          cache: false
+          install: >-
+            mingw-w64-x86_64-gcc=16.2.0-4
+            mingw-w64-x86_64-binutils=2.47-3
+            make=4.4.1-3
+            mingw-w64-x86_64-pkgconf=1~3.0.7-1
+            mingw-w64-x86_64-libevent=2.1.13-1
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-zlib=1.3.2-2
+            mingw-w64-x86_64-zstd=1.5.7-2
+            mingw-w64-x86_64-gettext-runtime=1.0-1
+            mingw-w64-x86_64-gettext-tools=1.0-1
+            perl=5.42.3-2
+
+      - name: Configure
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          chmod +x configure
+          ./configure --host=x86_64-w64-mingw32 \
+            --disable-asciidoc --disable-man --disable-html-docs
+
+      - name: Upload configure log (on failure)
+        if: failure() && hashFiles('tor-src/config.log') != ''
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        with:
+          name: config-log
+          path: tor-src/config.log
+
+      - name: Build
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          # No autotools are installed (the workflow never regenerates), so
+          # stop make's maintainer-mode rules from trying: restamp generated
+          # files strictly NEWER than their inputs (sources -> aclocal.m4 ->
+          # configure/config.h.in/Makefile.in).
+          find . -name '*.m4' -o -name 'Makefile.am' | xargs touch
+          sleep 1
+          touch aclocal.m4
+          sleep 1
+          touch configure
+          find . -name '*.h.in' | xargs touch
+          find . -name 'Makefile.in' | xargs touch
+          make -j$(nproc) 2>&1 | tee build-win.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Smoke test
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          ./src/app/tor.exe --version
+
+      - name: Stage tor + runtime DLLs + geoip
+        shell: msys2 {0}
+        run: |
+          cd "$GITHUB_WORKSPACE/tor-src"
+          mkdir -p ../dist/data/bridges
+          cp src/app/tor.exe ../dist/data/
+
+          # Copy every DLL that tor.exe (and the DLLs it loads) imports from the
+          # MSYS2 runtime dir, transitively, so the bundle is self-contained on
+          # machines without MSYS2 installed. tor.exe imports libzstd.dll and
+          # the libevent DLLs import libwinpthread-1.dll; both used to be
+          # omitted, so clean devices failed with "libzstd.dll was not found".
+          BIN="$MINGW_PREFIX/bin"
+          NEED="src/app/tor.exe"
+          added=1
+          while [ "$added" = "1" ]; do
+            added=0
+            for f in $NEED; do
+              for d in $(objdump -p "$f" | awk '/DLL Name:/{print $3}'); do
+                if [ -f "$BIN/$d" ] && [ ! -f "../dist/data/$d" ]; then
+                  cp "$BIN/$d" ../dist/data/
+                  NEED="$NEED ../dist/data/$d"
+                  added=1
+                fi
+              done
+            done
+          done
+          cp src/config/geoip src/config/geoip6 ../dist/data/
+          ls ../dist/data/
+
+      - name: Download transports
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0 (node24)
+        with:
+          name: transports-win64
+          path: transports/
+
+      - name: Merge transports into dist/data
+        shell: pwsh
+        run: |
+          Copy-Item "transports\*.exe" -Destination "dist\data\" -Force
+          Get-ChildItem "dist" -Recurse -File | Select-Object FullName, Length
+
+      # zeptun (TUN engine) is consumed as a pinned official release, never
+      # built here (Zig is not installed on the runner). v1.1.1's Windows zip
+      # bundles both zeptun.exe and wintun.dll; the sha256 is verified so a
+      # tampered or rotated asset fails the build instead of shipping.
+      - name: Download zeptun TUN engine (pinned v1.1.1)
+        shell: pwsh
+        run: |
+          $ver = "v1.1.1"
+          $expected = "9d1cf6b6fc1aeb7d81d5f69802b485ef247902fe88a565a520e29fcf21f04da7"
+          $zip = Join-Path $env:TEMP "zeptun-$ver.zip"
+          $uri = "https://github.com/Noisemux/zeptun/releases/download/$ver/zeptun-windows-x86_64.zip"
+          Invoke-WebRequest -Uri $uri -OutFile $zip -UseBasicParsing
+          $actual = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) {
+            throw "zeptun $ver sha256 mismatch: got $actual expected $expected"
+          }
+          Expand-Archive -Path $zip -DestinationPath "dist\data" -Force
+          $srcDir = "dist\data\zeptun-win-x86_64"
+          if (Test-Path $srcDir) {
+            Get-ChildItem $srcDir -File | ForEach-Object { Move-Item $_.FullName "dist\data\" -Force }
+            Remove-Item $srcDir -Recurse -Force
+          }
+          Get-ChildItem "dist\data\zeptun.exe", "dist\data\wintun.dll" | Select-Object Name, Length
+
+      - name: Copy config template, snowflake bridge, README
+        shell: pwsh
+        run: |
+          Copy-Item "configs\torrc.jet" "dist\data\torrc.template" -Force
+          # torrc.template.default is the pristine copy the in-app Torrc editor
+          # RESETS to, so a user edit can never destroy the shipped baseline.
+          Copy-Item "configs\torrc.jet" "dist\data\torrc.template.default" -Force
+          Copy-Item "bridges\snowflake_tested.txt" "dist\data\bridges\" -Force
+          Copy-Item "README.md" "dist\data\README.md" -Force
+          # Country table + per-country exit capacity for the drawer's LOCATION
+          # picker. Same two files the Android client bundles as assets.
+          Copy-Item "scripts\geoip\countries.tsv" "dist\data\countries.tsv" -Force
+          Copy-Item "scripts\geoip\exit-capacity.tsv" "dist\data\exit-capacity.tsv" -Force
+
+      - name: Download and combine bridges
+        shell: pwsh
+        run: |
+          $base = "https://raw.githubusercontent.com/Delta-Kronecker/Tor-Bridges-Collector/refs/heads/main/bridge"
+          $outDir = "dist\data\bridges"
+          $pairs = @(
+            @{ Name = "obfs4_tested.txt";    V4 = "$base/obfs4_tested.txt";    V6 = "$base/obfs4_ipv6_tested.txt" },
+            @{ Name = "webtunnel_tested.txt"; V4 = "$base/webtunnel_tested.txt"; V6 = "$base/webtunnel_ipv6_tested.txt" },
+            @{ Name = "vanilla_tested.txt";   V4 = "$base/vanilla_tested.txt";   V6 = "$base/vanilla_ipv6_tested.txt" }
+          )
+          foreach ($p in $pairs) {
+            $dest = Join-Path $outDir $p.Name
+            $tmpV4 = "$dest.v4.tmp"
+            $tmpV6 = "$dest.v6.tmp"
+            try {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              Invoke-WebRequest -Uri $p.V4 -OutFile $tmpV4 -UseBasicParsing -ErrorAction Stop
+              Write-Host "$($p.Name): IPv4 downloaded."
+            } catch {
+              Write-Host "[!] $($p.Name): IPv4 download failed: $_"
+              $tmpV4 = $null
+            }
+            try {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+              Invoke-WebRequest -Uri $p.V6 -OutFile $tmpV6 -UseBasicParsing -ErrorAction Stop
+              Write-Host "$($p.Name): IPv6 downloaded."
+            } catch {
+              Write-Host "[!] $($p.Name): IPv6 download failed: $_"
+              $tmpV6 = $null
+            }
+            $lines = @()
+            if ($tmpV4 -and (Test-Path $tmpV4)) { $lines += Get-Content $tmpV4 }
+            if ($tmpV6 -and (Test-Path $tmpV6)) { $lines += Get-Content $tmpV6 }
+            $lines | Where-Object { $_.Trim() -ne "" } | Set-Content -Path $dest -Encoding UTF8
+            Write-Host "$($p.Name): $([int]((Get-Content $dest | Measure-Object -Line).Lines)) bridges combined."
+            if ($tmpV4 -and (Test-Path $tmpV4)) { Remove-Item $tmpV4 -Force }
+            if ($tmpV6 -and (Test-Path $tmpV6)) { Remove-Item $tmpV6 -Force }
+          }
+
+      - name: Compile DeltaTor.exe
+        shell: pwsh
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          $ver = $env:INPUT_TAG
+          if (-not $ver) { $ver = "${{ github.ref_name }}" }
+          if ($ver -notmatch '^v?\d') { $ver = "" }
+          & "scripts\build-start-tor.ps1" -OutFile "dist\DeltaTor.exe" -Version $ver
+
+      - name: Upload single release artifact
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        with:
+          name: deltator-win64
+          path: dist/
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
+        with:
+          name: build-log-win
+          path: tor-src/build-win.log
+
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: [tor-win64]
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '') ||
+      startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    env:
+      BETA: 'true'
+    steps:
+      - name: Validate and resolve tag
+        id: tag
+        shell: bash
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          case "$TAG" in
+            v[0-9][0-9A-Za-z._-]*) ;;
+            *) echo "::error::refusing unsafe release tag '$TAG'"; exit 1;;
+          esac
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing release tag: $TAG"
+
+      # Full history so the release notes can list commits since the previous tag.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (node24)
+        with:
+          ref: ${{ steps.tag.outputs.TAG }}
+          fetch-depth: 0
+
+      - name: Build release notes
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.TAG }}
+        run: |
+          PREV="$(git tag --sort=-creatordate | grep -vx "$TAG" | head -n 1 || true)"
+          SHA="$(git rev-parse --short=9 HEAD)"
+          {
+            echo "DeltaTor $TAG — portable Windows Tor client tuned for maximum throughput."
+            echo ""
+            if [ "$BETA" = "true" ]; then
+              echo "> **BETA (pre-release) build.**"
+              echo ""
+            fi
+            echo "**Download:** \`deltator-win64-$TAG.zip\` — unzip anywhere and double-click \`DeltaTor.exe\`."
+            echo ""
+            echo "Built in CI from official tor 0.4.9.11 sources plus obfs4, webtunnel"
+            echo "and snowflake, with the pinned official zeptun release for the"
+            echo "whole-system TUN tunnel (press T)."
+            echo ""
+            echo "| Endpoint | Address |"
+            echo "|---|---|"
+            echo "| SOCKS5 | 127.0.0.1:9050 |"
+            echo "| HTTP CONNECT tunnel | 127.0.0.1:8118 |"
+            echo "| DNS | 127.0.0.1:53530 |"
+            echo ""
+            echo "- Commit: \`$SHA\`"
+            if [ -n "$PREV" ]; then
+              echo "- Compare: https://github.com/${{ github.repository }}/compare/$PREV...$TAG"
+            fi
+            echo ""
+            if [ -n "$PREV" ]; then
+              echo "## Changes since $PREV"
+            else
+              echo "## Recent changes"
+            fi
+            echo ""
+            if [ -n "$PREV" ]; then
+              git log --oneline --no-decorate "$PREV..$TAG" | sed 's/^/- /'
+            else
+              git log --oneline --no-decorate -n 15 | sed 's/^/- /'
+            fi
+          } > "$GITHUB_WORKSPACE/release-notes.md"
+          echo "--- release-notes.md ---"
+          cat "$GITHUB_WORKSPACE/release-notes.md"
+
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0 (node24)
+        with:
+          name: deltator-win64
+          path: release
+
+      - name: Package portable folder into zip
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.TAG }}
+        run: |
+          cd release
+          zip -r "../deltator-win64-$TAG.zip" DeltaTor.exe data
+          ls -la ../
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.TAG }}
+        run: |
+          ZIP="deltator-win64-$TAG.zip"
+          NOTES="$GITHUB_WORKSPACE/release-notes.md"
+          if [ "$BETA" = "true" ]; then
+            PRERELEASE="--prerelease"
+            echo "Publishing as BETA (pre-release)"
+          else
+            PRERELEASE=""
+            echo "Publishing as full release (latest)"
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$ZIP" --repo "${{ github.repository }}" --clobber
+            if [ "$BETA" = "true" ]; then
+              gh release edit "$TAG" --repo "${{ github.repository }}" \
+                --notes-file "$NOTES" --prerelease
+            else
+              gh release edit "$TAG" --repo "${{ github.repository }}" \
+                --notes-file "$NOTES" --prerelease=false
+            fi
+          else
+            gh release create "$TAG" "$ZIP" \
+              --repo "${{ github.repository }}" \
+              --title "DeltaTor $TAG" \
+              --notes-file "$NOTES" \
+              $PRERELEASE
+          fi
