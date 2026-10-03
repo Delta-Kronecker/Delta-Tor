@@ -124,56 +124,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The one-time first-run explainer, in the three languages this app is read in.
+ * The one-time first-run explainer.
  *
- * All three are shown, English first, rather than picked from the system locale.
- * That is a deliberate trade: the app ships no translation resources at all, so a
- * locale-selected string would fall back to English for everyone except the two
- * locales someone remembered to write, which is the worst outcome -- a user who
- * cannot read the one language they picked gets English, and a user who cannot
- * read English gets a screen they have to guess at. Showing all three means the
- * text is readable in whichever of the three the reader knows, and costs nothing
- * but a scroll.
+ * Persian only, and deliberately short. The first thing this screen has to do is
+ * stop the user from assuming the app is stuck, so the copy stays on that one
+ * point: the first connection is slow, and it is slow for a stated reason that
+ * resolves on its own. The earlier version of this explained the same thing in
+ * three languages across six paragraphs, which turned a reassurance into a wall
+ * of text to get past before the first tap.
  *
- * Kept as one function so the three stay in step: a claim added to one language
- * and forgotten in the other two is the failure mode here.
+ * Inline rather than in strings.xml because the app keeps its user-facing strings
+ * inline throughout; see the rest of this file.
  */
-private fun firstRunNoticeBody(): String = buildString {
-    appendLine(
-        "Your first connection will be slow.\n\n" +
-            "DeltaTor has no bridges to start from yet, so it has to download and " +
-            "test a bridge list before it can build anything. That can take a couple " +
-            "of minutes, and it depends on how restricted your network is.\n\n" +
-            "After one successful connection, DeltaTor remembers which bridges " +
-            "actually worked and adds them to the next attempt as Memory Mode. " +
-            "Memory Mode skips the list and connects straight to a bridge that is " +
-            "known to work here, so every connection after the first is faster."
-    )
-    appendLine()
-    appendLine(
-        "اولین اتصال شما کند خواهد بود.\n\n" +
-            "هنوز هیچ پلی در DeltaTor ذخیره نشده، بنابراین قبل از ساختن هر مسیری " +
-            "باید فهرستی از پل‌ها را دانلود و آزمایش کند. این کار ممکن است چند " +
-            "دقیقه طول بکشد و به میزان محدودیت شبکهٔ شما بستگی دارد.\n\n" +
-            "پس از یک اتصال موفق، DeltaTor به یاد می‌سپارد کدام پل‌ها واقعاً کار " +
-            "کردند و آن‌ها را به تلاش بعدی به‌عنوان «حالت حافظه» اضافه می‌کند. " +
-            "حالت حافظه فهرست را کنار می‌گذارد و مستقیم به پلی وصل می‌شود که " +
-            "می‌دانیم اینجا کار می‌کند، بنابراین هر اتصال بعد از اولین اتصال سریع‌تر " +
-            "خواهد بود."
-    )
-    appendLine()
-    append(
-        "Ваше первое подключение будет медленным.\n\n" +
-            "У DeltaTor пока нет сохранённых мостов, поэтому перед созданием любой " +
-            "цепочки он должен загрузить и проверить список мостов. Это может занять " +
-            "пару минут и зависит от того, насколько ограничена ваша сеть.\n\n" +
-            "После первого успешного подключения DeltaTor запомнит, какие мосты " +
-            "действительно сработали, и добавит их в следующую попытку в режиме " +
-            "памяти. Режим памяти пропускает список и подключается сразу к мосту, " +
-            "который заведомо работает здесь, поэтому каждое следующее подключение " +
-            "быстрее."
-    )
-}
+private fun firstRunNoticeBody(): String =
+    "لطفا در اولین اتصال صبور باشید\n" +
+        "پس از یک اتصال موفق دلتاتور مسیر های اتصال را به یاد می سپارد و آن‌ها را " +
+        "به عنوان «حالت حافظه» اضافه می‌کند\n" +
+        "در نتیجه در تلاش های بعدی زمان لازم برای اتصال کاهش خواهد یافت"
 
 class MainActivity : ComponentActivity() {
 
@@ -229,7 +196,7 @@ class MainActivity : ComponentActivity() {
         Config.firstRunNoticeShown = true
         AppState.postNotice(
             AppState.NoticeKind.FirstRun,
-            "BEFORE YOUR FIRST CONNECT",
+            "پیش از اولین اتصال",
             firstRunNoticeBody()
         )
     }
