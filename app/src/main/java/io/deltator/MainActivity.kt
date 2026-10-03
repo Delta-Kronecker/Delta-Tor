@@ -123,6 +123,58 @@ import io.deltator.util.LogSession
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * The one-time first-run explainer, in the three languages this app is read in.
+ *
+ * All three are shown, English first, rather than picked from the system locale.
+ * That is a deliberate trade: the app ships no translation resources at all, so a
+ * locale-selected string would fall back to English for everyone except the two
+ * locales someone remembered to write, which is the worst outcome -- a user who
+ * cannot read the one language they picked gets English, and a user who cannot
+ * read English gets a screen they have to guess at. Showing all three means the
+ * text is readable in whichever of the three the reader knows, and costs nothing
+ * but a scroll.
+ *
+ * Kept as one function so the three stay in step: a claim added to one language
+ * and forgotten in the other two is the failure mode here.
+ */
+private fun firstRunNoticeBody(): String = buildString {
+    appendLine(
+        "Your first connection will be slow.\n\n" +
+            "DeltaTor has no bridges to start from yet, so it has to download and " +
+            "test a bridge list before it can build anything. That can take a couple " +
+            "of minutes, and it depends on how restricted your network is.\n\n" +
+            "After one successful connection, DeltaTor remembers which bridges " +
+            "actually worked and adds them to the next attempt as Memory Mode. " +
+            "Memory Mode skips the list and connects straight to a bridge that is " +
+            "known to work here, so every connection after the first is faster."
+    )
+    appendLine()
+    appendLine(
+        "اولین اتصال شما کند خواهد بود.\n\n" +
+            "هنوز هیچ پلی در DeltaTor ذخیره نشده، بنابراین قبل از ساختن هر مسیری " +
+            "باید فهرستی از پل‌ها را دانلود و آزمایش کند. این کار ممکن است چند " +
+            "دقیقه طول بکشد و به میزان محدودیت شبکهٔ شما بستگی دارد.\n\n" +
+            "پس از یک اتصال موفق، DeltaTor به یاد می‌سپارد کدام پل‌ها واقعاً کار " +
+            "کردند و آن‌ها را به تلاش بعدی به‌عنوان «حالت حافظه» اضافه می‌کند. " +
+            "حالت حافظه فهرست را کنار می‌گذارد و مستقیم به پلی وصل می‌شود که " +
+            "می‌دانیم اینجا کار می‌کند، بنابراین هر اتصال بعد از اولین اتصال سریع‌تر " +
+            "خواهد بود."
+    )
+    appendLine()
+    append(
+        "Ваше первое подключение будет медленным.\n\n" +
+            "У DeltaTor пока нет сохранённых мостов, поэтому перед созданием любой " +
+            "цепочки он должен загрузить и проверить список мостов. Это может занять " +
+            "пару минут и зависит от того, насколько ограничена ваша сеть.\n\n" +
+            "После первого успешного подключения DeltaTor запомнит, какие мосты " +
+            "действительно сработали, и добавит их в следующую попытку в режиме " +
+            "памяти. Режим памяти пропускает список и подключается сразу к мосту, " +
+            "который заведомо работает здесь, поэтому каждое следующее подключение " +
+            "быстрее."
+    )
+}
+
 class MainActivity : ComponentActivity() {
 
     private val vpnPermissionLauncher =
@@ -141,6 +193,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
+        maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
@@ -161,6 +214,24 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * Tell a first-time user why their first connect is the slow one, once.
+     *
+     * The flag is written before the notice is posted rather than when it is
+     * dismissed, so a rotation or a process death mid-dialog cannot turn it into a
+     * dialog that reappears every launch until the user happens to survive one
+     * long enough to close it.
+     */
+    private fun maybeShowFirstRunNotice() {
+        if (Config.firstRunNoticeShown) return
+        Config.firstRunNoticeShown = true
+        AppState.postNotice(
+            AppState.NoticeKind.FirstRun,
+            "BEFORE YOUR FIRST CONNECT",
+            firstRunNoticeBody()
+        )
     }
 
     private fun requestNotificationPermissionIfNeeded() {
@@ -265,28 +336,15 @@ private fun MainScreen(
     val closeDrawer: () -> Unit = remember { { scope.launch { drawerState.close() }; Unit } }
     BackHandler(enabled = drawerState.isOpen) { closeDrawer() }
 
-    // The advisory used to be a line of amber text under the status word, which
-    // is easy to read past on a phone and impossible to act on: it says "open
-    // settings" while sitting nowhere near a button that does that. It is a
-    // modal sheet now, so it cannot be missed, and it carries the tap itself.
-    var openAdvanced by remember { mutableStateOf(false) }
-    var advisoryDismissed by remember { mutableStateOf(false) }
-    LaunchedEffect(state.advisory) {
-        // Latch on the message, not on "is set": AppState holds the advisory
-        // until the race resolves, so a plain null check would put the sheet
-        // back on screen every recomposition in between.
-        if (!state.advisory.isNullOrBlank()) advisoryDismissed = false
-    }
-    val advisory = state.advisory
-    if (!advisory.isNullOrBlank() && !advisoryDismissed) {
-        AdvisoryDialog(
-            message = advisory,
-            onDismiss = { advisoryDismissed = true },
-            onOpenAuto = {
-                advisoryDismissed = true
-                openAdvanced = true
-                openDrawer()
-            }
+    // A notice is latched on its id and cleared by the UI itself, not by whatever
+    // the service does next: these describe an action the app took on the user's
+    // behalf, and the restart that action caused is exactly what would otherwise
+    // wipe them.
+    val notice = state.notice
+    if (notice != null) {
+        NoticeDialog(
+            notice = notice,
+            onDismiss = { AppState.clearNotice(notice.id) }
         )
     }
 
@@ -300,8 +358,7 @@ private fun MainScreen(
                 ControlDrawer(
                     onClose = closeDrawer,
                     onUpdateBridges = onUpdateBridges,
-                    onOpenLog = { closeDrawer(); onOpenLog() },
-                    openAdvanced = openAdvanced
+                    onOpenLog = { closeDrawer(); onOpenLog() }
                 )
             }
         }
@@ -435,22 +492,23 @@ private const val REPO_URL = "https://github.com/Delta-Kronecker/Delta-Tor"
 private const val EXIT_PICKER_TOP = 25
 
 /**
- * The blocked-transports advisory, as a sheet instead of a line of text.
+ * A modal notice the user never asked for: the app changed the connection mode by
+ * itself, or this is the first time it has been opened.
  *
- * Two things changed on purpose. It is modal, because the message describes a
- * stall the user is watching happen and a caption under the status word is the
- * one place on this screen their eye already passes over. And it carries the
- * action, because "Open Settings and add Snowflake to Auto" is only advice
- * until something opens those settings; the primary button does exactly that.
+ * One dialog for both, because the thing they have in common is the reason they
+ * cannot be a caption: in each case the app has already acted, and the only thing
+ * left to do is tell the user what it did and why. A line of text under the status
+ * word is read past by definition, and this is exactly the moment that must not be
+ * read past.
  *
- * Dismissal is remembered by the caller, not here, so it survives recomposition
- * without this composable holding state.
+ * The body scrolls and is height-capped because the first-run explainer is three
+ * languages long; without a cap a long body on a small screen would push the
+ * button off the bottom and the notice could not be dismissed at all.
  */
 @Composable
-private fun AdvisoryDialog(
-    message: String,
-    onDismiss: () -> Unit,
-    onOpenAuto: () -> Unit
+private fun NoticeDialog(
+    notice: AppState.Notice,
+    onDismiss: () -> Unit
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -482,7 +540,7 @@ private fun AdvisoryDialog(
                 }
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    "CONNECTIONS LOOK BLOCKED",
+                    notice.title,
                     style = MaterialTheme.typography.labelSmall.copy(
                         letterSpacing = 1.5.sp,
                         fontWeight = FontWeight.Bold
@@ -492,48 +550,35 @@ private fun AdvisoryDialog(
             }
             Spacer(Modifier.height(14.dp))
             Text(
-                message,
+                notice.body,
+                modifier = Modifier
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
                 style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
                 color = DeltaTor.Text
             )
             Spacer(Modifier.height(20.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AdvisoryButton(
-                    label = "LATER",
-                    primary = false,
-                    modifier = Modifier.weight(1f),
-                    onClick = onDismiss
-                )
-                Spacer(Modifier.width(10.dp))
-                AdvisoryButton(
-                    label = "OPEN AUTO RACERS",
-                    primary = true,
-                    modifier = Modifier.weight(1.45f),
-                    onClick = onOpenAuto
-                )
-            }
+            NoticeButton(
+                label = "OK",
+                onClick = onDismiss
+            )
         }
     }
 }
 
 @Composable
-private fun AdvisoryButton(
+private fun NoticeButton(
     label: String,
-    primary: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(13.dp)
     Box(
         modifier = modifier
+            .fillMaxWidth()
             .height(44.dp)
             .clip(shape)
-            .then(
-                if (primary) Modifier.background(DeltaTor.Accent, shape)
-                else Modifier
-                    .background(DeltaTor.SurfaceAlt, shape)
-                    .border(1.dp, DeltaTor.BorderLight, shape)
-            )
+            .background(DeltaTor.Accent, shape)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -547,7 +592,7 @@ private fun AdvisoryButton(
                 letterSpacing = 1.2.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = if (primary) Color.White else DeltaTor.Text,
+            color = Color.White,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -558,8 +603,7 @@ private fun AdvisoryButton(
 private fun ControlDrawer(
     onClose: () -> Unit,
     onUpdateBridges: () -> Unit,
-    onOpenLog: () -> Unit,
-    openAdvanced: Boolean = false
+    onOpenLog: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
@@ -591,11 +635,6 @@ private fun ControlDrawer(
     var showCountries by remember { mutableStateOf(false) }
     var showAllCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
-    // Opened from the advisory sheet so the tap that says "add Snowflake to
-    // Auto" lands on the row that does it, scrolled into view.
-    LaunchedEffect(openAdvanced) {
-        if (openAdvanced) showAdvanced = true
-    }
     val advancedForm = remember { AdvancedForm() }
     LaunchedEffect(advancedForm.saved) {
         if (advancedForm.saved) {

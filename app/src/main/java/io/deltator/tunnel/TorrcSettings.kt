@@ -47,13 +47,19 @@ import android.content.SharedPreferences
  *  - `NewCircuitPeriod 10` is how often Tor resets per-circuit failure counts and
  *    expires aged circuits -- not how often it builds one, which is a common and
  *    expensive misreading. Lowering it churns circuits without warming anything.
- *  - `Schedulers KISTLite,Vanilla`, and specifically not `KIST,Vanilla`. The list
- *    is ordered by priority and Tor stops at the first type it can use, so the
- *    KIST-first version fell straight through to Vanilla on Android: KIST needs
- *    the Linux `SIOCOUTQNSD` ioctl and is not compiled into the NDK build. KISTLite
- *    keeps the batching -- which is what makes Conflux actually use more than one
- *    circuit per set -- without the kernel dependency, and Vanilla stays as the
- *    fallback for a platform where even KISTLite is unusable.
+ *  - `Schedulers Vanilla`, measured faster on a phone than `KISTLite,Vanilla`.
+ *    KISTLite only exists to batch cells so Conflux can spread a set over several
+ *    circuits, and with `ConfluxEnabled 0` below there are no circuit sets to
+ *    spread over: the batching is pure overhead, and it was also paying for a
+ *    kernel queue query the NDK build cannot issue anyway. Naming one scheduler is
+ *    what makes this explicit -- Tor's rule is "first type in the list that this
+ *    build can use", so `KISTLite,Vanilla` and `KIST,Vanilla` both silently run
+ *    Vanilla while looking like they ask for something smarter.
+ *  - `ConfluxEnabled 0`, for the same reason. Conflux multiplexes several circuits
+ *    per set, which is a throughput feature; on a phone its cost is paid on every
+ *    single connect and it measurably delayed the first usable circuit. The
+ *    `ConfluxClientUX` line that came with it is gone with it: an inert knob next
+ *    to a feature that is off only misleads whoever reads this file next.
  *  - No `CircuitPriorityHalflife`. It is a cell-EWMA in tenths of the 10s scheduler
  *    tick, so `5` meant "half a tick", and the consensus default (30s) is a saner
  *    spread than anything worth pinning by hand on a phone.
@@ -105,8 +111,7 @@ object TorrcSettings {
         DisableDebuggerAttachment 1
         SafeLogging 1
 
-        ConfluxEnabled 1
-        ConfluxClientUX throughput
+        ConfluxEnabled 0
 
         MaxCircuitDirtiness 600
 NewCircuitPeriod 10
@@ -115,7 +120,7 @@ NewCircuitPeriod 10
         CircuitStreamTimeout 60
         CircuitBuildTimeout 40
         NumPrimaryGuards 15
-        Schedulers KISTLite,Vanilla
+Schedulers Vanilla
         MaxClientCircuitsPending 128
     """.trimIndent()
 
