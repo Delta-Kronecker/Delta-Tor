@@ -5,4 +5,12 @@
     <string name="channel_vpn_status_desc">Shows current DeltaTor connection status</string>
     <string name="channel_updates">DeltaTor Updates</string>
     <string name="channel_updates_desc">Alerts when a new DeltaTor release is published</string>
+    <!--
+      Adaptive icon background. Matches the app's own surface colour so the launcher
+      icon and the first screen are one object instead of two. On a light launcher
+      theme the mask keeps this dark tile and the white onion stays readable; on a
+      dark theme it blends away, which is the intended behaviour for an adaptive
+      background.
+    -->
+    <color name="ic_launcher_background">#14171F</color>
 </resources>

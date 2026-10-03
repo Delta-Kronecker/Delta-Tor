@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive launcher icon.
+
+  Its absence is the other half of "the icon looks wrong on some phones": with
+  only mipmap-*/ic_launcher.png and no anydpi-v26 variant, every launcher on API 26+
+  falls back to wrapping the legacy bitmap in its own shape. Some put it on a white
+  circle, some crop it to a squircle, some shrink it inside a badge, and a launcher
+  that has never seen this icon before has no shape of its own to fall back to.
+  That is the "different on every phone" part, and it is fixed by declaring the
+  layers here so the launcher composes it instead of guessing.
+
+  background is a flat fill rather than another drawable: the onion is the only
+  recognisable thing in this icon, so anything behind it is noise, and a fill also
+  means the mask never reveals a transparent hole in the middle of the shape.
+
+  monochrome is what Android 13+ uses for themed icons, and it is also what a
+  notification asked to be themed falls back to. It is the same silhouette as the
+  foreground, which is the point: one shape, recoloured by the system, instead of a
+  coloured bitmap the system has to guess how to tint.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive foreground: the same onion silhouette as the notification icon, built
+  for a 108dp viewport instead of 24.
+
+  The geometry is the 24dp icon scaled 1.8x about the canvas centre (72dp wide
+  becomes 54, so it spans 27..81), which keeps the whole shape inside the 66dp
+  safe zone at 21..87 with 6dp to spare on every side.
+
+  The scale is 1.8 and not 3 on purpose. A launcher mask may crop to a circle of
+  72dp diameter, and the safe zone is the guarantee that survives the worst of
+  them; at 3x this same onion spanned 27..81 in x but 22..100 in y, because the
+  24dp source is taller than it is wide and scaling about the centre pushed the
+  bottom of the onion past the safe zone. It would have been clipped on exactly
+  the launchers that use a circular mask, which is most of them.
+
+  No android:tint and a single fill colour, both on purpose. The launcher tints the
+  foreground for themed icons and the notification tints the small icon, so a colour
+  baked in here would win over the system's choice and put a white onion on a white
+  background in light mode.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer onion body with the lens cut out (opposite winding = hole). -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,30.1C43.2,30.1 37.3,45.7 37.3,57.1C37.3,69.3 47.7,80.1 54,80.1C60.3,80.1 70.7,69.3 70.7,57.1C70.7,45.7 64.8,30.1 54,30.1Z M54,35.3C57.5,40.1 58.5,50.1 55.5,56.6C52.8,62.6 55.2,62.6 52.5,56.6C49.5,50.1 50.5,40.1 54,35.3Z" />
+    <!-- Internal seams, same shapes as the 24dp icon, scaled. -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M47.3,41.1L53.1,46.9L50.2,49.8L44.4,44Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M60.7,41.1L54.9,46.9L57.8,49.8L63.6,44Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M45.1,57.9L51.1,51.9L54,54.8L48,60.8Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M62.9,57.9L56.9,51.9L54,54.8L60,60.8Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M52.6,49.7L54.2,49.7L54.2,53.9L52.6,53.9Z" />
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M52.6,58.2L54.2,58.2L54.2,62.4L52.6,62.4Z" />
+</vector>
