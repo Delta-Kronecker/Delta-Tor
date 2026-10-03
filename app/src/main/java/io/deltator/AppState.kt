@@ -30,6 +30,20 @@ object AppState {
     }
 
     /**
+     * One block of a notice body, with the direction it has to be laid out in.
+     *
+     * A notice can carry more than one script. The first-run explainer is
+     * English, Persian and Russian in the same dialog, and one Text cannot lay
+     * that out correctly: paragraph direction is resolved from the paragraph's
+     * own content, so a Persian paragraph that happens to start with a Latin
+     * word or a bracketed term is laid out left-to-right and its sentences end
+     * up reordered, with the punctuation on the wrong side. Splitting the body
+     * into blocks lets each be laid out in its own direction, which is the only
+     * way to get the Persian one to read right-to-left.
+     */
+    data class NoticeBlock(val text: String, val rtl: Boolean = false)
+
+    /**
      * A notice the user never asked for and cannot miss.
      *
      * Separate from [VpnState.error] because of *when* it has to be readable. An
@@ -46,7 +60,7 @@ object AppState {
         val id: Long,
         val kind: NoticeKind,
         val title: String,
-        val body: String
+        val blocks: List<NoticeBlock>
     )
 
     data class VpnState(
@@ -131,9 +145,13 @@ object AppState {
      * old one described a connect attempt that no longer exists, so keeping it on
      * screen would be reporting on a state the app has already left.
      */
-    fun postNotice(kind: NoticeKind, title: String, body: String): Long {
+    fun postNotice(kind: NoticeKind, title: String, body: String): Long =
+        postNoticeBlocks(kind, title, listOf(NoticeBlock(body)))
+
+    /** As [postNotice], for a body made of blocks laid out in different directions. */
+    fun postNoticeBlocks(kind: NoticeKind, title: String, blocks: List<NoticeBlock>): Long {
         val id = noticeSeq.incrementAndGet()
-        _state.update { it.copy(notice = Notice(id, kind, title, body)) }
+        _state.update { it.copy(notice = Notice(id, kind, title, blocks)) }
         return id
     }
 
