@@ -6,11 +6,11 @@
     <string name="channel_updates">DeltaTor Updates</string>
     <string name="channel_updates_desc">Alerts when a new DeltaTor release is published</string>
     <!--
-      Adaptive icon background. Matches the app's own surface colour so the launcher
-      icon and the first screen are one object instead of two. On a light launcher
-      theme the mask keeps this dark tile and the white onion stays readable; on a
-      dark theme it blends away, which is the intended behaviour for an adaptive
-      background.
+      Adaptive icon background. This is the dark navy sampled from the source
+      artwork itself (RGB 5,9,26), not an approximate dark grey. It has to be
+      the exact value: the foreground is the same artwork at full bleed, so any
+      mismatch between these two shows up as a visible seam around the edge on
+      every launcher that draws the background layer at all.
     -->
-    <color name="ic_launcher_background">#14171F</color>
+    <color name="ic_launcher_background">#05091A</color>
 </resources>

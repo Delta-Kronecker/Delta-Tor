@@ -2,25 +2,31 @@
 <!--
   Adaptive launcher icon.
 
-  Its absence is the other half of "the icon looks wrong on some phones": with
-  only mipmap-*/ic_launcher.png and no anydpi-v26 variant, every launcher on API 26+
-  falls back to wrapping the legacy bitmap in its own shape. Some put it on a white
-  circle, some crop it to a squircle, some shrink it inside a badge, and a launcher
-  that has never seen this icon before has no shape of its own to fall back to.
-  That is the "different on every phone" part, and it is fixed by declaring the
-  layers here so the launcher composes it instead of guessing.
+  All three layers come from the supplied artwork:
+    background  - a flat colour lifting the dark navy out of the source PNG
+    foreground  - the neon artwork, shipped as ic_launcher_foreground.png in
+                  every density rather than as a vector
+    monochrome   - the same foreground, used by Android 13+ themed icons
 
-  background is a flat fill rather than another drawable: the onion is the only
-  recognisable thing in this icon, so anything behind it is noise, and a fill also
-  means the mask never reveals a transparent hole in the middle of the shape.
+  The foreground is the source PNG at full bleed, 108dp. That is deliberate and
+  it is what makes the icon look the same on every launcher instead of being
+  cropped differently by each mask: the design runs to the edge of the canvas,
+  so there is no artwork sitting outside the 18dp that a circular or squircle
+  mask discards. Anything inset here would show up as a gap on some launchers
+  and not on others, which is the problem this icon was meant to fix.
 
-  monochrome is what Android 13+ uses for themed icons, and it is also what a
-  notification asked to be themed falls back to. It is the same silhouette as the
-  foreground, which is the point: one shape, recoloured by the system, instead of a
-  coloured bitmap the system has to guess how to tint.
+  Monochrome points at the colour foreground. Android 13 tints it by alpha, and
+  the neon art is drawn light on the dark navy field, so the alpha channel
+  carries the shape on its own. The themed icon is therefore the same Delta
+  mark rather than a filled square.
+
+  The background colour is the exact navy sampled from the PNG (RGB 5,9,26).
+  It has to be exact: the foreground is that same artwork at full bleed, so any
+  mismatch shows as a seam around the edge on every launcher that draws the
+  background layer at all.
 -->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@color/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>
