@@ -85,13 +85,14 @@ class TorVpnService : VpnService() {
         private const val PROBES_TO_IGNORE_GRACE = 6
 
         /**
-         * How long the tunnel may stay silent before it is rebuilt, whichever
-         * of the two counters gets there first. It has to be longer than one
-         * circuit build (CircuitBuildTimeout, 40s) plus the SocksTimeout a
-         * request waits for one, because a circuit being built is silent and
-         * from here it is indistinguishable from a tunnel that is gone.
+         * Slack on top of the Tor-derived grace in [probeGraceMs]. A circuit being
+         * built is silent, and from the outside that is indistinguishable from a
+         * tunnel that is gone, so the grace has to outlast one build plus the wait
+         * a request makes for it. This is only the margin on top of that sum, not
+         * the whole grace -- it used to be the whole thing, which quietly assumed
+         * a 30s SocksTimeout because that is what the template shipped with.
          */
-        private const val PROBE_GRACE_MS = 75_000L
+        private const val PROBE_GRACE_MARGIN_MS = 5_000L
 
         /**
          * A restore is a clean Tor that still has to build its first circuit, so
@@ -861,9 +862,17 @@ class TorVpnService : VpnService() {
      * spends waiting for one. A shorter grace calls a rebuild normal, and a
      * normal rebuild is a full bootstrap that takes longer than the grace, which
      * is the loop the cooldown below exists to break.
+     *
+     * Both terms are read from the template so editing it cannot silently desync
+     * this from what Tor will actually do. That was not true before: the SocksTimeout
+     * term was a hard-coded 30s folded into the grace constant, so any template that
+     * changed SocksTimeout -- including the tail block, which is what a real
+     * connect uses -- left the grace short and a healthy rebuild looking like a
+     * dead link.
      */
     private fun probeGraceMs(): Long =
-        TorrcSettings.intValue("CircuitBuildTimeout", 40) * 1000L + PROBE_GRACE_MS
+        (TorrcSettings.intValue("CircuitBuildTimeout", 40) +
+            TorrcSettings.intValue("SocksTimeout", 30)) * 1000L + PROBE_GRACE_MARGIN_MS
 
     /**
      * Rebuild the transport that was carrying traffic, keeping the tunnel up.
