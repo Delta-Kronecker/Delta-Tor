@@ -92,10 +92,34 @@ object Config {
         get() = prefs.getBoolean("logging_enabled", false)
         set(value) = prefs.edit().putBoolean("logging_enabled", value).apply()
 
+    /**
+     * Which transport a fresh install connects with.
+     *
+     * Webtunnel rather than auto, because auto is not a safe first impression: it
+     * races three bridge lists, and on the censored networks this app exists for,
+     * vanilla and obfs4 are the two most likely to be blocked, so the user watches
+     * three runners crawl before the one that works is even tried. Webtunnel goes
+     * through an HTTPS CONNECT to a CDN-fronted endpoint, which is the shape most
+     * likely to be reachable, and it fails honestly and quickly when it is not.
+     *
+     * Only the fallback moves. An install that already has a stored choice keeps
+     * it, because nobody wants a preference they set silently rewritten.
+     */
+    const val DEFAULT_TRANSPORT_MODE = "webtunnel"
+
     var transportMode: String
         // "auto","vanilla","obfs4","webtunnel","snowflake","direct","custom"
-        get() = prefs.getString("transport_mode", "auto") ?: "auto"
+        get() = prefs.getString("transport_mode", DEFAULT_TRANSPORT_MODE) ?: DEFAULT_TRANSPORT_MODE
         set(value) = prefs.edit().putString("transport_mode", value).apply()
+
+    /**
+     * Whether the one-time "your first connect is the slow one" explainer has been
+     * shown. Persisted rather than held in memory so it cannot come back on the
+     * next launch after the user has already dismissed it.
+     */
+    var firstRunNoticeShown: Boolean
+        get() = prefs.getBoolean("first_run_notice_v1", false)
+        set(value) = prefs.edit().putBoolean("first_run_notice_v1", value).apply()
 
     var customBridges: String
         get() = prefs.getString("custom_bridges", "") ?: ""

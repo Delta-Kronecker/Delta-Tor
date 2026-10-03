@@ -36,6 +36,18 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * Unwinds a transport race that the stall watchdog has given up on.
+ *
+ * Thrown from the race's progress callback, which is the only place in the poll
+ * loop that can see the stall, and caught by the attempt that started the race.
+ * It is not an error: nothing failed, the app simply decided the plan was wrong
+ * and is about to run a different one. Carrying the recovery on the exception is
+ * what keeps that decision on the same stack as the attempt it belongs to.
+ */
+private class RestartInAuto(val recovery: AppState.NoticeKind) :
+    RuntimeException("connect restarted via $recovery")
+
 class TorVpnService : VpnService() {
 
     companion object {
@@ -135,14 +147,19 @@ class TorVpnService : VpnService() {
         private const val STOPPING_MIN_MS = 3_000L
 
         /**
-         * How long an auto-mode race may stall below 100% before the snowflake
-         * advice is worth showing. See [SNOWFLAKE_ADVICE].
+         * How long the race may sit on the same bootstrap percentage before the
+         * app stops waiting and changes the plan underneath the user.
+         *
+         * A minute is chosen from the other end: this is only reachable when no
+         * runner has finished a single percent step, and Tor's own bootstrap for a
+         * working bridge clears 5% long before that. A genuinely slow but alive
+         * path is climbing the whole time, so a flat line for a full minute means
+         * nothing is coming, not that something is being slow.
          */
-        private const val SNOWFLAKE_ADVICE_AFTER_MS = 5 * 60 * 1000L
+        private const val STALL_RECOVERY_AFTER_MS = 60_000L
 
-        private const val SNOWFLAKE_ADVICE =
-            "Your current transports look blocked on this network. " +
-                "Open Settings and add Snowflake to Auto."
+        /** Title shared by every automatic-recovery notice. */
+        const val RECOVERY_TITLE = "DELTATOR CHANGED THE CONNECTION MODE"
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -154,12 +171,27 @@ class TorVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // Snowflake advisory state lives on the service rather than in locals: the
-    // transport race reports progress through a lambda, and keeping the latch
-    // here means the callback never has to reach out of its own frame.
-    private var snowflakeAdviceArmed = false
-    private var snowflakeAdviceFrom = 0L
-    private var snowflakeAdviceShown = false
+    // Stall watchdog state, reset once per connect attempt.
+    //
+    // The high-water mark rather than the latest reading is what makes this work:
+    // bootstrap percentages are not monotonic per runner -- a runner that is
+    // fetching microdescriptors can report 40, then 25 again -- so watching the
+    // latest number would reset the timer on noise and a dead race could sit
+    // there forever. Only a new maximum counts as progress.
+    private var stallBest = -1
+    private var stallSince = 0L
+    private var stallFired = false
+
+    /**
+     * Recoveries already spent in this connect, by kind.
+     *
+     * The loop that retries on a recovery is only provably finite because each
+     * kind fires once: after a switch to auto the mode rule can no longer match,
+     * and after snowflake is added the snowflake rule can no longer match. If
+     * either write silently failed, this set is what stops the two from taking
+     * turns restarting the app forever.
+     */
+    private val recoveriesSpent = mutableSetOf<AppState.NoticeKind>()
 
     /** Outstanding [holdCpu] calls, so nested windows release only when both end. */
     private var cpuHolds = 0
@@ -278,6 +310,7 @@ class TorVpnService : VpnService() {
         }
         AppState.markStarted()
         currentSession = Log.beginSession("connect")
+        recoveriesSpent.clear()
         AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
@@ -296,7 +329,31 @@ class TorVpnService : VpnService() {
         }
     }
 
+    /**
+     * Connect, and retry in auto if the user's own choice turns out to be blocked.
+     *
+     * A recovery returns from [runConnectAttempt] instead of being applied here,
+     * so the retry is a plain second turn of the loop rather than a connect
+     * re-entered from inside itself: one place owns the attempt, one owns the
+     * decision to make another, and nothing has to unwind a nested launch to get
+     * there.
+     */
     private suspend fun runConnectFlow() {
+        while (true) {
+            val recovery = runConnectAttempt() ?: return
+            applyRecovery(recovery)
+        }
+    }
+
+    /**
+     * One connect attempt against whatever the configuration says right now.
+     *
+     * Returns the [AppState.NoticeKind] of a recovery that has to be applied
+     * before trying again, or null when the attempt finished -- connected, or
+     * failed for real. Null covers the failure case because [fail] has already
+     * reported it and there is nothing left to retry.
+     */
+    private suspend fun runConnectAttempt(): AppState.NoticeKind? {
         val proxyPort = Config.proxyPort
         val proxyHost = "127.0.0.1"
 
@@ -325,17 +382,18 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Transport mode: $modeLabel")
         updateNotification("Connecting via $modeLabel \u2026", progress = true, progressValue = 0)
 
-        // Snowflake is out of auto by default, so a long race without it has a
-        // specific, actionable explanation: the transports that are racing are
-        // probably all blocked here. Surfacing that after five minutes is far
-        // more useful than staring at a progress bar that never moves.
+        // What to try if this race turns out to be going nowhere. Snowflake sits
+        // out of auto by default, so an auto race that stalls has a specific and
+        // actionable cause: the transports that are racing are probably all
+        // blocked here, and snowflake is the one that usually is not.
         val snowflakeInAuto = Config.autoTransports.contains(
             ParallelTorManager.TRANSPORT_SNOWFLAKE
         )
-        // Arm the advisory for this race only; a later connect starts over.
-        snowflakeAdviceArmed = mode == ParallelTorManager.TRANSPORT_AUTO && !snowflakeInAuto
-        snowflakeAdviceFrom = SystemClock.elapsedRealtime()
-        snowflakeAdviceShown = false
+
+        // Watchdog armed for this attempt only; a later connect starts over.
+        stallBest = -1
+        stallSince = SystemClock.elapsedRealtime()
+        stallFired = false
 
         val w = try {
             ParallelTorManager.race(
@@ -352,30 +410,50 @@ class TorVpnService : VpnService() {
                 val detail = progress.entries.joinToString("  ") { (n, p) ->
                     "$n=${if (p < 0) "FAIL" else "$p%"}"
                 }
-                if (snowflakeAdviceArmed && !snowflakeAdviceShown &&
-                    maxProg < 100 &&
-                    SystemClock.elapsedRealtime() - snowflakeAdviceFrom >= SNOWFLAKE_ADVICE_AFTER_MS
+                updateNotification(detail, progress = true, progressValue = maxProg)
+
+                // Failed runners report -1 and must not count as a high-water mark,
+                // or a race where everything died instantly would look like
+                // progress up to 0 and never trip.
+                val live = progress.values.filter { it >= 0 }.maxOrNull() ?: 0
+                if (live > stallBest) {
+                    stallBest = live
+                    stallSince = SystemClock.elapsedRealtime()
+                }
+                if (!stallFired && live < 100 &&
+                    SystemClock.elapsedRealtime() - stallSince >= STALL_RECOVERY_AFTER_MS
                 ) {
-                    // Once per race: the progress callback fires every second, so
-                    // without this latch the user would get this line over and
-                    // over for the rest of the bootstrap.
-                    snowflakeAdviceShown = true
-                    Log.w(TAG, "auto race stalled below 100% for 5 min without snowflake")
-                    AppState.update { it.copy(advisory = SNOWFLAKE_ADVICE) }
-                    updateNotification(SNOWFLAKE_ADVICE, progress = true, progressValue = maxProg)
-                } else {
-                    updateNotification(detail, progress = true, progressValue = maxProg)
+                    stallFired = true
+                    val recovery = when {
+                        mode != ParallelTorManager.TRANSPORT_AUTO -> AppState.NoticeKind.AutoRecovery
+                        !snowflakeInAuto -> AppState.NoticeKind.SnowflakeRecovery
+                        else -> null
+                    }
+                    if (recovery != null && recoveriesSpent.add(recovery)) {
+                        Log.w(
+                            TAG,
+                            "no progress past $live% for ${STALL_RECOVERY_AFTER_MS / 1000}s " +
+                                "in $mode; recovering via $recovery"
+                        )
+                        // Tear the runners down here rather than waiting for the
+                        // race to notice: stopAll bumps the generation, so the
+                        // loop unwinds on its next checkGeneration instead of
+                        // polling a set of processes that are already gone.
+                        ParallelTorManager.stopAll()
+                        throw RestartInAuto(recovery)
+                    }
                 }
             }
+        } catch (e: RestartInAuto) {
+            return e.recovery
         } catch (e: Exception) {
             fail(e.message ?: "All transports failed to bootstrap")
-            return
+            return null
         }
         activeRunner = w
-        // The race is over, so the advice has served its purpose. It must not
-        // linger on a working connection.
+        // The race is over, so the watchdog has served its purpose.
         AppState.update {
-            it.copy(transports = mapOf(w.name to 100), transport = w.name, advisory = null)
+            it.copy(transports = mapOf(w.name to 100), transport = w.name)
         }
         Log.i(TAG, "Winner transport: ${w.name} (SOCKS5 $proxyHost:${w.torSocksPort})")
 
@@ -395,12 +473,75 @@ class TorVpnService : VpnService() {
         )
         if (bridgeResult.isFailure) {
             fail(bridgeResult.exceptionOrNull()?.message ?: "Failed to start bridge")
-            return
+            return null
         }
         AppState.update { it.copy(torRunning = true) }
 
         // Step 3+4: TUN interface + tun2socks
         establishTunnel(w, proxyHost, proxyPort)
+        return null
+    }
+
+    /**
+     * Change the plan the next attempt will use, and tell the user it happened.
+     *
+     * The notice is posted before the retry starts, not after it succeeds: the
+     * retry may itself stall, and a report that only appears on success would
+     * leave the user with a connect that silently changed transports and no
+     * explanation for it. The dialog survives the retry because [AppState.Notice]
+     * is not cleared by a connect.
+     */
+    private fun applyRecovery(recovery: AppState.NoticeKind) {
+        val wasMode = Config.transportMode
+        when (recovery) {
+            AppState.NoticeKind.AutoRecovery -> {
+                Config.transportMode = ParallelTorManager.TRANSPORT_AUTO
+                Log.i(TAG, "Recovery: $wasMode stalled, switching to auto")
+            }
+            AppState.NoticeKind.SnowflakeRecovery -> {
+                Config.autoTransports =
+                    Config.autoTransports + ParallelTorManager.TRANSPORT_SNOWFLAKE
+                Log.i(TAG, "Recovery: auto stalled without snowflake, adding it to auto")
+            }
+            // Not a recovery the service can perform; posted by the UI instead.
+            AppState.NoticeKind.FirstRun -> return
+        }
+
+        // The old attempt's runners are already gone and the per-transport map
+        // describes processes that no longer exist, so clear it rather than leave
+        // the retry drawing progress bars for the dead race.
+        AppState.update {
+            it.copy(transports = emptyMap(), transport = "", error = null, connecting = true)
+        }
+        // A new session id so the retry's transport log does not interleave with
+        // the attempt the user was watching fail.
+        currentSession = Log.beginSession("connect")
+
+        AppState.postNotice(
+            recovery,
+            RECOVERY_TITLE,
+            when (recovery) {
+                AppState.NoticeKind.AutoRecovery ->
+                    "$wasMode made no progress for a minute, which on this network " +
+                        "usually means it is blocked.\n\n" +
+                        "DeltaTor stopped that attempt, switched the connection mode to " +
+                        "Auto and started again. Auto races every transport that works " +
+                        "here, so it is more likely to find one.\n\n" +
+                        "Auto is now your connection mode. If you would rather pick " +
+                        "the transport yourself again, change it in Settings."
+                AppState.NoticeKind.SnowflakeRecovery ->
+                    "The transports Auto was racing made no progress for a minute, " +
+                        "which usually means they are all blocked on this network.\n\n" +
+                        "DeltaTor stopped that attempt, added Snowflake to Auto and " +
+                        "started again. Snowflake reaches Tor through a volunteer proxy " +
+                        "in a browser, so it is often the one that still works where " +
+                        "direct bridges do not.\n\n" +
+                        "Auto now includes Snowflake for every future connect. You can " +
+                        "remove it again in Settings."
+                AppState.NoticeKind.FirstRun -> ""
+            }
+        )
+        updateNotification("Restarting in auto \u2026", progress = true, progressValue = 0)
     }
 
     /** Establish the TUN interface and tun2socks on top of the running Tor engine. */
@@ -509,8 +650,7 @@ class TorVpnService : VpnService() {
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null,
-                advisory = null
+                error = null
             )
         }
         updateNotification("Turning the VPN off \u2026", progress = true, progressValue = 0)
@@ -1099,7 +1239,7 @@ class TorVpnService : VpnService() {
         }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
-        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message, advisory = null) }
+        AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message) }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
         AppState.markStopped()
@@ -1124,8 +1264,7 @@ class TorVpnService : VpnService() {
                 connecting = false,
                 connected = false,
                 reconnecting = false,
-                error = null,
-                advisory = null
+                error = null
             )
         }
         updateNotification("Stopping", progress = true, progressValue = 0)
