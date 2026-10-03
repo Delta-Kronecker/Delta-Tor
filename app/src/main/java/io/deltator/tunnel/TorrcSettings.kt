@@ -80,49 +80,47 @@ object TorrcSettings {
     private const val KEY_TEMPLATE = "torrc_template_v5"
     private lateinit var prefs: SharedPreferences
 
-    val defaultTemplate: String = """
-        SocksPolicy accept 127.0.0.1
-        SocksPolicy reject *
+    val defaultTemplate: String = """SocksPolicy accept 127.0.0.1
+SocksPolicy reject *
 
-        CircuitPadding 0
-        ConnectionPadding 0
-        UseMicrodescriptors 1
+CircuitPadding 0
+ConnectionPadding 0
+UseMicrodescriptors 1
 
-        DormantOnFirstStartup 0
-        DormantCanceledByStartup 1
-        LearnCircuitBuildTimeout 0
-        CircuitBuildTimeout 30
-        MaxCircuitDirtiness 3600
-        NumEntryGuards 10
-        NumDirectoryGuards 6
-        MaxClientCircuitsPending 64
-        SocksTimeout 60
+DormantOnFirstStartup 0
+DormantCanceledByStartup 1
+LearnCircuitBuildTimeout 0
+CircuitBuildTimeout 30
+MaxCircuitDirtiness 3600
+NumEntryGuards 10
+NumDirectoryGuards 6
+MaxClientCircuitsPending 64
+SocksTimeout 60
 
-        ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
-        ClientBootstrapConsensusFallbackDownloadInitialDelay 0
-        ClientBootstrapConsensusAuthorityOnlyDownloadInitialDelay 0
-        ClientBootstrapConsensusMaxInProgressTries 6
+ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
+ClientBootstrapConsensusFallbackDownloadInitialDelay 0
+ClientBootstrapConsensusAuthorityOnlyDownloadInitialDelay 0
+ClientBootstrapConsensusMaxInProgressTries 6
 
-        FetchDirInfoEarly 1
-        FetchDirInfoExtraEarly 1
+FetchDirInfoEarly 1
+FetchDirInfoExtraEarly 1
 
-        PathsNeededToBuildCircuits 0.25
+PathsNeededToBuildCircuits 0.25
 
-        DisableDebuggerAttachment 1
-        SafeLogging 1
+DisableDebuggerAttachment 1
+SafeLogging 1
 
-        ConfluxEnabled 0
+ConfluxEnabled 0
 
-        MaxCircuitDirtiness 600
-        NewCircuitPeriod 10
-        SocksTimeout 30
-        CircuitsAvailableTimeout 4320
-        CircuitStreamTimeout 60
-        CircuitBuildTimeout 40
-        NumPrimaryGuards 15
-        Schedulers Vanilla
-        MaxClientCircuitsPending 128
-    """.trimIndent()
+MaxCircuitDirtiness 600
+NewCircuitPeriod 10
+SocksTimeout 30
+CircuitsAvailableTimeout 4320
+CircuitStreamTimeout 60
+CircuitBuildTimeout 40
+NumPrimaryGuards 15
+Schedulers Vanilla
+MaxClientCircuitsPending 128"""
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
