@@ -164,6 +164,12 @@ class TorVpnService : VpnService() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var vpnInterface: ParcelFileDescriptor? = null
+
+    /**
+     * Why the last [establishVpnInterface] attempt returned nothing, when it can
+     * put it better than "it failed". Null once an attempt succeeds.
+     */
+    private var establishFailureReason: String? = null
     private var activeRunner: TorRunner? = null
     private var statsJob: Job? = null
     private var linkWatchJob: Job? = null
@@ -584,7 +590,10 @@ class TorVpnService : VpnService() {
 
         vpnInterface = establishVpnInterface()
         if (vpnInterface == null) {
-            fail("Failed to establish VPN interface")
+            // The builder knows more about why it gave up than a generic failure
+            // string does -- "no apps picked" and "the interface could not be
+            // created" are different problems for the person reading this.
+            fail(establishFailureReason ?: "Failed to establish VPN interface")
             return
         }
 
@@ -731,6 +740,9 @@ class TorVpnService : VpnService() {
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
+        // Cleared per attempt so a stale reason from an earlier connect can never
+        // be reported for a later one.
+        establishFailureReason = null
         // Guard, not the feature itself. establishTunnel returns before ever
         // calling this when proxy mode is on, and it is what makes the proxy
         // branch a single early return rather than a condition threaded through
@@ -777,19 +789,36 @@ class TorVpnService : VpnService() {
             // QUERY_ALL_PACKAGES visibility anyway and would break on any app
             // installed while the list was built.
             //
+            // The default route is added in every mode, VPN-only included. The
+            // allow-list is what keeps the other apps out, not the absence of a
+            // route: Builder applies the per-app filter when it captures, and the
+            // allowed apps still need a route to reach the tunnel at all. Leaving
+            // the route out of the VPN-only branch (commit 86c2604) gave that
+            // branch nothing to route, while its no-picks fallback put the blanket
+            // route back and tunnelled the whole device -- which is why the mode
+            // looked like it did nothing no matter what was picked.
+            //
             // A package uninstalled since the list was written makes the builder
             // throw, and one bad entry must not cost the user the whole tunnel, so
-            // each is applied on its own and the rest still go through.
+            // each is applied on its own and the rest still go through. If that
+            // leaves nothing routable in VPN-only mode the connect is refused with
+            // a reason instead of quietly capturing every app.
+            val picks = Config.splitTunnelSelected.filter { it != packageName }
+            val vpnOnly = Config.splitTunnelMode == Config.SPLIT_MODE_VPN
+            // Unconditional, so the log can tell "switch off" apart from "on but
+            // read wrong". With the switch off there was nothing printed at all,
+            // and a silent log is indistinguishable from a mode that does nothing.
+            Log.i(
+                TAG,
+                "Split tunnel: enabled=${Config.splitTunnelEnabled} mode=${Config.splitTunnelMode} " +
+                    "picks=${Config.splitTunnelSelected.size} routable=${picks.size}"
+            )
             if (Config.splitTunnelEnabled) {
-                val picked = Config.splitTunnelSelected.filter { it != packageName }
                 var applied = 0
                 var failed = 0
-                if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
-                    Log.i(TAG, "Split tunnel: VPN-only mode, adding allowlist for ${picked.size} pick(s)")
-                }
-                for (pkg in picked) {
+                for (pkg in picks) {
                     try {
-                        if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
+                        if (vpnOnly) {
                             builder.addAllowedApplication(pkg)
                         } else {
                             builder.addDisallowedApplication(pkg)
@@ -797,43 +826,37 @@ class TorVpnService : VpnService() {
                         applied++
                     } catch (e: Exception) {
                         failed++
-                        Log.w(TAG, "Split tunnel: cannot route $pkg, skipping it", e)
+                        Log.w(TAG, "Split tunnel: cannot route $pkg: ${e.message}", e)
                     }
                 }
-                if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
-                    if (applied == 0) {
-                        builder.addRoute(VPN_ROUTE, 0)
-                        Log.w(
-                            TAG,
-                            "Split tunnel: VPN mode with nothing picked, so every app " +
-                                "is captured anyway -- this behaves like split tunnelling off"
-                        )
-                    } else {
-                        // Only route traffic for allowed apps. Do not add a blanket
-                        // route; adding one can cause traffic from non-allowed apps
-                        // to be routed into the tunnel depending on ROM behavior.
-                        // Routes are still needed for allowed apps to reach Tor via
-                        // TUN in the normal case. But in practice, many VPN
-                        // implementations rely on the default behavior: allowed apps
-                        // get their traffic routed through TUN. Let us try without
-                        // blanket route first.
-                        builder.addRoute(VPN_ROUTE, 0)
-                        Log.i(
-                            TAG,
-                            "Split tunnel: VPN-only, $applied app(s) through Tor, " +
-                                "everything else direct, $failed skipped"
-                        )
-                    }
-                } else {
-                    builder.addRoute(VPN_ROUTE, 0)
-                    Log.i(
-                        TAG,
-                        "Split tunnel: $applied app(s) bypass Tor, all others tunnelled, " +
+                builder.addRoute(VPN_ROUTE, 0)
+                Log.i(
+                    TAG,
+                    if (vpnOnly) {
+                        "Split tunnel: VPN-only, $applied of ${picks.size} pick(s) through Tor " +
+                            "[${picks.take(5).joinToString()}], everything else direct, " +
                             "$failed skipped"
-                    )
+                    } else {
+                        "Split tunnel: $applied of ${picks.size} pick(s) bypass Tor " +
+                            "[${picks.take(5).joinToString()}], all others tunnelled, " +
+                            "$failed skipped"
+                    }
+                )
+                if (vpnOnly && applied == 0) {
+                    val reason = if (picks.isEmpty()) {
+                        "VPN-only split tunnelling has no apps picked, so nothing would go " +
+                            "through Tor. Pick at least one app, or let picked apps bypass Tor."
+                    } else {
+                        "None of the ${picks.size} app(s) picked for VPN-only split tunnelling " +
+                            "could be routed, so nothing would go through Tor. Re-pick them."
+                    }
+                    establishFailureReason = reason
+                    Log.e(TAG, reason)
+                    return null
                 }
             } else {
                 builder.addRoute(VPN_ROUTE, 0)
+                Log.i(TAG, "Split tunnel: off, every app goes through Tor")
             }
             builder.setBlocking(false)
             builder.establish()
