@@ -735,7 +735,11 @@ class TorVpnService : VpnService() {
         // clean failure: the caller reports "Failed to establish VPN interface"
         // and stops, rather than handing a null descriptor to tun2socks.
         if (Config.proxyOnlyMode) {
-            Log.i(TAG, "Proxy mode: not establishing a TUN, SOCKS5 stays on $proxyHost:$proxyPort")
+            // The listener is the loopback address on the configured port, the
+            // same values connect() passes to establishTunnel. They are local
+            // variables there, not properties, so this repeats them rather than
+            // naming something that does not exist at this scope.
+            Log.i(TAG, "Proxy mode: not establishing a TUN, SOCKS5 stays on 127.0.0.1:${Config.proxyPort}")
             return null
         }
         return try {

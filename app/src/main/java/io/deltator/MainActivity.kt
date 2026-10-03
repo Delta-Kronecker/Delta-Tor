@@ -98,7 +98,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.ClipboardManager
+import androidx.compose.ui.platform.ClipboardManager as ComposeClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
@@ -2546,8 +2546,10 @@ private fun LazyListScope.AdvancedItems(
     // Read by the composable caller and passed in. This function is a
     // LazyListScope builder, not a @Composable one, so it cannot call
     // LocalClipboardManager.current itself -- and cannot do so inside a
-    // clickable lambda either, since that lambda is not composable.
-    clipboard: ClipboardManager,
+    // clickable lambda either, since that lambda is not composable. Aliased
+    // because android.content.ClipboardManager is imported at the top of this
+    // file for the connection-log copy, and two same-named imports are ambiguous.
+    clipboard: ComposeClipboardManager,
     onUpdateBridges: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenSplitTunnel: () -> Unit
