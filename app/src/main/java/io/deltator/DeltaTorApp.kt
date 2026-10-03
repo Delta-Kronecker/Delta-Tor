@@ -131,20 +131,67 @@ object Config {
         set(value) = prefs.edit().putBoolean("proxy_only_mode", value).apply()
 
     /**
-     * Which installed applications bypass the tunnel, by package name.
+     * Whether per-app routing is on at all.
      *
-     * Empty means "everything goes through Tor", which is the only safe default:
-     * a split-tunnel list that starts populated would silently leak the traffic of
-     * whatever the user did not look at. An app named here is excluded with
-     * VpnService.Builder.addDisallowedApplication, so its traffic leaves the
-     * device directly and unencrypted.
-     *
-     * Persisted as a set because the list is consulted on every connect and
-     * rewritten in full whenever it changes; there is no incremental case.
+     * Off means one thing and one thing only: every app on the device goes
+     * through Tor. That is the state the app has always been in, and it is the
+     * default, because the alternative -- a device where traffic quietly escapes
+     * Tor because a list was populated at some point -- is the failure this
+     * whole feature has to avoid. The user has to switch it on deliberately
+     * before a single app can be routed around the tunnel.
      */
-    var splitTunnelExcluded: Set<String>
-        get() = prefs.getStringSet("split_tunnel_excluded", emptySet()) ?: emptySet()
-        set(value) = prefs.edit().putStringSet("split_tunnel_excluded", value).apply()
+    var splitTunnelEnabled: Boolean
+        get() = prefs.getBoolean("split_tunnel_enabled", false)
+        set(value) = prefs.edit().putBoolean("split_tunnel_enabled", value).apply()
+
+    /** Which side of the tunnel the picked apps land on. */
+    const val SPLIT_MODE_VPN = "vpn"
+    const val SPLIT_MODE_BYPASS = "bypass"
+
+    /**
+     * What [splitTunnelSelected] means: are those apps the ones that go through
+     * Tor, or the ones that stay out of it.
+     *
+     * One global choice rather than a per-app switch, because the answer is not
+     * really about any single app. It is which group the user is building. With
+     * BYPASS the picked apps are the exceptions and everything else is tunnelled;
+     * with VPN they are the only apps tunnelled and everything else connects
+     * directly. Asking per app instead would mean a user could end up with a
+     * device where nothing is protected without ever having asked for that.
+     */
+    var splitTunnelMode: String
+        get() = prefs.getString("split_tunnel_mode", SPLIT_MODE_BYPASS)
+            ?.takeIf { it == SPLIT_MODE_VPN || it == SPLIT_MODE_BYPASS }
+            ?: SPLIT_MODE_BYPASS
+        set(value) = prefs.edit().putString("split_tunnel_mode", value).apply()
+
+    /**
+     * The apps the user picked, by package name. Meaning depends on
+     * [splitTunnelMode]; see there.
+     *
+     * Persisted as a set because it is consulted on every connect and rewritten
+     * in full whenever it changes.
+     *
+     * Reads the pre-0d3f4aa bypass list once, so anyone who set exclusions
+     * before this shape existed keeps them: the old list was already the BYPASS
+     * case, and the feature turning itself on with their apps in it is the
+     * faithful reading of what they had configured.
+     */
+    var splitTunnelSelected: Set<String>
+        get() {
+            val current = prefs.getStringSet("split_tunnel_selected", null)
+            if (current != null) return current
+            val legacy = prefs.getStringSet("split_tunnel_excluded", null)
+            if (legacy.isNullOrEmpty()) return emptySet()
+            prefs.edit()
+                .putStringSet("split_tunnel_selected", legacy)
+                .putBoolean("split_tunnel_enabled", true)
+                .putString("split_tunnel_mode", SPLIT_MODE_BYPASS)
+                .remove("split_tunnel_excluded")
+                .apply()
+            return legacy
+        }
+        set(value) = prefs.edit().putStringSet("split_tunnel_selected", value).apply()
 
     var customBridges: String
         get() = prefs.getString("custom_bridges", "") ?: ""

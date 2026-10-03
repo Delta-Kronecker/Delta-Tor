@@ -755,25 +755,67 @@ class TorVpnService : VpnService() {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to exclude self from VPN", e)
             }
-            // Split tunnelling: every app the user put on the bypass list is
-            // excluded the same way this app excludes itself. A package that was
-            // uninstalled since the list was written makes the builder throw, and
-            // one bad entry must not cost the user the whole tunnel, so each is
-            // applied on its own and the rest still go through.
-            var excluded = 1
-            var failed = 0
-            for (pkg in Config.splitTunnelExcluded) {
-                if (pkg == packageName) continue
-                try {
-                    builder.addDisallowedApplication(pkg)
-                    excluded++
-                } catch (e: Exception) {
-                    failed++
-                    Log.w(TAG, "Split tunnel: cannot exclude $pkg, skipping it", e)
+            // Split tunnelling, off: the device behaves exactly as it always has and
+            // every app goes through Tor. No allow or disallow entry is added
+            // beyond this app's own exclusion.
+            //
+            // On, the global mode decides what the user's picks mean. BYPASS
+            // excludes them, so they are the exceptions and the rest is
+            // tunnelled. VPN does the opposite: it allows them and nothing else,
+            // so they are the only apps tunnelled and everything else reaches
+            // the internet directly. That is the platform's own allow-list
+            // semantics rather than an inversion done by hand -- enumerating
+            // every installed package to subtract the picks would need the same
+            // QUERY_ALL_PACKAGES visibility anyway and would break on any app
+            // installed while the list was built.
+            //
+            // A package uninstalled since the list was written makes the builder
+            // throw, and one bad entry must not cost the user the whole tunnel, so
+            // each is applied on its own and the rest still go through.
+            if (Config.splitTunnelEnabled) {
+                val picked = Config.splitTunnelSelected.filter { it != packageName }
+                var applied = 0
+                var failed = 0
+                for (pkg in picked) {
+                    try {
+                        if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
+                            builder.addAllowedApplication(pkg)
+                        } else {
+                            builder.addDisallowedApplication(pkg)
+                        }
+                        applied++
+                    } catch (e: Exception) {
+                        failed++
+                        Log.w(TAG, "Split tunnel: cannot route $pkg, skipping it", e)
+                    }
                 }
-            }
-            if (excluded > 1 || failed > 0) {
-                Log.i(TAG, "Split tunnel: $excluded app(s) bypass the tunnel, $failed skipped")
+                if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
+                    if (applied == 0) {
+                        // Worth being loud about, because the platform cannot
+                        // express "let nothing through". With no allow entry at
+                        // all, Builder captures every app, so an empty pick list
+                        // in VPN mode is not a device where nothing is protected:
+                        // it is the same device as split tunnelling off. Saying so
+                        // here keeps the log honest next to the UI warning.
+                        Log.w(
+                            TAG,
+                            "Split tunnel: VPN mode with nothing picked, so every app " +
+                                "is captured anyway -- this behaves like split tunnelling off"
+                        )
+                    } else {
+                        Log.i(
+                            TAG,
+                            "Split tunnel: VPN-only, $applied app(s) through Tor, " +
+                                "everything else direct, $failed skipped"
+                        )
+                    }
+                } else {
+                    Log.i(
+                        TAG,
+                        "Split tunnel: $applied app(s) bypass Tor, all others tunnelled, " +
+                            "$failed skipped"
+                    )
+                }
             }
             builder.setBlocking(false)
             builder.establish()

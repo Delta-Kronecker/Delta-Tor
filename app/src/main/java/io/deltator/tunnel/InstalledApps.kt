@@ -43,8 +43,12 @@ object InstalledApps {
      * The load is disk- and binder-heavy, so callers should keep it off the main
      * thread. It is not cached: a cache would have to be invalidated on install
      * and uninstall, and this screen is opened a few times a session at most.
+     *
+     * It takes no routing arguments. What the user has picked is the screen's
+     * business, and duplicating the Config lookups here would only give the same
+     * answer from two places that could drift apart.
      */
-    fun load(context: Context, exclude: Set<String>): List<App> {
+    fun load(context: Context): List<App> {
         val pm = context.packageManager
         val self = context.packageName
         val out = ArrayList<App>(128)
@@ -91,7 +95,7 @@ object InstalledApps {
         }
 
         out.sortWith(compareBy({ !it.system }, { it.label.lowercase() }))
-        AppLog.i("AppList", "Listed ${out.size} launchable apps (${exclude.size} on the bypass list)")
+        AppLog.i("AppList", "Listed ${out.size} launchable apps")
         return out
     }
 }
