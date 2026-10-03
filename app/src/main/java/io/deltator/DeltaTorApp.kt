@@ -113,6 +113,15 @@ object Config {
         set(value) = prefs.edit().putString("transport_mode", value).apply()
 
     /**
+     * Whether the one-time "your first connect is the slow one" explainer has been
+     * shown. Persisted rather than held in memory so it cannot come back on the
+     * next launch after the user has already dismissed it.
+     */
+    var firstRunNoticeShown: Boolean
+        get() = prefs.getBoolean("first_run_notice_v1", false)
+        set(value) = prefs.edit().putBoolean("first_run_notice_v1", value).apply()
+
+    /**
      * Run Tor as a plain local SOCKS5 proxy and never bring up the VPN interface.
      *
      * Off by default, because the VPN is the reason most people install this: with
