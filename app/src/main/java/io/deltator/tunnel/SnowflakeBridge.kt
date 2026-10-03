@@ -586,13 +586,24 @@ object SnowflakeBridge {
             appendLine("Log info stdout")
             // Webtunnel/meek add HTTP overhead per round trip — need generous
             // timeout for the multi-hop CREATE→EXTEND→EXTEND circuit handshake.
-            // Other transports use the default 60s.
+            //
+            // This line does not actually reach Tor. The user template is
+            // appended after this block and ends with its own CircuitBuildTimeout,
+            // so last-wins overrides whatever is chosen here. Kept as-is rather
+            // than deleted so the intent is still visible, but a per-transport
+            // timeout has to be enforced from the template or the control port,
+            // not from here.
             val circuitTimeout = if (hasSlowTransport) 120 else 60
             appendLine("CircuitBuildTimeout $circuitTimeout")
             appendLine("LearnCircuitBuildTimeout 0")
             // Shorter keepalive to prevent HTTP-based transport idle timeouts
             // from closing the bridge connection between keepalive cells
             appendLine("KeepalivePeriod 30")
+            // A single guard is the point of a Snowflake runner: one long-lived
+            // WebRTC relay, so the circuit sticks to it instead of hopping
+            // between guards that all have to re-negotiate. It is also inert,
+            // because the template that follows declares NumEntryGuards 10 and
+            // wins. To make this stick it has to be the last writer.
             appendLine("NumEntryGuards 1")
             appendLine("ClientUseIPv4 1")
             // Must allow IPv6: webtunnel bridges use 2001:db8:: placeholder
