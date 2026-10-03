@@ -76,6 +76,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -101,6 +102,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ClipboardManager as ComposeClipboardManager
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -109,6 +111,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -194,35 +197,39 @@ class MainActivity : ComponentActivity() {
         // No title. The heading lines that used to sit above this body said the
         // same thing three times in three languages, and the body below already
         // opens with the instruction in all three.
-        AppState.postNotice(
+        AppState.postNoticeBlocks(
             AppState.NoticeKind.FirstRun,
             "",
-            firstRunNoticeBody()
+            firstRunNoticeBlocks()
         )
     }
 
-    private fun firstRunNoticeBody(): String = buildString {
-        appendLine(
+    private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
+        AppState.NoticeBlock(
             "Please be patient on your first connection\n" +
                 "After a successful connection, DeltaTor remembers the connection paths " +
                 "and adds them as «Memory Mode»\n" +
                 "As a result, the time needed to connect will decrease in later attempts"
-        )
-        appendLine()
-        appendLine(
+        ),
+        // Marked right-to-left because the text is Persian. Without it this
+        // block is laid out left-to-right and its lines come out visually
+        // reordered: the bidi algorithm takes the paragraph direction from the
+        // first strong character it finds, not from the language of the text,
+        // so the bracketed term and the full stop end up on the wrong side.
+        AppState.NoticeBlock(
             "لطفاً در اولین اتصال صبور باشید.\n" +
                 "پس از یک اتصال موفق، دلتاتور مسیرهای اتصال را به‌خاطر می‌سپارد و آن‌ها را به «حالت حافظه» اضافه می‌کند.\n" +
-                "در نتیجه، زمان لازم برای اتصال در تلاش‌های بعدی کاهش خواهد یافت."
-        )
-        appendLine()
-        append(
+                "در نتیجه، زمان لازم برای اتصال در تلاش‌های بعدی کاهش خواهد یافت.",
+            rtl = true
+        ),
+        AppState.NoticeBlock(
             "Пожалуйста, будьте терпеливы при первом подключении\n" +
                 "После успешного подключения DeltaTor запоминает пути подключения и " +
                 "добавляет их в режим «памяти»\n" +
                 "В результате время, необходимое для подключения, сократится при следующих " +
                 "попытках"
         )
-    }
+    )
 
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -558,14 +565,38 @@ private fun NoticeDialog(
                 }
             }
             Spacer(Modifier.height(14.dp))
-            Text(
-                notice.body,
+            // One Text per block rather than the whole body as one string, so a
+            // block written right-to-left is laid out right-to-left. A single Text
+            // resolves the paragraph direction from its own content, and a body
+            // that mixes English, Persian and Russian resolves to whichever
+            // script happens to come first, which lays the other two out wrong.
+            Column(
                 modifier = Modifier
                     .heightIn(max = 420.dp)
-                    .verticalScroll(rememberScrollState()),
-                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
-                color = DeltaTor.Text
-            )
+                    .verticalScroll(rememberScrollState())
+            ) {
+                notice.blocks.forEachIndexed { index, block ->
+                    if (index > 0) Spacer(Modifier.height(14.dp))
+                    // The direction has to be provided to the Text rather than
+                    // set on it: TextAlign.Start resolves against the ambient
+                    // LayoutDirection, so the two have to be changed together.
+                    CompositionLocalProvider(
+                        if (block.rtl) {
+                            LocalLayoutDirection provides LayoutDirection.Rtl
+                        } else {
+                            LocalLayoutDirection provides LayoutDirection.Ltr
+                        }
+                    ) {
+                        Text(
+                            block.text,
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start,
+                            style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                            color = DeltaTor.Text
+                        )
+                    }
+                }
+            }
             Spacer(Modifier.height(20.dp))
             NoticeButton(
                 label = "OK",
