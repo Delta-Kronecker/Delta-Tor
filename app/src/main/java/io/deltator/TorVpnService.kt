@@ -753,6 +753,12 @@ class TorVpnService : VpnService() {
                 .addDnsServer(DEFAULT_DNS)
                 .addRoute(VPN_ROUTE, 0)
             // Exclude our own app so Tor/Snowflake sockets go direct (not through TUN)
+            // In both modes our own traffic must stay outside the VPN interface,
+            // because Tor listens on 127.0.0.1 and the interface is what would
+            // capture loopback traffic otherwise. In allowlist mode (VPN-only) we
+            // do not put ourselves on the allowlist, so we are bypassed anyway;
+            // keeping this explicit avoids relying on that detail across Android
+            // versions.
             try {
                 builder.addDisallowedApplication(packageName)
             } catch (e: Exception) {
@@ -779,6 +785,9 @@ class TorVpnService : VpnService() {
                 val picked = Config.splitTunnelSelected.filter { it != packageName }
                 var applied = 0
                 var failed = 0
+                if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
+                    Log.i(TAG, "Split tunnel: VPN-only mode, adding allowlist for ${picked.size} pick(s)")
+                }
                 for (pkg in picked) {
                     try {
                         if (Config.splitTunnelMode == Config.SPLIT_MODE_VPN) {
