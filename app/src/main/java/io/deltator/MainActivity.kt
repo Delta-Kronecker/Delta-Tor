@@ -124,23 +124,61 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The one-time first-run explainer.
+ * The one-time first-run explainer, in the three languages this app is read in.
  *
- * Persian only, and deliberately short. The first thing this screen has to do is
- * stop the user from assuming the app is stuck, so the copy stays on that one
- * point: the first connection is slow, and it is slow for a stated reason that
- * resolves on its own. The earlier version of this explained the same thing in
- * three languages across six paragraphs, which turned a reassurance into a wall
- * of text to get past before the first tap.
+ * All three are shown, English first, rather than picked from the system locale.
+ * That is a deliberate trade: the app ships no translation resources at all, so a
+ * locale-selected string would fall back to English for everyone except the two
+ * locales someone remembered to write, which is the worst outcome -- a user who
+ * cannot read the one language they picked gets English, and a user who cannot
+ * read English gets a screen they have to guess at. Showing all three means the
+ * text is readable in whichever of the three the reader knows, and costs nothing
+ * but a scroll.
+ *
+ * Three lines per language, not three paragraphs. The screen has one job: stop
+ * the user reading a slow first connect as a hang. It only has to say be patient,
+ * be slower now, faster later. An earlier version explained that at length in
+ * each language and turned a reassurance into a wall of text to get past before
+ * the first tap, which is the wrong first impression on the one screen that
+ * decides whether they keep going.
+ *
+ * Kept as one function per field so the three stay in step: a claim added to one
+ * language and forgotten in the other two is the failure mode here.
  *
  * Inline rather than in strings.xml because the app keeps its user-facing strings
  * inline throughout; see the rest of this file.
  */
-private fun firstRunNoticeBody(): String =
-    "لطفا در اولین اتصال صبور باشید\n" +
-        "پس از یک اتصال موفق دلتاتور مسیر های اتصال را به یاد می سپارد و آن‌ها را " +
-        "به عنوان «حالت حافظه» اضافه می‌کند\n" +
-        "در نتیجه در تلاش های بعدی زمان لازم برای اتصال کاهش خواهد یافت"
+private fun firstRunNoticeTitle(): String = buildString {
+    appendLine("Before your first connect")
+    appendLine()
+    appendLine("پیش از اولین اتصال")
+    appendLine()
+    append("Перед первым подключением")
+}
+
+private fun firstRunNoticeBody(): String = buildString {
+    appendLine(
+        "Please be patient on your first connection\n" +
+            "After a successful connection, DeltaTor remembers the connection paths " +
+            "and adds them as «Memory Mode»\n" +
+            "As a result, the time needed to connect will decrease in later attempts"
+    )
+    appendLine()
+    appendLine(
+        "لطفا در اولین اتصال صبور باشید\n" +
+            "پس از یک اتصال موفق دلتاتور مسیر های اتصال را به یاد می سپارد و آن‌ها " +
+            "را به عنوان «حالت حافظه» اضافه می‌کند\n" +
+            "در نتیجه در تلاش های بعدی زمان لازم برای اتصال کاهش خواهد یافت"
+    )
+    appendLine()
+    append(
+        "Пожалуйста, будьте терпеливы при первом подключении\n" +
+            "После успешного подключения DeltaTor запоминает пути подключения и " +
+            "добавляет их в режим «памяти»\n" +
+            "В результате время, необходимое для подключения, сократится при следующих " +
+            "попытках"
+    )
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -196,7 +234,7 @@ class MainActivity : ComponentActivity() {
         Config.firstRunNoticeShown = true
         AppState.postNotice(
             AppState.NoticeKind.FirstRun,
-            "پیش از اولین اتصال",
+            firstRunNoticeTitle(),
             firstRunNoticeBody()
         )
     }
