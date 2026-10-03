@@ -503,6 +503,8 @@ class TorVpnService : VpnService() {
                     Config.autoTransports + ParallelTorManager.TRANSPORT_SNOWFLAKE
                 Log.i(TAG, "Recovery: auto stalled without snowflake, adding it to auto")
             }
+            // Not a recovery the service can perform; posted by the UI instead.
+            AppState.NoticeKind.FirstRun -> return
         }
 
         // The old attempt's runners are already gone and the per-transport map
@@ -527,6 +529,7 @@ class TorVpnService : VpnService() {
                         "here, so it is more likely to find one.\n\n" +
                         "Auto is now your connection mode. If you would rather pick " +
                         "the transport yourself again, change it in Settings."
+                AppState.NoticeKind.FirstRun -> ""
                 AppState.NoticeKind.SnowflakeRecovery ->
                     "The transports Auto was racing made no progress for a minute, " +
                         "which usually means they are all blocked on this network.\n\n" +

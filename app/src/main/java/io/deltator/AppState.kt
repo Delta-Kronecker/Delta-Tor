@@ -23,7 +23,10 @@ object AppState {
          * or left the choice to the app and the app's own default set was not
          * enough here.
          */
-        SnowflakeRecovery
+        SnowflakeRecovery,
+
+        /** One-time explainer shown the first time the app is ever opened. */
+        FirstRun
     }
 
     /**

@@ -151,6 +151,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
+        maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
@@ -177,6 +178,56 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    /**
+     * Tell a first-time user why their first connect is the slow one, once.
+     *
+     * The flag is written before the notice is posted rather than when it is
+     * dismissed, so a rotation or a process death mid-dialog cannot turn it into a
+     * dialog that reappears every launch until the user happens to survive one
+     * long enough to close it.
+     */
+    private fun maybeShowFirstRunNotice() {
+        if (Config.firstRunNoticeShown) return
+        Config.firstRunNoticeShown = true
+        AppState.postNotice(
+            AppState.NoticeKind.FirstRun,
+            firstRunNoticeTitle(),
+            firstRunNoticeBody()
+        )
+    }
+
+    private fun firstRunNoticeTitle(): String = buildString {
+        appendLine("Before your first connect")
+        appendLine()
+        appendLine("پیش از اولین اتصال")
+        appendLine()
+        append("Перед первым подключением")
+    }
+
+    private fun firstRunNoticeBody(): String = buildString {
+        appendLine(
+            "Please be patient on your first connection\n" +
+                "After a successful connection, DeltaTor remembers the connection paths " +
+                "and adds them as «Memory Mode»\n" +
+                "As a result, the time needed to connect will decrease in later attempts"
+        )
+        appendLine()
+        appendLine(
+            "لطفا در اولین اتصال صبور باشید\n" +
+                "پس از یک اتصال موفق دلتاتور مسیر های اتصال را به یاد می سپارد و آن‌ها " +
+                "را به عنوان «حالت حافظه» اضافه می‌کند\n" +
+                "در نتیجه در تلاش های بعدی زمان لازم برای اتصال کاهش خواهد یافت"
+        )
+        appendLine()
+        append(
+            "Пожалуйста, будьте терпеливы при первом подключении\n" +
+                "После успешного подключения DeltaTor запоминает пути подключения и " +
+                "добавляет их в режим «памяти»\n" +
+                "В результате время, необходимое для подключения, сократится при следующих " +
+                "попытках"
+        )
     }
 
     private fun requestNotificationPermissionIfNeeded() {
