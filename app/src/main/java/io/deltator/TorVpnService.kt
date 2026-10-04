@@ -846,17 +846,41 @@ class TorVpnService : VpnService() {
                 .setMtu(VPN_MTU)
                 .addAddress(VPN_ADDRESS, 32)
                 .addDnsServer(DEFAULT_DNS)
-            // Exclude our own app so Tor/Snowflake sockets go direct (not through TUN)
-            // In both modes our own traffic must stay outside the VPN interface,
-            // because Tor listens on 127.0.0.1 and the interface is what would
-            // capture loopback traffic otherwise. In allowlist mode (VPN-only) we
-            // do not put ourselves on the allowlist, so we are bypassed anyway;
-            // keeping this explicit avoids relying on that detail across Android
-            // versions.
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to exclude self from VPN", e)
+            val picks = Config.splitTunnelSelected.filter { it != packageName }
+            val vpnOnly = Config.splitTunnelMode == Config.SPLIT_MODE_VPN
+            val usingAllowList = Config.splitTunnelEnabled && vpnOnly
+            // Keep this app's own traffic off the tunnel, which it must be in every
+            // mode: Tor listens on 127.0.0.1 and the interface is what would capture
+            // the loopback traffic otherwise.
+            //
+            // Not by asking to be excluded when an allow-list is in use, because the
+            // platform carries only one of the two lists. VpnService$Builder throws
+            // UnsupportedOperationException("addDisallowedApplication already
+            // called") from the first addAllowedApplication after a disallow entry
+            // exists, so an exclusion added here made every VPN-only pick fail. On a
+            // non-empty allow-list this app is excluded anyway by not being on it:
+            // the allow-list is what decides who uses the VPN, not the route.
+            if (usingAllowList) {
+                Log.i(
+                    TAG,
+                    tunSection {
+                        line(
+                            "self",
+                            "$packageName kept off the tunnel by not being allow-listed"
+                        )
+                    }
+                )
+            } else {
+                try {
+                    builder.addDisallowedApplication(packageName)
+                    Log.i(TAG, tunSection { line("self", "$packageName disallowed from the VPN") })
+                } catch (e: Exception) {
+                    Log.e(
+                        TAG,
+                        tunSection { line("self", "could not be excluded: ${e.javaClass.name}: ${e.message}") },
+                        e
+                    )
+                }
             }
             // Split tunnelling, off: the device behaves exactly as it always has and
             // every app goes through Tor. No allow or disallow entry is added
@@ -886,8 +910,7 @@ class TorVpnService : VpnService() {
             // each is applied on its own and the rest still go through. If that
             // leaves nothing routable in VPN-only mode the connect is refused with
             // a reason instead of quietly capturing every app.
-            val picks = Config.splitTunnelSelected.filter { it != packageName }
-            val vpnOnly = Config.splitTunnelMode == Config.SPLIT_MODE_VPN
+            //
             // Unconditional, so the log can tell "switch off" apart from "on but
             // read wrong". With the switch off there was nothing printed at all,
             // and a silent log is indistinguishable from a mode that does nothing.
