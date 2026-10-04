@@ -326,6 +326,9 @@ class TorVpnService : VpnService() {
         currentSession = Log.beginSession("connect")
         recoveriesSpent.clear()
         AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "", socksEndpoint = "") }
+        // Published because this is the connect the drawer will be describing,
+        // and a recovery may have changed it since the drawer was last open.
+        AppState.setMode(Config.transportMode)
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
 
@@ -519,6 +522,9 @@ class TorVpnService : VpnService() {
         when (recovery) {
             AppState.NoticeKind.AutoRecovery -> {
                 Config.transportMode = ParallelTorManager.TRANSPORT_AUTO
+                // The drawer has to follow this: it holds its own copy of the
+                // mode, and the app is about to connect with the new one.
+                AppState.setMode(Config.transportMode)
                 Log.i(TAG, "Recovery: $wasMode stalled, switching to auto")
             }
             // Not a recovery the service can perform; posted by the UI instead.

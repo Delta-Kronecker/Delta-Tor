@@ -144,6 +144,27 @@ object AppState {
     private val _socksEndpoint = MutableStateFlow("")
     val socksEndpoint: StateFlow<String> = _socksEndpoint.asStateFlow()
 
+    /**
+     * The connection mode the app is really using, which is not always the one
+     * the drawer last showed.
+     *
+     * Auto recovery switches the mode to auto by itself, from the service, while
+     * the drawer is sitting there holding its own copy of the choice. The form is
+     * remembered, so without this the dropdown went on showing the mode that was
+     * replaced while the app connected with the new one -- a settings screen that
+     * is wrong about the only thing it is for.
+     *
+     * Written by whoever changes the mode, which is two places: the form, which
+     * writes the preference and this together, and the service, which changes the
+     * preference after a recovery.
+     */
+    private val _mode = MutableStateFlow("")
+    val mode: StateFlow<String> = _mode.asStateFlow()
+
+    fun setMode(mode: String) {
+        if (_mode.value != mode) _mode.value = mode
+    }
+
     private val _bridgeState = MutableStateFlow(BridgeState())
     val bridgeState: StateFlow<BridgeState> = _bridgeState.asStateFlow()
 
