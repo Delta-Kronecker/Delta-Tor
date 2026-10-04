@@ -5,9 +5,11 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.VpnService
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import android.os.SystemClock
@@ -550,6 +552,87 @@ class TorVpnService : VpnService() {
         updateNotification("Restarting in auto \u2026", progress = true, progressValue = 0)
     }
 
+    /**
+     * One line of the tun routing section, prefixed so the whole section can be
+     * pulled out of a log with a single grep.
+     *
+     * Routing decisions are made from state that lives in three places -- the
+     * preferences, the package manager and the builder -- and a wrong decision
+     * is invisible unless all three are in the same place. They are gathered
+     * under one prefix for that reason rather than being logged where they come
+     * up, which would scatter them across unrelated lines.
+     */
+    private fun tunSection(body: StringBuilder.() -> Unit): String {
+        val sb = StringBuilder()
+        sb.appendLine("tun | ---- begin ----")
+        sb.body()
+        sb.append("tun | ---- end ----")
+        return sb.toString()
+    }
+
+    /** One labelled line inside a [tunSection]. */
+    private fun StringBuilder.line(label: String, value: String) {
+        appendLine("tun | $label: $value")
+    }
+
+    /**
+     * The opening block of a [tunSection]: what the app is, what the platform is,
+     * and what the routing inputs are.
+     *
+     * The build and ROM are here because they are the answer whenever a builder
+     * call fails on a phone where the same code worked on another: the allow-list
+     * is implemented by the framework, and vendors do carry their own version of
+     * it. A log that cannot name the ROM makes that class of bug unauditable.
+     */
+    private fun tunSectionHeader(sb: StringBuilder, picks: List<String>, vpnOnly: Boolean) {
+        sb.line("self", "$packageName (uid=${android.os.Process.myUid()})")
+        sb.line("device", "${Build.MANUFACTURER} ${Build.MODEL} android=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}")
+        sb.line("proxyOnly", Config.proxyOnlyMode.toString())
+        sb.line("splitEnabled", Config.splitTunnelEnabled.toString())
+        sb.line("mode", Config.splitTunnelMode)
+        sb.line("meaning", if (vpnOnly) "picks go through Tor, all other apps direct" else "picks stay off Tor, all other apps tunnelled")
+        sb.line("storedPickCount", Config.splitTunnelSelected.size.toString())
+        sb.line("storedPicks", Config.splitTunnelSelected.joinToString(" ") { "[$it]" })
+        sb.line("picksAfterSelfFilter", picks.size.toString())
+        sb.line("picksAfterSelfFilterList", picks.joinToString(" ") { "[$it]" })
+        sb.line("route", "$VPN_ROUTE/0")
+        sb.line("blocking", "false")
+    }
+
+    /**
+     * Everything the package manager can say about one pick, as a single line.
+     *
+     * Deliberately asks twice: once as a plain lookup, which is what the builder
+     * does internally and therefore what decides whether the pick is routable,
+     * and once including packages that are not fully installed, which separates
+     * "this app is gone" from "this app is here but half-uninstalled". It also
+     * reports the uid and whether the app has a launcher, because a pick that
+     * resolves to a different app than the row the user tapped, or to nothing at
+     * all, is the sort of thing that otherwise looks like the routing being wrong.
+     */
+    private fun resolvePick(pkg: String): String {
+        val pm = packageManager
+        val plain = runCatching { pm.getApplicationInfo(pkg, 0) }
+        val installed = runCatching {
+            pm.getApplicationInfo(pkg, PackageManager.MATCH_UNINSTALLED_PACKAGES)
+        }
+        val launchable = runCatching { pm.getLaunchIntentForPackage(pkg) != null }
+        val label = runCatching { pm.getApplicationLabel(plain.getOrThrow()).toString() }
+        return buildString {
+            append("pkg='").append(pkg).append("' len=").append(pkg.length)
+            append(" isSelf=").append(pkg == packageName)
+            append(" builderWouldSee=").append(if (plain.isSuccess) "yes" else "NO(${plain.exceptionOrNull()?.javaClass?.simpleName})")
+            append(" uid=").append(plain.getOrNull()?.uid?.toString() ?: "?")
+            append(" system=").append(((plain.getOrNull()?.flags ?: 0) and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0)
+            append(" enabled=").append(plain.getOrNull()?.enabled?.toString() ?: "?")
+            append(" launchable=").append(launchable.getOrNull()?.toString() ?: "?")
+            append(" label='").append(label.getOrNull() ?: "?").append("'")
+            append(" notFullyInstalled=").append(
+                if (installed.isFailure) "lookup-error(${installed.exceptionOrNull()?.javaClass?.simpleName})" else "no"
+            )
+        }
+    }
+
     /** Establish the TUN interface and tun2socks on top of the running Tor engine. */
     private suspend fun establishTunnel(w: TorRunner, proxyHost: String, proxyPort: Int) {
         // Proxy mode never brings up a tunnel, so it must not announce one and must
@@ -808,15 +891,24 @@ class TorVpnService : VpnService() {
             // Unconditional, so the log can tell "switch off" apart from "on but
             // read wrong". With the switch off there was nothing printed at all,
             // and a silent log is indistinguishable from a mode that does nothing.
-            Log.i(
-                TAG,
-                "Split tunnel: enabled=${Config.splitTunnelEnabled} mode=${Config.splitTunnelMode} " +
-                    "picks=${Config.splitTunnelSelected.size} routable=${picks.size}"
-            )
+            Log.i(TAG, tunSection { tunSectionHeader(this, picks, vpnOnly) })
             if (Config.splitTunnelEnabled) {
                 var applied = 0
                 var failed = 0
                 for (pkg in picks) {
+                    // The package is resolved before it is handed to the builder,
+                    // and the resolution is logged. That split is the whole point:
+                    // if the package resolves here and the builder still throws,
+                    // the problem is in Vpn.Builder and not in the pick, and only
+                    // one of those two is worth hunting.
+                    Log.i(
+                        TAG,
+                        tunSection {
+                            line("resolve", resolvePick(pkg))
+                            line("codePoints", pkg.codePoints().toArray().joinToString(" ") { "U+%04X".format(it) })
+                        }
+                    )
+                    val verb = if (vpnOnly) "addAllowedApplication" else "addDisallowedApplication"
                     try {
                         if (vpnOnly) {
                             builder.addAllowedApplication(pkg)
@@ -824,22 +916,34 @@ class TorVpnService : VpnService() {
                             builder.addDisallowedApplication(pkg)
                         }
                         applied++
+                        Log.i(TAG, tunSection { line(verb, "ok '$pkg'") })
                     } catch (e: Exception) {
                         failed++
-                        Log.w(TAG, "Split tunnel: cannot route $pkg: ${e.message}", e)
+                        // The class name is spelled out because it is the one thing
+                        // that separates the causes: NameNotFoundException means the
+                        // pick is not a package this user can see, and anything else
+                        // means the platform or the ROM refused the call.
+                        Log.e(
+                            TAG,
+                            tunSection {
+                                line(
+                                    verb,
+                                    "FAILED '${pkg}' -> ${e.javaClass.name}: ${e.message}"
+                                )
+                            },
+                            e
+                        )
                     }
                 }
                 builder.addRoute(VPN_ROUTE, 0)
                 Log.i(
                     TAG,
                     if (vpnOnly) {
-                        "Split tunnel: VPN-only, $applied of ${picks.size} pick(s) through Tor " +
-                            "[${picks.take(5).joinToString()}], everything else direct, " +
-                            "$failed skipped"
+                        "Split tunnel: VPN-only, $applied of ${picks.size} pick(s) through Tor, " +
+                            "$failed failed"
                     } else {
-                        "Split tunnel: $applied of ${picks.size} pick(s) bypass Tor " +
-                            "[${picks.take(5).joinToString()}], all others tunnelled, " +
-                            "$failed skipped"
+                        "Split tunnel: $applied of ${picks.size} pick(s) bypass Tor, " +
+                            "$failed failed"
                     }
                 )
                 if (vpnOnly && applied == 0) {
@@ -859,9 +963,24 @@ class TorVpnService : VpnService() {
                 Log.i(TAG, "Split tunnel: off, every app goes through Tor")
             }
             builder.setBlocking(false)
-            builder.establish()
+            // Logged rather than returned bare: establish() answers null when the
+            // platform refused the configuration, and it gives no reason, so the
+            // line above is the only record of what was asked for.
+            val tun = builder.establish()
+            Log.i(
+                TAG,
+                tunSection {
+                    line("establish", if (tun == null) "returned null" else "ok fd=${tun.fd}")
+                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS")
+                }
+            )
+            tun
         } catch (e: Exception) {
-            Log.e(TAG, "establish() failed", e)
+            Log.e(
+                TAG,
+                tunSection { line("establish", "threw ${e.javaClass.name}: ${e.message}") },
+                e
+            )
             null
         }
     }
