@@ -650,7 +650,13 @@ private fun ControlDrawer(
     val uriHandler = LocalUriHandler.current
     val clipboard = LocalClipboardManager.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
-    val state by AppState.state.collectAsStateWithLifecycle()
+    // Not `AppState.state`: the bootstrap writes a new VpnState on every runner
+    // progress snapshot, and a drawer that collects all of it recomposes dozens of
+    // times a second for the length of a connect. The text fields in here
+    // re-measure on each of those passes, so everything below them moved while the
+    // log was streaming. This drawer draws one field out of that state, so it
+    // collects exactly that field.
+    val socksEndpoint by AppState.socksEndpoint.collectAsStateWithLifecycle()
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
     val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     val countries by ExitNodes.directory.collectAsStateWithLifecycle()
@@ -906,7 +912,7 @@ private fun ControlDrawer(
                 AdvancedItems(
                     form = advancedForm,
                     bridges = bridges,
-                    state = state,
+                    socksEndpoint = socksEndpoint,
                     clipboard = clipboard,
                     onUpdateBridges = onUpdateBridges,
                     onOpenLog = onOpenLog,
@@ -2778,7 +2784,7 @@ private fun AdvancedFieldColors() = OutlinedTextFieldDefaults.colors(
 private fun LazyListScope.AdvancedItems(
     form: AdvancedForm,
     bridges: AppState.BridgeState,
-    state: AppState.VpnState,
+    socksEndpoint: String,
     // Read by the composable caller and passed in. This function is a
     // LazyListScope builder, not a @Composable one, so it cannot call
     // LocalClipboardManager.current itself -- and cannot do so inside a
@@ -3018,7 +3024,11 @@ private fun LazyListScope.AdvancedItems(
                 }
                 if (form.proxyOnly) {
                     DividerLine()
-                    val endpoint = state.socksEndpoint
+                    val endpoint = socksEndpoint
+                    // The block is drawn whether or not Tor is up yet, rather than
+                    // appearing when it does. Tor starts listening in the middle of
+                    // a bootstrap, and a card that grows at that moment pushes
+                    // everything under it down while the log is running.
                     Text(
                         if (endpoint.isNotEmpty()) endpoint else "socks5://127.0.0.1:${Config.proxyPort}",
                         style = TextStyle(
