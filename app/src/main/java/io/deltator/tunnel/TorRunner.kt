@@ -350,7 +350,7 @@ class TorRunner(
                     Log.w(tag, "Lyrebird cannot serve $missing; dropping those bridge line(s)")
                     transports.removeAll(missing.toSet())
                     usableLines = cleanLines.filterNot { line ->
-                        it.split(WHITESPACE).firstOrNull()?.lowercase() in missing
+                        line.split(WHITESPACE).firstOrNull()?.lowercase() in missing
                     }
                     if (usableLines.isEmpty() && !isDirect) {
                         stop()

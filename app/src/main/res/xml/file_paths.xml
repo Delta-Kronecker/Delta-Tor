@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Only the generated bridge archives are shareable, and only from the
+         exports folder: nothing else in the cache is reachable through this
+         provider. -->
+    <cache-path
+        name="bridge_exports"
+        path="exports/" />
+</paths>

@@ -135,6 +135,7 @@ object BridgeStore {
                 snowflake = counts[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
                 fresh = counts[ParallelTorManager.TRANSPORT_FRESH] ?: 0,
                 combined = combinedCount(context),
+                memory = BridgeMemory.countsByTransport(context),
                 error = null
             )
         }

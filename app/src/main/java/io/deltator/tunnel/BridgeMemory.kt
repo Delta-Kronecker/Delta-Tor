@@ -47,6 +47,10 @@ object BridgeMemory {
 
     fun count(context: Context, name: String): Int = healthy(context, name).size
 
+    /** Every pool's size at once, for the stats. */
+    fun countsByTransport(context: Context): Map<String, Int> =
+        TRANSPORTS.associateWith { count(context, it) }
+
     fun countAll(context: Context): Int = allHealthy(context).size
 
     /**

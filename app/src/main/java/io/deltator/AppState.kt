@@ -112,6 +112,12 @@ object AppState {
         val snowflake: Int = 0,
         val fresh: Int = 0,
         val combined: Int = 0,
+        /**
+         * Bridges remembered per transport by [io.deltator.tunnel.BridgeMemory]:
+         * what a reconnect would start from instead of the full list. Keyed by the
+         * same transport names as the counts above.
+         */
+        val memory: Map<String, Int> = emptyMap(),
         val error: String? = null
     )
 
