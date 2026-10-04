@@ -140,21 +140,23 @@ object Config {
         set(value) = prefs.edit().putBoolean("proxy_only_mode", value).apply()
 
     /**
-     * Whether an auto connect that runs out of time should be stopped and started
-     * again by the app instead of being reported as a failure.
+     * Whether the app may change the plan by itself when a connect stops moving.
      *
-     * On by default, and bounded rather than endless: [TorVpnService] stops after
-     * a few restarts and lets the failure stand. A setting that could restart
-     * forever would turn a network where nothing works into an app that never
-     * admits it, which is the worst thing a tool like this can do.
+     * On means the app keeps its existing rule: a connect that makes no progress
+     * for a minute is assumed to be blocked, the runners are stopped, the mode is
+     * switched to auto and the connect starts again. That is what most users
+     * want, because a blocked mode left running is just a spinner.
      *
-     * Only auto is restarted. Every other mode is the user's own explicit choice,
-     * and repeating it unasked would just be the app spending the user's battery
-     * on an answer they were already given.
+     * Off is for the cases where that rule is the wrong answer: someone who
+     * deliberately picked a transport and wants to see it fail rather than have
+     * the choice replaced, and anyone watching the log, where the swap explains
+     * nothing about why their mode died.
+     *
+     * On by default. The user is the one who can turn it off.
      */
-    var restartOnTimeout: Boolean
-        get() = prefs.getBoolean("restart_on_timeout", true)
-        set(value) = prefs.edit().putBoolean("restart_on_timeout", value).apply()
+    var autoRecovery: Boolean
+        get() = prefs.getBoolean("auto_recovery", true)
+        set(value) = prefs.edit().putBoolean("auto_recovery", value).apply()
 
     /**
      * Whether per-app routing is on at all.
