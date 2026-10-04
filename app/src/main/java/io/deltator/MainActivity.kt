@@ -1896,17 +1896,17 @@ private fun BridgeCard(
 
         Row(modifier = Modifier.fillMaxWidth()) {
             StatCell(
-                "VANILLA", bridges.vanilla, bridges.memoryMem(ParallelTorManager.TRANSPORT_VANILLA),
+                "VANILLA", bridges.vanilla, bridges.memOf(ParallelTorManager.TRANSPORT_VANILLA),
                 DeltaTor.Accent, Modifier.weight(1f)
             )
             CellDivider()
             StatCell(
-                "OBFS4", bridges.obfs4, bridges.memoryMem(ParallelTorManager.TRANSPORT_OBFS4),
+                "OBFS4", bridges.obfs4, bridges.memOf(ParallelTorManager.TRANSPORT_OBFS4),
                 DeltaTor.Green, Modifier.weight(1f)
             )
             CellDivider()
             StatCell(
-                "WEBTUNNEL", bridges.webtunnel, bridges.memoryMem(ParallelTorManager.TRANSPORT_WEBTUNNEL),
+                "WEBTUNNEL", bridges.webtunnel, bridges.memOf(ParallelTorManager.TRANSPORT_WEBTUNNEL),
                 DeltaTor.Amber, Modifier.weight(1f)
             )
         }
@@ -1915,18 +1915,18 @@ private fun BridgeCard(
 
         Row(modifier = Modifier.fillMaxWidth()) {
             StatCell(
-                "SNOWFLAKE", bridges.snowflake, bridges.memoryMem(ParallelTorManager.TRANSPORT_SNOWFLAKE),
+                "SNOWFLAKE", bridges.snowflake, bridges.memOf(ParallelTorManager.TRANSPORT_SNOWFLAKE),
                 DeltaTor.AccentSoft, Modifier.weight(1f)
             )
             CellDivider()
             StatCell(
-                "FRESH", bridges.fresh, bridges.memoryMem(ParallelTorManager.TRANSPORT_FRESH),
+                "FRESH", bridges.fresh, bridges.memOf(ParallelTorManager.TRANSPORT_FRESH),
                 DeltaTor.GreenLight, Modifier.weight(1f)
             )
             CellDivider()
             StatCell(
                 "COMBINED-BRIDGE", bridges.combined,
-                bridges.memoryMem(ParallelTorManager.TRANSPORT_COMBINED),
+                bridges.memOf(ParallelTorManager.TRANSPORT_COMBINED),
                 DeltaTor.AmberLight, Modifier.weight(1f)
             )
         }

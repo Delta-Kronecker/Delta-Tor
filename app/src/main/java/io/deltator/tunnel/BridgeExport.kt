@@ -16,9 +16,9 @@ import java.util.zip.ZipOutputStream
  * Packs every bridge the app is holding into one zip and hands it to the user.
  *
  * One file per list rather than a single blob, because the point of a backup is
- * being usable somewhere else: every `bridges/*.txt` is a plain Tor bridge file
+ * being usable somewhere else: every txt file under bridges/ is a plain Tor bridge file
  * that can be dropped straight into Tor Browser. The remembered bridges
- * (`memory/*.txt`) are exported as bridge lines too, not as fingerprints, so the
+ * (the txt files under memory/) are exported as bridge lines too, not as fingerprints, so the
  * proven set is portable and not just a list of hashes that mean nothing outside
  * this app.
  *
