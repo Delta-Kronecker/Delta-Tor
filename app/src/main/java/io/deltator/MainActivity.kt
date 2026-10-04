@@ -1959,6 +1959,80 @@ private fun BridgeCard(
  */
 private fun AppState.BridgeState.memOf(transport: String): Int = memory[transport] ?: 0
 
+/**
+ * Whether a timed-out auto connect may be started again by the app.
+ *
+ * A button rather than a switch, because a switch reports where a finger last was
+ * and this reports whether the app is currently allowed to restart a failed
+ * connect on its own -- which is the thing worth seeing at a glance.
+ *
+ * It lives in the transport card rather than the auto racers card because that
+ * card only exists while the mode is auto, and a control that disappears the
+ * moment you change the mode is a control you cannot find again.
+ */
+@Composable
+private fun AutoRestartButton(on: Boolean, onToggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        DividerLine()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "RESTART ON TIMEOUT",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.3.sp
+                    ),
+                    color = DeltaTor.Text
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    if (on) {
+                        "If Auto runs out of time, the app stops that attempt and starts " +
+                            "it again by itself -- twice at most. After that it reports the " +
+                            "failure rather than trying all night."
+                    } else {
+                        "Off. When Auto runs out of time the connect fails and the reason is " +
+                            "shown; nothing is restarted on its own."
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (on) DeltaTor.Green.copy(alpha = 0.18f) else DeltaTor.SurfaceAlt,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        1.dp,
+                        if (on) DeltaTor.Green else DeltaTor.BorderLight,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .clickable(onClick = onToggle)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (on) "ON" else "OFF",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.2.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (on) DeltaTor.GreenLight else DeltaTor.Muted
+                )
+            }
+        }
+    }
+}
+
 @Composable
 /**
  * One mode's numbers: the whole list, and how much of it is already proven.
@@ -2858,6 +2932,14 @@ private fun LazyListScope.AdvancedItems(
                         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
                     )
                 }
+                AutoRestartButton(
+                    on = form.restartOnTimeout,
+                    onToggle = {
+                        val next = !form.restartOnTimeout
+                        form.restartOnTimeout = next
+                        Config.restartOnTimeout = next
+                    }
+                )
             }
             Spacer(Modifier.height(20.dp))
         }
@@ -2933,67 +3015,6 @@ private fun LazyListScope.AdvancedItems(
                         color = DeltaTor.Muted,
                         modifier = Modifier.padding(top = 6.dp)
                     )
-                    DividerLine()
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 12.dp, bottom = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "Restart on timeout",
-                                style = MaterialTheme.typography.bodyLarge.copy(
-                                    fontWeight = FontWeight.SemiBold,
-                                    letterSpacing = 0.3.sp
-                                ),
-                                color = DeltaTor.Text
-                            )
-                            Spacer(Modifier.height(3.dp))
-                            Text(
-                                "A button rather than a switch: this is an action the app takes " +
-                                    "by itself, so what matters is the state it is in right now, " +
-                                    "not the last position a finger was in. Press it to turn the " +
-                                    "auto restart off, or back on.",
-                                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                                color = DeltaTor.Muted
-                            )
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(
-                                    if (form.restartOnTimeout) {
-                                        DeltaTor.Green.copy(alpha = 0.18f)
-                                    } else {
-                                        DeltaTor.SurfaceAlt
-                                    },
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .border(
-                                    1.dp,
-                                    if (form.restartOnTimeout) DeltaTor.Green else DeltaTor.BorderLight,
-                                    RoundedCornerShape(12.dp)
-                                )
-                                .clickable {
-                                    val next = !form.restartOnTimeout
-                                    form.restartOnTimeout = next
-                                    Config.restartOnTimeout = next
-                                }
-                                .padding(horizontal = 14.dp, vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                if (form.restartOnTimeout) "RESTART ON" else "RESTART OFF",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    letterSpacing = 1.2.sp,
-                                    fontWeight = FontWeight.Bold
-                                ),
-                                color = if (form.restartOnTimeout) DeltaTor.GreenLight else DeltaTor.Muted
-                            )
-                        }
-                    }
                 }
             }
             Spacer(Modifier.height(20.dp))
