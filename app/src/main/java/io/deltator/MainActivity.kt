@@ -2937,7 +2937,7 @@ private fun LazyListScope.AdvancedItems(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 10.dp, bottom = 2.dp),
+                            .padding(top = 12.dp, bottom = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column(Modifier.weight(1f)) {
@@ -2951,26 +2951,48 @@ private fun LazyListScope.AdvancedItems(
                             )
                             Spacer(Modifier.height(3.dp))
                             Text(
-                                if (form.restartOnTimeout) {
-                                    "If Auto runs out of time, the app stops it and starts it " +
-                                        "again by itself, twice at most. After that it reports the " +
-                                        "failure instead of trying all night."
-                                } else {
-                                    "Off: when Auto runs out of time the connect fails and you " +
-                                        "are told why. Nothing is retried on its own."
-                                },
+                                "A button rather than a switch: this is an action the app takes " +
+                                    "by itself, so what matters is the state it is in right now, " +
+                                    "not the last position a finger was in. Press it to turn the " +
+                                    "auto restart off, or back on.",
                                 style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                                 color = DeltaTor.Muted
                             )
                         }
                         Spacer(Modifier.width(12.dp))
-                        ToggleSwitch(
-                            checked = form.restartOnTimeout,
-                            onCheckedChange = {
-                                form.restartOnTimeout = it
-                                Config.restartOnTimeout = it
-                            }
-                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (form.restartOnTimeout) {
+                                        DeltaTor.Green.copy(alpha = 0.18f)
+                                    } else {
+                                        DeltaTor.SurfaceAlt
+                                    },
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .border(
+                                    1.dp,
+                                    if (form.restartOnTimeout) DeltaTor.Green else DeltaTor.BorderLight,
+                                    RoundedCornerShape(12.dp)
+                                )
+                                .clickable {
+                                    val next = !form.restartOnTimeout
+                                    form.restartOnTimeout = next
+                                    Config.restartOnTimeout = next
+                                }
+                                .padding(horizontal = 14.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                if (form.restartOnTimeout) "RESTART ON" else "RESTART OFF",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    letterSpacing = 1.2.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = if (form.restartOnTimeout) DeltaTor.GreenLight else DeltaTor.Muted
+                            )
+                        }
                     }
                 }
             }
