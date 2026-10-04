@@ -37,6 +37,19 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.DeltaTor">
 
+        <!-- The bridge export zip is built in the cache directory and handed out
+             through a content:// uri, so the app that receives it can read it
+             without the zip ever becoming a readable file on disk. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

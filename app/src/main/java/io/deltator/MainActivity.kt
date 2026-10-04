@@ -119,6 +119,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.deltator.tunnel.BridgeExport
 import io.deltator.tunnel.BridgeStore
 import androidx.core.graphics.drawable.toBitmap
 import io.deltator.tunnel.InstalledApps
@@ -1814,6 +1815,7 @@ private fun BridgeCard(
     onUpdate: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val ctx = LocalContext.current
     val shape = RoundedCornerShape(18.dp)
     Column(
         modifier = modifier
@@ -1848,6 +1850,23 @@ private fun BridgeCard(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, DeltaTor.Border, RoundedCornerShape(12.dp))
+                        .clickable { BridgeExport.share(ctx) }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        "EXPORT",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.2.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.Text
+                    )
+                }
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(12.dp))
                         .background(
                             Brush.horizontalGradient(listOf(DeltaTor.AccentDark, DeltaTor.Accent)),
                             RoundedCornerShape(12.dp)
@@ -1870,21 +1889,40 @@ private fun BridgeCard(
         Spacer(Modifier.height(12.dp))
 
         Row(modifier = Modifier.fillMaxWidth()) {
-            StatCell("VANILLA", bridges.vanilla, DeltaTor.Accent, Modifier.weight(1f))
+            StatCell(
+                "VANILLA", bridges.vanilla, bridges.memoryMem(ParallelTorManager.TRANSPORT_VANILLA),
+                DeltaTor.Accent, Modifier.weight(1f)
+            )
             CellDivider()
-            StatCell("OBFS4", bridges.obfs4, DeltaTor.Green, Modifier.weight(1f))
+            StatCell(
+                "OBFS4", bridges.obfs4, bridges.memoryMem(ParallelTorManager.TRANSPORT_OBFS4),
+                DeltaTor.Green, Modifier.weight(1f)
+            )
             CellDivider()
-            StatCell("WEBTUNNEL", bridges.webtunnel, DeltaTor.Amber, Modifier.weight(1f))
+            StatCell(
+                "WEBTUNNEL", bridges.webtunnel, bridges.memoryMem(ParallelTorManager.TRANSPORT_WEBTUNNEL),
+                DeltaTor.Amber, Modifier.weight(1f)
+            )
         }
 
         Spacer(Modifier.height(12.dp))
 
         Row(modifier = Modifier.fillMaxWidth()) {
-            StatCell("SNOWFLAKE", bridges.snowflake, DeltaTor.AccentSoft, Modifier.weight(1f))
+            StatCell(
+                "SNOWFLAKE", bridges.snowflake, bridges.memoryMem(ParallelTorManager.TRANSPORT_SNOWFLAKE),
+                DeltaTor.AccentSoft, Modifier.weight(1f)
+            )
             CellDivider()
-            StatCell("FRESH", bridges.fresh, DeltaTor.GreenLight, Modifier.weight(1f))
+            StatCell(
+                "FRESH", bridges.fresh, bridges.memoryMem(ParallelTorManager.TRANSPORT_FRESH),
+                DeltaTor.GreenLight, Modifier.weight(1f)
+            )
             CellDivider()
-            StatCell("COMBINED-BRIDGE", bridges.combined, DeltaTor.AmberLight, Modifier.weight(1f))
+            StatCell(
+                "COMBINED-BRIDGE", bridges.combined,
+                bridges.memoryMem(ParallelTorManager.TRANSPORT_COMBINED),
+                DeltaTor.AmberLight, Modifier.weight(1f)
+            )
         }
 
         Spacer(Modifier.height(12.dp))
@@ -1909,8 +1947,27 @@ private fun BridgeCard(
     }
 }
 
+/**
+ * Bridges remembered for one mode: the part of it that has already worked, and so
+ * is what a reconnect would start from.
+ */
+private fun AppState.BridgeState.memOf(transport: String): Int = memory[transport] ?: 0
+
 @Composable
-private fun StatCell(label: String, count: Int, dot: Color, modifier: Modifier = Modifier) {
+/**
+ * One mode's numbers: the whole list, and how much of it is already proven.
+ *
+ * The memory line is the more useful half once a mode has been used: it is what
+ * the next connect will actually start from, so a mode showing 4.2k bridges but
+ * 0 proven is a mode that has never worked here.
+ */
+private fun StatCell(
+    label: String,
+    count: Int,
+    memory: Int,
+    dot: Color,
+    modifier: Modifier = Modifier
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
@@ -1940,6 +1997,16 @@ private fun StatCell(label: String, count: Int, dot: Color, modifier: Modifier =
                 fontWeight = FontWeight.Bold
             ),
             color = DeltaTor.Muted
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            if (memory > 0) "$memory mem" else "0 mem",
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = 9.sp,
+                letterSpacing = 0.5.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = if (memory > 0) DeltaTor.GreenLight else DeltaTor.Muted
         )
     }
 }
