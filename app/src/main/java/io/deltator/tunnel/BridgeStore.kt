@@ -29,7 +29,7 @@ object BridgeStore {
      * Bumped when the shape or the names of the sources changed, so an upgrade
      * refreshes the cache once instead of keeping a list written by older code.
      */
-    private const val KEY_LAST_UPDATE = "bridges_last_update_v3"
+    private const val KEY_LAST_UPDATE = "bridges_last_update_v4"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var updateInProgress = false
@@ -113,14 +113,18 @@ object BridgeStore {
 
     /** Push the cached stats into [AppState] for the UI. */
     fun refreshState(context: Context) {
+        // Counted once: stats() re-reads and re-counts every cached file on each
+        // call, and the copy below asks for one count per transport.
+        val counts = stats(context)
         AppState.updateBridge {
             it.copy(
                 updating = false,
                 lastUpdateMillis = lastUpdatedMillis(context),
-                vanilla = stats(context)[ParallelTorManager.TRANSPORT_VANILLA] ?: 0,
-                obfs4 = stats(context)[ParallelTorManager.TRANSPORT_OBFS4] ?: 0,
-                webtunnel = stats(context)[ParallelTorManager.TRANSPORT_WEBTUNNEL] ?: 0,
-                snowflake = stats(context)[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
+                vanilla = counts[ParallelTorManager.TRANSPORT_VANILLA] ?: 0,
+                obfs4 = counts[ParallelTorManager.TRANSPORT_OBFS4] ?: 0,
+                webtunnel = counts[ParallelTorManager.TRANSPORT_WEBTUNNEL] ?: 0,
+                snowflake = counts[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
+                fresh = counts[ParallelTorManager.TRANSPORT_FRESH] ?: 0,
                 error = null
             )
         }

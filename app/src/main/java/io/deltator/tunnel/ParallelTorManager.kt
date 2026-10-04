@@ -31,6 +31,12 @@ import java.util.concurrent.atomic.AtomicLong
  * twin carrying only the webtunnel bridges that worked before. Nothing about the
  * picked mode changes; the proven set just gets its own second chance.
  *
+ * [TRANSPORT_FRESH] is the one mode that is several bridge lists at once: the
+ * collector's six 72-hour files (vanilla, obfs4, webtunnel, each in an IPv4 and
+ * an IPv6 variant) are merged into a single list and handed to one runner, which
+ * starts lyrebird for whichever pluggable transports it finds in there. Tor then
+ * races the whole mixed set itself, so `fresh` is one runner and not six.
+ *
  * Bridge lists are fetched from the Tor-Bridges-Collector repository at runtime.
  * The runner whose Tor reports "Bootstrapped 100%" first wins; the other three
  * are stopped immediately.
@@ -42,6 +48,7 @@ object ParallelTorManager {
     const val TRANSPORT_OBFS4 = "obfs4"
     const val TRANSPORT_WEBTUNNEL = "webtunnel"
     const val TRANSPORT_SNOWFLAKE = "snowflake"
+    const val TRANSPORT_FRESH = "fresh"
     const val TRANSPORT_DIRECT = "direct"
     const val TRANSPORT_MEMORY = "memory"
 
@@ -50,12 +57,28 @@ object ParallelTorManager {
     const val TRANSPORT_CUSTOM = "custom"
     val MODES = listOf(
         TRANSPORT_AUTO,
+        TRANSPORT_FRESH,
         TRANSPORT_VANILLA,
         TRANSPORT_OBFS4,
         TRANSPORT_WEBTUNNEL,
         TRANSPORT_SNOWFLAKE,
         TRANSPORT_DIRECT,
         TRANSPORT_CUSTOM
+    )
+
+    /**
+     * The transports auto mode may race, and the fallback for it when the stored
+     * set is blank or stale.
+     *
+     * Deliberately not `BRIDGE_SOURCES.keys`: [TRANSPORT_FRESH] is in there, but
+     * auto racing it would be pointless -- fresh is every list at once, so it
+     * would just be a slower copy of the other three racing each other.
+     */
+    val AUTO_SOURCES = listOf(
+        TRANSPORT_VANILLA,
+        TRANSPORT_OBFS4,
+        TRANSPORT_WEBTUNNEL,
+        TRANSPORT_SNOWFLAKE
     )
 
     /**
@@ -87,7 +110,15 @@ object ParallelTorManager {
             "$BRIDGE_BASE_URL/webtunnel.txt",
             "$BRIDGE_BASE_URL/webtunnel_ipv6.txt"
         ),
-        TRANSPORT_SNOWFLAKE to listOf("$BRIDGE_BASE_URL/snowflake.txt")
+        TRANSPORT_SNOWFLAKE to listOf("$BRIDGE_BASE_URL/snowflake.txt"),
+        TRANSPORT_FRESH to listOf(
+            "$BRIDGE_BASE_URL/webtunnel_72h.txt",
+            "$BRIDGE_BASE_URL/vanilla_72h.txt",
+            "$BRIDGE_BASE_URL/obfs4_72h.txt",
+            "$BRIDGE_BASE_URL/obfs4_ipv6_72h.txt",
+            "$BRIDGE_BASE_URL/webtunnel_ipv6_72h.txt",
+            "$BRIDGE_BASE_URL/vanilla_ipv6_72h.txt"
+        )
     )
 
     /**
@@ -109,7 +140,7 @@ object ParallelTorManager {
     private const val PORT_FREE_POLL_MS = 250L
 
     /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
-    private const val MAX_PORT_OFFSET = 11
+    private const val MAX_PORT_OFFSET = 13
 
     /**
      * The fixed runner<->port assignment. It is a function of [basePort] only, so a
@@ -127,7 +158,9 @@ object ParallelTorManager {
         memoryNameFor(TRANSPORT_VANILLA) to basePort + 8,
         memoryNameFor(TRANSPORT_OBFS4) to basePort + 9,
         memoryNameFor(TRANSPORT_WEBTUNNEL) to basePort + 10,
-        memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11
+        memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11,
+        TRANSPORT_FRESH to basePort + 12,
+        memoryNameFor(TRANSPORT_FRESH) to basePort + 13
     )
 
 
@@ -199,8 +232,8 @@ object ParallelTorManager {
 
         // Auto races exactly what the user ticked. A blank or fully stale set
         // falls back to the full list so auto can never end up with nothing.
-        val autoNames = autoTransports.filter { it in BRIDGE_SOURCES }.toList()
-            .ifEmpty { BRIDGE_SOURCES.keys.toList() }
+        val autoNames = autoTransports.filter { it in AUTO_SOURCES }.toList()
+            .ifEmpty { AUTO_SOURCES.toList() }
 
         // Only the lists this mode actually needs are resolved, which keeps a
         // direct connect from waiting on any download at all.
@@ -256,6 +289,7 @@ object ParallelTorManager {
         val plans = buildList {
             when (mode) {
                 TRANSPORT_AUTO -> autoNames.forEach { name -> add(name to (lines[name] ?: "")) }
+                TRANSPORT_FRESH -> add(TRANSPORT_FRESH to (lines[TRANSPORT_FRESH] ?: ""))
                 TRANSPORT_VANILLA -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
                 TRANSPORT_OBFS4 -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
                 TRANSPORT_WEBTUNNEL -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))

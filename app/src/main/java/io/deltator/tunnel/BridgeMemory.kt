@@ -96,7 +96,9 @@ object BridgeMemory {
             content.lines().forEach { raw ->
                 val line = raw.trim()
                 if (line.isEmpty() || line.startsWith("#")) return@forEach
-                if (transport != null && !matchesTransport(line, transport)) return@forEach
+                if (transport != null && transport !in MIXED_TRANSPORTS &&
+                    !matchesTransport(line, transport)
+                ) return@forEach
                 val fp = fingerprintOf(line) ?: return@forEach
                 val rank = order[fp] ?: return@forEach
                 kept += rank to line
@@ -145,6 +147,18 @@ object BridgeMemory {
         ParallelTorManager.TRANSPORT_OBFS4,
         ParallelTorManager.TRANSPORT_WEBTUNNEL,
         ParallelTorManager.TRANSPORT_SNOWFLAKE,
+        ParallelTorManager.TRANSPORT_FRESH,
         ParallelTorManager.TRANSPORT_MEMORY
     )
+
+    /**
+     * Transports whose own bridge list already mixes types.
+     *
+     * A `webtunnel-memory` twin must only carry webtunnel lines, or its runner
+     * would start a pluggable transport the user did not ask for. Fresh has no
+     * single type to match against -- its list is vanilla, obfs4 and webtunnel
+     * together -- so filtering its twin by name would leave it with nothing and
+     * the mode would silently lose its memory runner.
+     */
+    private val MIXED_TRANSPORTS = setOf(ParallelTorManager.TRANSPORT_FRESH)
 }

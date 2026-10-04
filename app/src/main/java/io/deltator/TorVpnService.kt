@@ -377,8 +377,8 @@ class TorVpnService : VpnService() {
             .firstOrNull { it == Config.transportMode }
             ?: ParallelTorManager.TRANSPORT_AUTO
         val autoNames = Config.autoTransports
-            .filter { it in ParallelTorManager.BRIDGE_SOURCES }
-            .ifEmpty { ParallelTorManager.BRIDGE_SOURCES.keys.toList() }
+            .filter { it in ParallelTorManager.AUTO_SOURCES }
+            .ifEmpty { ParallelTorManager.AUTO_SOURCES.toList() }
         val modeLabel = if (mode == ParallelTorManager.TRANSPORT_AUTO) {
             autoNames.joinToString(" / ") +
                 if (BridgeMemory.countAll(applicationContext) > 0) " / memory" else ""
