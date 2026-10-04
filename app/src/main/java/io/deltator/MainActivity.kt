@@ -2764,7 +2764,8 @@ private fun LazyListScope.AdvancedItems(
                         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
                     )
                 }
-                }
+            }
+            Spacer(Modifier.height(20.dp))
         }
     }
     if (form.transportMode == ParallelTorManager.TRANSPORT_AUTO) {
@@ -2840,6 +2841,7 @@ private fun LazyListScope.AdvancedItems(
                     )
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
     if (form.transportMode == ParallelTorManager.TRANSPORT_CUSTOM) {
@@ -2884,6 +2886,7 @@ private fun LazyListScope.AdvancedItems(
                     )
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
     item(key = "adv-proxy-only") {
@@ -2993,6 +2996,7 @@ private fun LazyListScope.AdvancedItems(
                     )
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
     item(key = "adv-split") {
@@ -3076,6 +3080,7 @@ private fun LazyListScope.AdvancedItems(
                     }
                 }
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
     item(key = "adv-torrc") {
