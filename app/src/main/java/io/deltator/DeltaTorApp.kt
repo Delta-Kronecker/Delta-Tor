@@ -140,6 +140,23 @@ object Config {
         set(value) = prefs.edit().putBoolean("proxy_only_mode", value).apply()
 
     /**
+     * Whether an auto connect that runs out of time should be stopped and started
+     * again by the app instead of being reported as a failure.
+     *
+     * On by default, and bounded rather than endless: [TorVpnService] stops after
+     * a few restarts and lets the failure stand. A setting that could restart
+     * forever would turn a network where nothing works into an app that never
+     * admits it, which is the worst thing a tool like this can do.
+     *
+     * Only auto is restarted. Every other mode is the user's own explicit choice,
+     * and repeating it unasked would just be the app spending the user's battery
+     * on an answer they were already given.
+     */
+    var restartOnTimeout: Boolean
+        get() = prefs.getBoolean("restart_on_timeout", true)
+        set(value) = prefs.edit().putBoolean("restart_on_timeout", value).apply()
+
+    /**
      * Whether per-app routing is on at all.
      *
      * Off means one thing and one thing only: every app on the device goes

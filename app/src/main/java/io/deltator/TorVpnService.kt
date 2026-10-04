@@ -160,6 +160,14 @@ class TorVpnService : VpnService() {
          */
         private const val STALL_RECOVERY_AFTER_MS = 60_000L
 
+        /**
+         * How many times one connect may stop and start again after running out of
+         * time. Two is enough to get past a bridge list that has gone stale and a
+         * moment of a network that is being interfered with, and low enough that a
+         * network where nothing works is reported rather than retried all evening.
+         */
+        private const val MAX_TIMEOUT_RESTARTS = 2
+
         /** Title shared by every automatic-recovery notice. */
         const val RECOVERY_TITLE = "DELTATOR CHANGED THE CONNECTION MODE"
     }
@@ -200,6 +208,16 @@ class TorVpnService : VpnService() {
      * turns restarting the app forever.
      */
     private val recoveriesSpent = mutableSetOf<AppState.NoticeKind>()
+
+    /**
+     * Timeout restarts already spent in this connect.
+     *
+     * Counted rather than held in [recoveriesSpent], which is a set: a restart
+     * changes nothing about the mode, so the rule that produced it still matches
+     * next time, and a set would let exactly one through and then refuse the
+     * second -- which is neither one retry nor a bound.
+     */
+    private var timeoutRestarts = 0
 
     /** Outstanding [holdCpu] calls, so nested windows release only when both end. */
     private var cpuHolds = 0
@@ -319,6 +337,7 @@ class TorVpnService : VpnService() {
         AppState.markStarted()
         currentSession = Log.beginSession("connect")
         recoveriesSpent.clear()
+        timeoutRestarts = 0
         AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "", socksEndpoint = "") }
 
         startForeground(NOTIFICATION_ID, buildNotification("Connecting\u2026", progress = true, progressValue = 0))
@@ -455,6 +474,13 @@ class TorVpnService : VpnService() {
         } catch (e: RestartInAuto) {
             return e.recovery
         } catch (e: Exception) {
+            if (e is ParallelTorManager.RaceTimeout && shouldRestartAfterTimeout()) {
+                // The race tore its runners down before throwing, so this is a
+                // start again from nothing rather than a restart on top of a dead
+                // set: the same path a recovery takes, with nothing to recover
+                // because auto was already the mode.
+                return AppState.NoticeKind.TimeoutRestart
+            }
             fail(e.message ?: "All transports failed to bootstrap")
             return null
         }
@@ -491,6 +517,27 @@ class TorVpnService : VpnService() {
     }
 
     /**
+     * Whether a timed-out connect should be started again by the app.
+     *
+     * Three conditions, all of them necessary. Auto only: every other mode is a
+     * choice the user made, and repeating it unasked is not a recovery. The
+     * setting on: someone who would rather be told the failure than wait through
+     * another half hour has said so. And a restart left: the count is spent per
+     * connect and reset when a new connect starts, so a network where nothing
+     * works ends in a reported failure instead of an app that keeps starting
+     * cores forever.
+     */
+    private fun shouldRestartAfterTimeout(): Boolean {
+        if (!Config.restartOnTimeout) return false
+        if (Config.transportMode != ParallelTorManager.TRANSPORT_AUTO) return false
+        if (timeoutRestarts >= MAX_TIMEOUT_RESTARTS) {
+            Log.w(TAG, "not restarting the timeout: already restarted $timeoutRestarts time(s)")
+            return false
+        }
+        return true
+    }
+
+    /**
      * Change the plan the next attempt will use, and tell the user it happened.
      *
      * The notice is posted before the retry starts, not after it succeeds: the
@@ -510,6 +557,16 @@ class TorVpnService : VpnService() {
                 Config.autoTransports =
                     Config.autoTransports + ParallelTorManager.TRANSPORT_SNOWFLAKE
                 Log.i(TAG, "Recovery: auto stalled without snowflake, adding it to auto")
+            }
+            AppState.NoticeKind.TimeoutRestart -> {
+                // Nothing to change: the mode was already auto and stays auto.
+                // The count is what makes the bound move, and it is per connect.
+                timeoutRestarts++
+                Log.i(
+                    TAG,
+                    "Auto ran out of time; starting it again " +
+                        "(${timeoutRestarts + 1} of ${MAX_TIMEOUT_RESTARTS + 1} attempts)"
+                )
             }
             // Not a recovery the service can perform; posted by the UI instead.
             AppState.NoticeKind.FirstRun -> return
@@ -538,6 +595,14 @@ class TorVpnService : VpnService() {
                         "Auto is now your connection mode. If you would rather pick " +
                         "the transport yourself again, change it in Settings."
                 AppState.NoticeKind.FirstRun -> ""
+                AppState.NoticeKind.TimeoutRestart ->
+                    "Auto did not get any transport to 100% before it ran out of time, " +
+                        "which usually means every list it was racing is blocked here " +
+                        "right now.\n\n" +
+                        "DeltaTor stopped that attempt and started Auto again by itself " +
+                        "(attempt ${timeoutRestarts + 1} of ${MAX_TIMEOUT_RESTARTS + 1}).\n\n" +
+                        "If it runs out of time again the app will stop and tell you " +
+                        "instead of trying forever. You can turn this off in Settings."
                 AppState.NoticeKind.SnowflakeRecovery ->
                     "The transports Auto was racing made no progress for a minute, " +
                         "which usually means they are all blocked on this network.\n\n" +
