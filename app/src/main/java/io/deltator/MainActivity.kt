@@ -3083,7 +3083,7 @@ private fun LazyListScope.AdvancedItems(
                 ) {
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "Do not start the VPN",
+                            "No VPN Only Proxy",
                             style = MaterialTheme.typography.bodyLarge.copy(
                                 fontWeight = FontWeight.SemiBold,
                                 letterSpacing = 0.3.sp
@@ -3091,17 +3091,15 @@ private fun LazyListScope.AdvancedItems(
                             color = DeltaTor.Text
                         )
                         Spacer(Modifier.height(3.dp))
+                        // One description, not one per position. The other half
+                        // said what happens when the switch is off, which is the
+                        // absence of something rather than an instruction, and it
+                        // was the longest text in the drawer.
                         Text(
-                            if (form.proxyOnly) {
-                                "Tor will bootstrap normally and listen on a local " +
-                                    "address. No tunnel is created and nothing on " +
-                                    "this device is routed automatically \u2014 you " +
-                                    "point each app at the address yourself."
-                            } else {
-                                "The whole device is routed through Tor when " +
-                                    "connected. Turn this on if you would rather " +
-                                    "choose which apps go through it."
-                            },
+                            "Tor will bootstrap normally and listen on a local " +
+                                "address. No tunnel is created and nothing on " +
+                                "this device is routed automatically \u2014 you " +
+                                "point each app at the address yourself.",
                             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                             color = DeltaTor.Muted
                         )
