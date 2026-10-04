@@ -111,6 +111,7 @@ object AppState {
         val webtunnel: Int = 0,
         val snowflake: Int = 0,
         val fresh: Int = 0,
+        val combined: Int = 0,
         val error: String? = null
     )
 

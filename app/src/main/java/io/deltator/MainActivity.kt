@@ -1883,6 +1883,8 @@ private fun BridgeCard(
             StatCell("SNOWFLAKE", bridges.snowflake, DeltaTor.AccentSoft, Modifier.weight(1f))
             CellDivider()
             StatCell("FRESH", bridges.fresh, DeltaTor.GreenLight, Modifier.weight(1f))
+            CellDivider()
+            StatCell("COMBINED-BRIDGE", bridges.combined, DeltaTor.AmberLight, Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(12.dp))
@@ -2728,6 +2730,7 @@ private fun LazyListScope.AdvancedItems(
                 val modes = listOf(
                     ParallelTorManager.TRANSPORT_AUTO to "Auto \u00b7 race all",
                     ParallelTorManager.TRANSPORT_FRESH to "Fresh \u00b7 every type, 72h lists",
+                    ParallelTorManager.TRANSPORT_COMBINED to "Combined-Bridge \u00b7 every list but Fresh",
                     ParallelTorManager.TRANSPORT_VANILLA to "Vanilla \u00b7 plain bridges",
                     ParallelTorManager.TRANSPORT_OBFS4 to "obfs4 \u00b7 obfuscated",
                     ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel \u00b7 needs IPv6",
@@ -2750,6 +2753,8 @@ private fun LazyListScope.AdvancedItems(
                             "Races vanilla, obfs4, webtunnel and the previously working bridges at the same time."
                         ParallelTorManager.TRANSPORT_FRESH ->
                             "Every 72-hour collector list in one go: vanilla, obfs4 and webtunnel, IPv4 and IPv6, merged into a single list."
+                        ParallelTorManager.TRANSPORT_COMBINED ->
+                            "Every bridge the app has except Fresh: the vanilla, obfs4, webtunnel and snowflake lists merged into a single list."
                         ParallelTorManager.TRANSPORT_VANILLA -> "Plain bridges, no pluggable transport."
                         ParallelTorManager.TRANSPORT_OBFS4 -> "obfs4 only, via lyrebird."
                         ParallelTorManager.TRANSPORT_WEBTUNNEL -> "webtunnel only, via lyrebird. Needs IPv6."
@@ -2763,7 +2768,7 @@ private fun LazyListScope.AdvancedItems(
                     color = DeltaTor.Muted,
                     modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                 )
-                if (form.transportMode in ParallelTorManager.BRIDGE_SOURCES) {
+                if (form.transportMode in ParallelTorManager.TWINNED_MODES) {
                     // Single-transport modes are not single-runner modes: the
                     // memory twin races next to them, so say that up front.
                     Text(

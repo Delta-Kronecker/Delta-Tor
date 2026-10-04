@@ -37,6 +37,10 @@ import java.util.concurrent.atomic.AtomicLong
  * starts lyrebird for whichever pluggable transports it finds in there. Tor then
  * races the whole mixed set itself, so `fresh` is one runner and not six.
  *
+ * [TRANSPORT_COMBINED] is the same idea over the *big* lists: every cached
+ * bridge the app has except fresh, merged the same way into one runner. It keeps
+ * no list of its own, so its size is just the sum of the ones it covers.
+ *
  * Bridge lists are fetched from the Tor-Bridges-Collector repository at runtime.
  * The runner whose Tor reports "Bootstrapped 100%" first wins; the other three
  * are stopped immediately.
@@ -49,6 +53,7 @@ object ParallelTorManager {
     const val TRANSPORT_WEBTUNNEL = "webtunnel"
     const val TRANSPORT_SNOWFLAKE = "snowflake"
     const val TRANSPORT_FRESH = "fresh"
+    const val TRANSPORT_COMBINED = "combined"
     const val TRANSPORT_DIRECT = "direct"
     const val TRANSPORT_MEMORY = "memory"
 
@@ -58,6 +63,7 @@ object ParallelTorManager {
     val MODES = listOf(
         TRANSPORT_AUTO,
         TRANSPORT_FRESH,
+        TRANSPORT_COMBINED,
         TRANSPORT_VANILLA,
         TRANSPORT_OBFS4,
         TRANSPORT_WEBTUNNEL,
@@ -75,6 +81,23 @@ object ParallelTorManager {
      * would just be a slower copy of the other three racing each other.
      */
     val AUTO_SOURCES = listOf(
+        TRANSPORT_VANILLA,
+        TRANSPORT_OBFS4,
+        TRANSPORT_WEBTUNNEL,
+        TRANSPORT_SNOWFLAKE
+    )
+
+    /**
+     * What [TRANSPORT_COMBINED] is built from: every bridge list the app has
+     * except [TRANSPORT_FRESH], which is the small 72-hour set and is a mode of
+     * its own.
+     *
+     * Unlike the others this is not a cached list of its own. It is the other
+     * lists, so it is resolved from their caches at connect time and its count in
+     * the bridge stats is their sum: one number to keep right instead of a fifth
+     * copy of the same bridges on disk.
+     */
+    val COMBINED_SOURCES = listOf(
         TRANSPORT_VANILLA,
         TRANSPORT_OBFS4,
         TRANSPORT_WEBTUNNEL,
@@ -129,6 +152,13 @@ object ParallelTorManager {
      */
     const val BUNDLED_ASSET_DIR = "bridges"
 
+    /**
+     * Modes with a bridge list of their own, which are exactly the modes that get
+     * a memory twin. [TRANSPORT_COMBINED] has no list on disk but does have
+     * bridges, so it belongs here even though it is not in [BRIDGE_SOURCES].
+     */
+    val TWINNED_MODES: Set<String> = BRIDGE_SOURCES.keys + TRANSPORT_COMBINED
+
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
     private const val RACE_TIMEOUT_MS = 1_800_000L
@@ -140,7 +170,7 @@ object ParallelTorManager {
     private const val PORT_FREE_POLL_MS = 250L
 
     /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
-    private const val MAX_PORT_OFFSET = 13
+    private const val MAX_PORT_OFFSET = 15
 
     /**
      * The fixed runner<->port assignment. It is a function of [basePort] only, so a
@@ -160,7 +190,9 @@ object ParallelTorManager {
         memoryNameFor(TRANSPORT_WEBTUNNEL) to basePort + 10,
         memoryNameFor(TRANSPORT_SNOWFLAKE) to basePort + 11,
         TRANSPORT_FRESH to basePort + 12,
-        memoryNameFor(TRANSPORT_FRESH) to basePort + 13
+        memoryNameFor(TRANSPORT_FRESH) to basePort + 13,
+        TRANSPORT_COMBINED to basePort + 14,
+        memoryNameFor(TRANSPORT_COMBINED) to basePort + 15
     )
 
 
@@ -241,12 +273,34 @@ object ParallelTorManager {
             TRANSPORT_AUTO -> autoNames.toSet()
             TRANSPORT_DIRECT -> emptySet()
             TRANSPORT_CUSTOM -> emptySet()
+            TRANSPORT_COMBINED -> COMBINED_SOURCES.toSet()
             else -> setOf(mode)
         }
-        val lines = if (mode == TRANSPORT_CUSTOM) {
+        val fetched = if (mode == TRANSPORT_CUSTOM) {
             mapOf(TRANSPORT_CUSTOM to customLines.joinToString("\n"))
         } else {
             withContext(Dispatchers.IO) { fetchBridgeLines(context, needed) }
+        }
+
+        // Combined has no list of its own, so it is assembled here out of the
+        // lists it covers. Merged rather than concatenated: the merge alternates
+        // between the sources and drops repeats by fingerprint, so the per-runner
+        // line cap in TorRunner takes an even slice of vanilla, obfs4, webtunnel
+        // and snowflake instead of the first hundred vanilla bridges.
+        val combinedLines = if (mode == TRANSPORT_COMBINED) {
+            mergeBridgeLists(COMBINED_SOURCES.mapNotNull { fetched[it] })
+        } else {
+            null
+        }
+        if (combinedLines != null) {
+            val n = combinedLines.lines().count { it.isNotBlank() }
+            Log.i(TAG, "Combined-Bridge: $n bridge(s) from ${COMBINED_SOURCES.joinToString("/")}")
+            Log.transport(sessionId, TRANSPORT_COMBINED, 'I', TAG, "combined list: $n bridge(s)")
+        }
+        val lines = if (combinedLines != null) {
+            fetched + (TRANSPORT_COMBINED to combinedLines)
+        } else {
+            fetched
         }
 
         // The memory runner, in the two shapes it can take:
@@ -257,7 +311,7 @@ object ParallelTorManager {
         // remember, or the user asked for one exact set.
         val singleTransport: String? = when {
             mode == TRANSPORT_AUTO && autoNames.size == 1 -> autoNames.first()
-            mode in BRIDGE_SOURCES -> mode
+            mode in TWINNED_MODES -> mode
             else -> null
         }
         val mixedMemoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1) {
@@ -290,6 +344,7 @@ object ParallelTorManager {
             when (mode) {
                 TRANSPORT_AUTO -> autoNames.forEach { name -> add(name to (lines[name] ?: "")) }
                 TRANSPORT_FRESH -> add(TRANSPORT_FRESH to (lines[TRANSPORT_FRESH] ?: ""))
+                TRANSPORT_COMBINED -> add(TRANSPORT_COMBINED to (lines[TRANSPORT_COMBINED] ?: ""))
                 TRANSPORT_VANILLA -> add(TRANSPORT_VANILLA to (lines[TRANSPORT_VANILLA] ?: ""))
                 TRANSPORT_OBFS4 -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
                 TRANSPORT_WEBTUNNEL -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))

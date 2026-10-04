@@ -148,6 +148,7 @@ object BridgeMemory {
         ParallelTorManager.TRANSPORT_WEBTUNNEL,
         ParallelTorManager.TRANSPORT_SNOWFLAKE,
         ParallelTorManager.TRANSPORT_FRESH,
+        ParallelTorManager.TRANSPORT_COMBINED,
         ParallelTorManager.TRANSPORT_MEMORY
     )
 
@@ -160,5 +161,8 @@ object BridgeMemory {
      * together -- so filtering its twin by name would leave it with nothing and
      * the mode would silently lose its memory runner.
      */
-    private val MIXED_TRANSPORTS = setOf(ParallelTorManager.TRANSPORT_FRESH)
+    private val MIXED_TRANSPORTS = setOf(
+        ParallelTorManager.TRANSPORT_FRESH,
+        ParallelTorManager.TRANSPORT_COMBINED
+    )
 }

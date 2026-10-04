@@ -75,6 +75,15 @@ object BridgeStore {
     fun lastUpdatedMillis(context: Context): Long =
         prefs(context).getLong(KEY_LAST_UPDATE, 0L)
 
+    /**
+     * How many bridges Combined-Bridge covers: every cached list except fresh,
+     * counted once each.
+     */
+    fun combinedCount(context: Context): Int {
+        val counts = stats(context)
+        return ParallelTorManager.COMBINED_SOURCES.sumOf { counts[it] ?: 0 }
+    }
+
     /** True when no bridge cache exists yet or it is older than a day. */
     fun shouldAutoUpdate(context: Context): Boolean {
         if (stats(context).values.any { it <= 0 }) return true
@@ -125,6 +134,7 @@ object BridgeStore {
                 webtunnel = counts[ParallelTorManager.TRANSPORT_WEBTUNNEL] ?: 0,
                 snowflake = counts[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
                 fresh = counts[ParallelTorManager.TRANSPORT_FRESH] ?: 0,
+                combined = combinedCount(context),
                 error = null
             )
         }
