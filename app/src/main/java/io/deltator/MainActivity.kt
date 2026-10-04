@@ -657,6 +657,10 @@ private fun ControlDrawer(
     // log was streaming. This drawer draws one field out of that state, so it
     // collects exactly that field.
     val socksEndpoint by AppState.socksEndpoint.collectAsStateWithLifecycle()
+    // Auto recovery changes the mode from the service while this drawer is open,
+    // and the form below remembers what the user picked. Without this the
+    // dropdown keeps showing a mode the app has already stopped using.
+    val liveMode by AppState.mode.collectAsStateWithLifecycle()
     val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
     val exitNames by ExitNodes.names.collectAsStateWithLifecycle()
     val countries by ExitNodes.directory.collectAsStateWithLifecycle()
@@ -686,6 +690,15 @@ private fun ControlDrawer(
     var showAllCountries by remember { mutableStateOf(false) }
     var showAdvanced by remember { mutableStateOf(false) }
     val advancedForm = remember { AdvancedForm() }
+    // One-way, and only for changes the form did not make: the picker writes both
+    // the form and the mode, so the two agree unless something outside the UI
+    // moved it. Nothing here writes the preference back, which is what stops this
+    // from turning into a loop that quietly overwrites the user.
+    LaunchedEffect(liveMode) {
+        if (liveMode.isNotEmpty() && liveMode != advancedForm.transportMode) {
+            advancedForm.transportMode = liveMode
+        }
+    }
     LaunchedEffect(advancedForm.saved) {
         if (advancedForm.saved) {
             delay(1500)
@@ -2903,6 +2916,9 @@ private fun LazyListScope.AdvancedItems(
                     onSelect = {
                         form.transportMode = it
                         Config.transportMode = it
+                        // Publish it too, so a drawer that is opened before the
+                        // next connect starts shows the same thing.
+                        AppState.setMode(it)
                     }
                 )
                 Text(
