@@ -2086,123 +2086,57 @@ private fun SplitTunnelScreen(onBack: () -> Unit) {
             }
 
             Column(Modifier.padding(horizontal = 20.dp, vertical = 4.dp)) {
-                // The master switch. Off is not a third routing mode, it is the
-                // absence of one: everything goes through Tor, which is how the
-                // app has always behaved and the only default that cannot leak.
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "SPLIT TUNNELLING",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.2.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = DeltaTor.AccentLight
-                        )
-                        Text(
-                            if (enabled) {
-                                "On. Choose below what the apps you pick belong to."
-                            } else {
-                                "Off. Every app on this device goes through Tor."
-                            },
-                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                            color = DeltaTor.Muted
-                        )
+                Text(
+                    "PICKED APPS GO",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.2.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.AccentLight
+                )
+                Spacer(Modifier.height(6.dp))
+                // One global choice for the whole list. The picks are a group
+                // the user is building, and which group that is has to be
+                // decided once: a list that could mean either thing per app
+                // would let the device end up with nothing tunnelled without
+                // the user ever asking for that.
+                SplitModeToggle(
+                    mode = mode,
+                    onModeChange = {
+                        mode = it
+                        Config.splitTunnelMode = it
                     }
-                    Spacer(Modifier.width(12.dp))
-                    ToggleSwitch(
-                        checked = enabled,
-                        onCheckedChange = {
-                            enabled = it
-                            Config.splitTunnelEnabled = it
-                        }
-                    )
-                }
+                )
+                Spacer(Modifier.height(8.dp))
 
-                if (enabled) {
-                    Spacer(Modifier.height(12.dp))
+                if (selected.isNotEmpty()) {
                     Text(
-                        "PICKED APPS GO",
+                        "CLEAR PICKS",
                         style = MaterialTheme.typography.labelSmall.copy(
                             letterSpacing = 1.2.sp,
                             fontWeight = FontWeight.Bold
                         ),
-                        color = DeltaTor.AccentLight
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    // One global choice for the whole list. The picks are a group
-                    // the user is building, and which group that is has to be
-                    // decided once: a list that could mean either thing per app
-                    // would let the device end up with nothing tunnelled without
-                    // the user ever asking for that.
-                    SplitModeToggle(
-                        mode = mode,
-                        onModeChange = {
-                            mode = it
-                            Config.splitTunnelMode = it
-                        }
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        when (mode) {
-                            Config.SPLIT_MODE_VPN ->
-                                "Only the apps you pick go through Tor. Every other " +
-                                    "app on the device connects directly, unencrypted."
-                            else ->
-                                "Every app goes through Tor except the ones you pick, " +
-                                    "which connect directly and unencrypted."
-                        },
-                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                        color = if (mode == Config.SPLIT_MODE_VPN) DeltaTor.Green else DeltaTor.Amber
-                    )
-
-                    if (mode == Config.SPLIT_MODE_VPN && selected.isEmpty()) {
-                        Spacer(Modifier.height(6.dp))
-                        // Not "nothing is tunnelled": Android has no way to say
-                        // "let no app through this VPN", so with nothing picked
-                        // every app is captured and this behaves exactly like
-                        // leaving split tunnelling off. Saying anything else here
-                        // would have the user believing the opposite.
-                        Text(
-                            "Nothing is picked, and Android cannot build a VPN that " +
-                                "captures no apps at all. So this is still the same " +
-                                "as off: everything goes through Tor. Pick at least " +
-                                "one app to make it do something.",
-                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                            color = DeltaTor.Amber
-                        )
-                    }
-
-                    if (selected.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "CLEAR PICKS",
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                letterSpacing = 1.2.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = DeltaTor.AccentLight,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable {
-                                    selected = emptySet()
-                                    Config.splitTunnelSelected = emptySet()
-                                }
-                                .padding(vertical = 4.dp)
-                        )
-                    }
-
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        textStyle = TextStyle(fontSize = 14.sp, color = DeltaTor.Text),
-                        colors = AdvancedFieldColors(),
-                        placeholder = { Text("Search apps", fontSize = 14.sp) }
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                selected = emptySet()
+                                Config.splitTunnelSelected = emptySet()
+                            }
+                            .padding(vertical = 4.dp)
                     )
                 }
+
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 14.sp, color = DeltaTor.Text),
+                    colors = AdvancedFieldColors(),
+                    placeholder = { Text("Search apps", fontSize = 14.sp) }
+                )
             }
 
             Spacer(Modifier.height(6.dp))
@@ -3071,76 +3005,58 @@ private fun LazyListScope.AdvancedItems(
         Column(Modifier.fillMaxWidth()) {
             SettingsCardHeader(
                 "SPLIT TUNNELLING",
-                "Per-app routing \u00b7 applied on next connect"
+                when {
+                    !form.splitOn -> "OFF \u00b7 EVERY APP THROUGH TOR"
+                    form.splitPicked.isEmpty() -> "ON \u00b7 NOTHING PICKED"
+                    form.splitMode == Config.SPLIT_MODE_VPN ->
+                        "ON \u00b7 ${form.splitPicked.size} VPN"
+                    else -> "ON \u00b7 ${form.splitPicked.size} BYPASS"
+                }
             )
             SettingsCard {
-                val picked = form.splitPicked
-                Text(
-                    when {
-                        !form.splitOn ->
-                            "Off. Every app on this device goes through Tor."
-                        picked.isEmpty() && form.splitMode == Config.SPLIT_MODE_BYPASS ->
-                            "On, nothing picked. Every app goes through Tor, so " +
-                                "nothing is leaking."
-                        picked.isEmpty() ->
-                            "On, nothing picked. With the picked apps being the ones " +
-                                "that go through Tor, and none picked, this still " +
-                                "captures every app, same as off."
-                        form.splitMode == Config.SPLIT_MODE_VPN ->
-                            "${picked.size} app(s) go through Tor. Every other app " +
-                                "reaches the internet directly, unencrypted."
-                        else ->
-                            "${picked.size} app(s) bypass Tor and reach the internet " +
-                                "directly. Their traffic is not encrypted by Tor."
-                    },
-                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                    color = when {
-                        !form.splitOn -> DeltaTor.Green
-                        picked.isEmpty() && form.splitMode == Config.SPLIT_MODE_VPN -> DeltaTor.Amber
-                        picked.isEmpty() -> DeltaTor.Muted
-                        form.splitMode == Config.SPLIT_MODE_VPN -> DeltaTor.Green
-                        else -> DeltaTor.Amber
-                    },
-                    modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
-                )
-                if (form.proxyOnly) {
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "This has no effect while Proxy Only is on: without a " +
-                            "tunnel there is nothing to route around.",
-                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                        color = DeltaTor.Amber,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
+                // The switch lives here rather than on the list screen: turning it
+                // on is a decision made while reading the settings, and the list is
+                // only worth loading once that decision has been made.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .clickable { onOpenSplitTunnel() }
-                        .padding(horizontal = 6.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 6.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Text(
-                        if (form.splitOn) "CHANGE" else "TURN ON",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            letterSpacing = 1.2.sp,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = DeltaTor.AccentLight,
-                        modifier = Modifier.weight(1f)
+                    ToggleSwitch(
+                        checked = form.splitOn,
+                        onCheckedChange = {
+                            form.splitOn = it
+                            Config.splitTunnelEnabled = it
+                            if (it) onOpenSplitTunnel()
+                        }
                     )
-                    Text(
-                        when {
-                            !form.splitOn -> "ALL APPS VPN"
-                            picked.isEmpty() -> "NOTHING PICKED"
-                            form.splitMode == Config.SPLIT_MODE_VPN -> "${picked.size} VPN"
-                            else -> "${picked.size} BYPASS"
-                        },
-                        style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
-                        color = DeltaTor.Muted
-                    )
+                }
+                if (form.splitOn) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable { onOpenSplitTunnel() }
+                            .padding(horizontal = 6.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "CHOOSE APPS",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.2.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = DeltaTor.AccentLight,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "${form.splitPicked.size} PICKED",
+                            style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.1.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
                 }
             }
         }
