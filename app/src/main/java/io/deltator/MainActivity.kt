@@ -2462,34 +2462,31 @@ private fun DrawerRow(last: Boolean = false, content: @Composable () -> Unit) {
     }
 }
 
+/**
+ * A card's own title, drawn inside its box.
+ *
+ * The advanced section has no captions between the cards: a line of text
+ * above a box says the same thing twice, once as a heading and once as
+ * whatever the box's first row already says. So the title goes in the box,
+ * where it labels the controls it sits above.
+ */
 @Composable
-private fun SettingsCardHeader(
-    title: String,
-    subtitle: String,
-    trailing: (@Composable () -> Unit)? = null
-) {
+private fun CardTitle(title: String, trailing: (@Composable () -> Unit)? = null) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 8.dp),
+            .padding(top = 2.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                title,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    letterSpacing = 1.6.sp,
-                    fontWeight = FontWeight.Bold
-                ),
-                color = DeltaTor.Muted
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                color = DeltaTor.Muted.copy(alpha = 0.75f)
-            )
-        }
+        Text(
+            title,
+            style = MaterialTheme.typography.labelSmall.copy(
+                letterSpacing = 1.6.sp,
+                fontWeight = FontWeight.Bold
+            ),
+            color = DeltaTor.Muted,
+            modifier = Modifier.weight(1f)
+        )
         trailing?.invoke()
     }
 }
@@ -2718,8 +2715,8 @@ private fun LazyListScope.AdvancedItems(
 ) {
     item(key = "adv-transport") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader("TRANSPORT", "Which way Tor connects \u00b7 applied on next connect")
             SettingsCard {
+                CardTitle("TRANSPORT")
                 val modes = listOf(
                     ParallelTorManager.TRANSPORT_AUTO to "Auto \u00b7 race all",
                     ParallelTorManager.TRANSPORT_VANILLA to "Vanilla \u00b7 plain bridges",
@@ -2773,8 +2770,8 @@ private fun LazyListScope.AdvancedItems(
     if (form.transportMode == ParallelTorManager.TRANSPORT_AUTO) {
         item(key = "adv-racers") {
             Column(Modifier.fillMaxWidth()) {
-                SettingsCardHeader("AUTO RACERS", "What auto races \u00b7 at least one")
                 SettingsCard {
+                    CardTitle("AUTO RACERS")
                     Config.AUTO_TRANSPORT_CHOICES.forEach { choice ->
                         val on = choice in form.autoTransports
                         val only = on && form.autoTransports.size == 1
@@ -2848,8 +2845,8 @@ private fun LazyListScope.AdvancedItems(
     if (form.transportMode == ParallelTorManager.TRANSPORT_CUSTOM) {
         item(key = "adv-custom") {
             Column(Modifier.fillMaxWidth()) {
-                SettingsCardHeader("CUSTOM BRIDGES", "One bridge per line \u00b7 applied on next connect")
                 SettingsCard {
+                    CardTitle("CUSTOM BRIDGES")
                     OutlinedTextField(
                         value = form.customBridges,
                         onValueChange = {
@@ -2891,11 +2888,8 @@ private fun LazyListScope.AdvancedItems(
     }
     item(key = "adv-proxy-only") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader(
-                "PROXY ONLY",
-                "Tor as a local SOCKS5 server \u00b7 no VPN"
-            )
             SettingsCard {
+                CardTitle("PROXY ONLY")
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -3003,16 +2997,6 @@ private fun LazyListScope.AdvancedItems(
     }
     item(key = "adv-split") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader(
-                "SPLIT TUNNELLING",
-                when {
-                    !form.splitOn -> "OFF \u00b7 EVERY APP THROUGH TOR"
-                    form.splitPicked.isEmpty() -> "ON \u00b7 NOTHING PICKED"
-                    form.splitMode == Config.SPLIT_MODE_VPN ->
-                        "ON \u00b7 ${form.splitPicked.size} VPN"
-                    else -> "ON \u00b7 ${form.splitPicked.size} BYPASS"
-                }
-            )
             SettingsCard {
                 // The switch lives here rather than on the list screen: turning it
                 // on is a decision made while reading the settings, and the list is
@@ -3020,10 +3004,18 @@ private fun LazyListScope.AdvancedItems(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.End
+                        .padding(top = 2.dp, bottom = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text(
+                        "SPLIT TUNNELLING",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.6.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.Muted,
+                        modifier = Modifier.weight(1f)
+                    )
                     ToggleSwitch(
                         checked = form.splitOn,
                         onCheckedChange = {
@@ -3033,6 +3025,31 @@ private fun LazyListScope.AdvancedItems(
                         }
                     )
                 }
+                Text(
+                    when {
+                        !form.splitOn ->
+                            "Off. Every app on this device goes through Tor."
+                        form.splitPicked.isEmpty() ->
+                            "On, nothing picked, so this still sends everything " +
+                                "through Tor."
+                        form.splitMode == Config.SPLIT_MODE_VPN ->
+                            "${form.splitPicked.size} app(s) go through Tor. Every " +
+                                "other app reaches the internet directly, " +
+                                "unencrypted."
+                        else ->
+                            "${form.splitPicked.size} app(s) bypass Tor and reach the " +
+                                "internet directly. Their traffic is not encrypted " +
+                                "by Tor."
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = when {
+                        !form.splitOn -> DeltaTor.Green
+                        form.splitPicked.isEmpty() -> DeltaTor.Amber
+                        form.splitMode == Config.SPLIT_MODE_VPN -> DeltaTor.Green
+                        else -> DeltaTor.Amber
+                    },
+                    modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+                )
                 if (form.splitOn) {
                     Row(
                         modifier = Modifier
@@ -3063,24 +3080,24 @@ private fun LazyListScope.AdvancedItems(
     }
     item(key = "adv-torrc") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader("TORRC TEMPLATE", "The full torrc, editable here") {
-                Text(
-                    "RESET",
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        letterSpacing = 1.1.sp,
-                        fontWeight = FontWeight.Bold
-                    ),
-                    color = DeltaTor.AccentLight,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable {
-                            TorrcSettings.resetTemplate()
-                            form.templateText = TorrcSettings.template()
-                        }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
             SettingsCard {
+                CardTitle("TORRC TEMPLATE") {
+                    Text(
+                        "RESET",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.1.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                TorrcSettings.resetTemplate()
+                                form.templateText = TorrcSettings.template()
+                            }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
                 Text(
                     "A ready-made torrc template. Bridges and pluggable transports are appended automatically \u00b7 applied on next connect.",
                     style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
@@ -3141,8 +3158,6 @@ private fun LazyListScope.AdvancedItems(
     }
     item(key = "adv-bridges") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader("BRIDGES", "Bridge mirror counts \u00b7 live cache")
-            Spacer(Modifier.height(6.dp))
             BridgeCard(
                 bridges = bridges,
                 sc = DeltaTor.Accent,
@@ -3154,8 +3169,8 @@ private fun LazyListScope.AdvancedItems(
     }
     item(key = "adv-log") {
         Column(Modifier.fillMaxWidth()) {
-            SettingsCardHeader("CONNECTION LOG", "Exact Tor bootstrap output \u00b7 copy with one tap")
             SettingsCard {
+                CardTitle("CONNECTION LOG")
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
