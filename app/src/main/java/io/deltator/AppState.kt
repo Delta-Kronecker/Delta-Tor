@@ -13,17 +13,16 @@ object AppState {
 
     /** What a modal notice is about, so the UI can word itself for the reason. */
     enum class NoticeKind {
-        /** A specific transport stalled and the app restarted in auto by itself. */
-        AutoRecovery,
-
         /**
-         * An auto race stalled without snowflake in it, and snowflake was added.
-         * Its own kind rather than a flavour of [AutoRecovery] because the two
-         * report different things: the user either picked a mode that is blocked,
-         * or left the choice to the app and the app's own default set was not
-         * enough here.
+         * A connect in a mode other than auto stalled, and the app stopped it,
+         * switched to auto and started again by itself.
+         *
+         * The only automatic change there is, and it is deliberately not offered
+         * to auto itself: auto is already the plan the app would choose, so there
+         * is nothing to switch to, and a plan that rewrites itself while it is
+         * already running is not a plan any more.
          */
-        SnowflakeRecovery,
+        AutoRecovery,
 
         /** One-time explainer shown the first time the app is ever opened. */
         FirstRun
