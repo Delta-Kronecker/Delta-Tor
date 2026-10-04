@@ -131,6 +131,20 @@ object AppState {
     private val _state = MutableStateFlow(VpnState())
     val state: StateFlow<VpnState> = _state.asStateFlow()
 
+    /**
+     * The proxy address on its own.
+     *
+     * A screen that needs only this should not collect [state]: the bootstrap
+     * writes a fresh [VpnState] on every runner progress snapshot, so a collector
+     * of the whole thing recomposes dozens of times a second for the whole
+     * connect. In a LazyColumn that is not free -- the text fields in the ADVANCED
+     * drawer re-measure on every one of those passes and the content below them
+     * visibly shifts while the log is streaming. This flow only emits when the
+     * address itself changes.
+     */
+    private val _socksEndpoint = MutableStateFlow("")
+    val socksEndpoint: StateFlow<String> = _socksEndpoint.asStateFlow()
+
     private val _bridgeState = MutableStateFlow(BridgeState())
     val bridgeState: StateFlow<BridgeState> = _bridgeState.asStateFlow()
 
@@ -185,13 +199,17 @@ object AppState {
         // fail -- dropping it here would leave the user with a connection that
         // silently changed transports and then died, and no explanation for
         // either half of that.
-        _state.update {
+        update {
             VpnState(stopping = it.stopping, error = it.error, notice = it.notice)
         }
     }
 
     fun update(block: (VpnState) -> VpnState) {
         _state.update(block)
+        // Kept in step here rather than by whoever writes the state, so the
+        // narrow flow above cannot drift away from the field it mirrors.
+        val address = _state.value.socksEndpoint
+        if (address != _socksEndpoint.value) _socksEndpoint.value = address
     }
 
     fun updateBridge(block: (BridgeState) -> BridgeState) {
