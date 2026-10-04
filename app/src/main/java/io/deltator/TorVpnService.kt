@@ -200,10 +200,10 @@ class TorVpnService : VpnService() {
      * Recoveries already spent in this connect, by kind.
      *
      * The loop that retries on a recovery is only provably finite because each
-     * kind fires once: after a switch to auto the mode rule can no longer match,
-     * and after snowflake is added the snowflake rule can no longer match. If
-     * either write silently failed, this set is what stops the two from taking
-     * turns restarting the app forever.
+     * kind fires once: the only kind left switches the mode to auto, and the rule
+     * that produces it cannot match again once the mode is auto. If that write
+     * silently failed, this set is what stops the app from restarting the connect
+     * over and over instead of getting anywhere.
      */
     private val recoveriesSpent = mutableSetOf<AppState.NoticeKind>()
 
@@ -396,14 +396,6 @@ class TorVpnService : VpnService() {
         Log.i(TAG, "Transport mode: $modeLabel")
         updateNotification("Connecting via $modeLabel \u2026", progress = true, progressValue = 0)
 
-        // What to try if this race turns out to be going nowhere. Snowflake sits
-        // out of auto by default, so an auto race that stalls has a specific and
-        // actionable cause: the transports that are racing are probably all
-        // blocked here, and snowflake is the one that usually is not.
-        val snowflakeInAuto = Config.autoTransports.contains(
-            ParallelTorManager.TRANSPORT_SNOWFLAKE
-        )
-
         // Watchdog armed for this attempt only; a later connect starts over.
         stallBest = -1
         stallSince = SystemClock.elapsedRealtime()
@@ -450,10 +442,14 @@ class TorVpnService : VpnService() {
                                 "in $mode, but auto recovery is off; leaving it alone"
                         )
                     } else {
-                        val recovery = when {
-                            mode != ParallelTorManager.TRANSPORT_AUTO -> AppState.NoticeKind.AutoRecovery
-                            !snowflakeInAuto -> AppState.NoticeKind.SnowflakeRecovery
-                            else -> null
+                        // Only a mode the user chose is recovered from. Auto is
+                        // already the plan the app would pick for itself, so a
+                        // stall there has nothing to switch to: it fails, and the
+                        // reason is on the screen and in the log.
+                        val recovery = if (mode != ParallelTorManager.TRANSPORT_AUTO) {
+                            AppState.NoticeKind.AutoRecovery
+                        } else {
+                            null
                         }
                         if (recovery != null && recoveriesSpent.add(recovery)) {
                             Log.w(
@@ -525,11 +521,6 @@ class TorVpnService : VpnService() {
                 Config.transportMode = ParallelTorManager.TRANSPORT_AUTO
                 Log.i(TAG, "Recovery: $wasMode stalled, switching to auto")
             }
-            AppState.NoticeKind.SnowflakeRecovery -> {
-                Config.autoTransports =
-                    Config.autoTransports + ParallelTorManager.TRANSPORT_SNOWFLAKE
-                Log.i(TAG, "Recovery: auto stalled without snowflake, adding it to auto")
-            }
             // Not a recovery the service can perform; posted by the UI instead.
             AppState.NoticeKind.FirstRun -> return
         }
@@ -557,15 +548,6 @@ class TorVpnService : VpnService() {
                         "Auto is now your connection mode. If you would rather pick " +
                         "the transport yourself again, change it in Settings."
                 AppState.NoticeKind.FirstRun -> ""
-                AppState.NoticeKind.SnowflakeRecovery ->
-                    "The transports Auto was racing made no progress for a minute, " +
-                        "which usually means they are all blocked on this network.\n\n" +
-                        "DeltaTor stopped that attempt, added Snowflake to Auto and " +
-                        "started again. Snowflake reaches Tor through a volunteer proxy " +
-                        "in a browser, so it is often the one that still works where " +
-                        "direct bridges do not.\n\n" +
-                        "Auto now includes Snowflake for every future connect. You can " +
-                        "remove it again in Settings."
             }
         )
         updateNotification("Restarting in auto \u2026", progress = true, progressValue = 0)
