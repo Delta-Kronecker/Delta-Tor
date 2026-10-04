@@ -25,14 +25,6 @@ object AppState {
          */
         SnowflakeRecovery,
 
-        /**
-         * An auto race ran out of time and the app stopped it and started again by
-         * itself. Its own kind because nothing about the user's settings changed:
-         * the mode was already auto and stays auto, and the only difference the
-         * user made was not answering a prompt.
-         */
-        TimeoutRestart,
-
         /** One-time explainer shown the first time the app is ever opened. */
         FirstRun
     }

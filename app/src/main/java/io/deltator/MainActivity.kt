@@ -1960,18 +1960,24 @@ private fun BridgeCard(
 private fun AppState.BridgeState.memOf(transport: String): Int = memory[transport] ?: 0
 
 /**
- * Whether a timed-out auto connect may be started again by the app.
+ * Whether the app may stop a stuck connect, switch to auto and start again.
+ *
+ * This is the switch for the mechanism that already exists: in any mode other
+ * than auto, a connect whose bootstrap percentage has not moved for a minute is
+ * assumed to be blocked, so the runners are stopped, the mode is switched to auto
+ * and the connect starts again. Off, that never happens and the chosen mode is
+ * left to fail on its own terms.
  *
  * A button rather than a switch, because a switch reports where a finger last was
- * and this reports whether the app is currently allowed to restart a failed
- * connect on its own -- which is the thing worth seeing at a glance.
+ * and this reports whether the app is currently allowed to overrule the mode the
+ * user picked -- which is the thing worth seeing at a glance.
  *
- * It lives in the transport card rather than the auto racers card because that
- * card only exists while the mode is auto, and a control that disappears the
- * moment you change the mode is a control you cannot find again.
+ * In the transport card rather than the auto racers card because that card only
+ * exists while the mode is auto, and a control that disappears the moment you
+ * change the mode is one you cannot find again.
  */
 @Composable
-private fun AutoRestartButton(on: Boolean, onToggle: () -> Unit) {
+private fun AutoRecoveryButton(on: Boolean, onToggle: () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         DividerLine()
         Row(
@@ -1982,7 +1988,7 @@ private fun AutoRestartButton(on: Boolean, onToggle: () -> Unit) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "RESTART ON TIMEOUT",
+                    "AUTO RECOVERY",
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.3.sp
@@ -1992,12 +1998,12 @@ private fun AutoRestartButton(on: Boolean, onToggle: () -> Unit) {
                 Spacer(Modifier.height(3.dp))
                 Text(
                     if (on) {
-                        "If Auto runs out of time, the app stops that attempt and starts " +
-                            "it again by itself -- twice at most. After that it reports the " +
-                            "failure rather than trying all night."
+                        "On. If a connect is not in auto and its progress has not moved for " +
+                            "a minute, the app stops it, switches the mode to auto and starts " +
+                            "again -- once per connect, since the mode is auto by then."
                     } else {
-                        "Off. When Auto runs out of time the connect fails and the reason is " +
-                            "shown; nothing is restarted on its own."
+                        "Off. A connect that makes no progress is left alone: the mode you " +
+                            "picked is the one that fails, and nothing is switched for you."
                     },
                     style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                     color = DeltaTor.Muted
@@ -2824,7 +2830,7 @@ private class AdvancedForm {
     var transportMode by mutableStateOf(Config.transportMode)
     var customBridges by mutableStateOf(Config.customBridges)
     var autoTransports by mutableStateOf(Config.autoTransports)
-    var restartOnTimeout by mutableStateOf(Config.restartOnTimeout)
+    var autoRecovery by mutableStateOf(Config.autoRecovery)
     var loggingOn by mutableStateOf(Config.loggingEnabled)
     var proxyOnly by mutableStateOf(Config.proxyOnlyMode)
     var splitOn by mutableStateOf(Config.splitTunnelEnabled)
@@ -2932,12 +2938,12 @@ private fun LazyListScope.AdvancedItems(
                         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
                     )
                 }
-                AutoRestartButton(
-                    on = form.restartOnTimeout,
+                AutoRecoveryButton(
+                    on = form.autoRecovery,
                     onToggle = {
-                        val next = !form.restartOnTimeout
-                        form.restartOnTimeout = next
-                        Config.restartOnTimeout = next
+                        val next = !form.autoRecovery
+                        form.autoRecovery = next
+                        Config.autoRecovery = next
                     }
                 )
             }
