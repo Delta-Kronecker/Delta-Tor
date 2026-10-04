@@ -330,6 +330,10 @@ class TorRunner(
                 if (file.exists()) file.delete()
             }
 
+            // The lines Tor is finally given. Narrowed below when lyrebird turns
+            // out not to speak every transport the list asked for.
+            var usableLines = cleanLines
+
             if (transports.isNotEmpty()) {
                 val ptBinary = getObfs4proxyPath()
                     ?: return Result.failure(RuntimeException("$tag: lyrebird (obfs4proxy) binary not found"))
@@ -337,15 +341,29 @@ class TorRunner(
                 if (result.isFailure) return result
                 val missing = transports.filter { it !in lyrebirdCmethods }
                 if (missing.isNotEmpty()) {
-                    Log.e(tag, "Lyrebird did not register transports: $missing (only: $lyrebirdCmethods)")
-                    stop()
-                    return Result.failure(RuntimeException("$tag: PT did not register $missing"))
+                    // lyrebird here is obfs4proxy: it serves obfs4, webtunnel and
+                    // meek-lite, and it has no snowflake. A list that mixes a
+                    // transport it cannot serve with ones it can is still worth
+                    // running on the ones it can, so the lines that need the missing
+                    // transport are dropped and the runner goes on. Only a list that
+                    // needs nothing else is a real failure.
+                    Log.w(tag, "Lyrebird cannot serve $missing; dropping those bridge line(s)")
+                    transports.removeAll(missing.toSet())
+                    usableLines = cleanLines.filterNot { line ->
+                        it.split(WHITESPACE).firstOrNull()?.lowercase() in missing
+                    }
+                    if (usableLines.isEmpty() && !isDirect) {
+                        stop()
+                        return Result.failure(
+                            RuntimeException("$tag: every bridge line needs $missing")
+                        )
+                    }
                 }
             }
 
             prepareGeoIp()
 
-            val torrcPath = writeTorrc(cleanLines, isVanilla, isDirect)
+            val torrcPath = writeTorrc(usableLines, isVanilla, isDirect)
             val torBinary = context.applicationInfo.nativeLibraryDir + "/libtor.so"
             if (!File(torBinary).exists()) {
                 return Result.failure(RuntimeException("$tag: Tor binary not found at $torBinary"))
@@ -501,8 +519,12 @@ class TorRunner(
     // --- torrc ---
 
     private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
+        // Filtered to real transport names for the same reason start() does: a
+        // plain `ip:port fp` line has an address as its first token, and treating
+        // that as a transport name logged one bogus "no CMETHOD" warning per
+        // bridge. A mixed list is hundreds of lines, so it was hundreds of them.
         val transports = cleanLines.map { it.split("\\s+".toRegex()).firstOrNull()?.lowercase() ?: "" }
-            .filter { it.isNotEmpty() }
+            .filter { it in PLUGGABLE_TRANSPORTS }
             .distinct()
 
         val torrcFile = File(dataDir, "torrc")
