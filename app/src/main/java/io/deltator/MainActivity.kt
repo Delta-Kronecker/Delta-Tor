@@ -2750,6 +2750,7 @@ private class AdvancedForm {
     var transportMode by mutableStateOf(Config.transportMode)
     var customBridges by mutableStateOf(Config.customBridges)
     var autoTransports by mutableStateOf(Config.autoTransports)
+    var restartOnTimeout by mutableStateOf(Config.restartOnTimeout)
     var loggingOn by mutableStateOf(Config.loggingEnabled)
     var proxyOnly by mutableStateOf(Config.proxyOnlyMode)
     var splitOn by mutableStateOf(Config.splitTunnelEnabled)
@@ -2800,16 +2801,20 @@ private fun LazyListScope.AdvancedItems(
         Column(Modifier.fillMaxWidth()) {
             SettingsCard {
                 CardTitle("TRANSPORT")
+                // Names only. What each one means is written out in full underneath the
+                // dropdown, where there is room for it: a row in a list is no place
+                // for a second sentence, and nine of them made the menu taller than
+                // the reason for opening it.
                 val modes = listOf(
-                    ParallelTorManager.TRANSPORT_AUTO to "Auto \u00b7 race all",
-                    ParallelTorManager.TRANSPORT_FRESH to "Fresh \u00b7 every type, 72h lists",
-                    ParallelTorManager.TRANSPORT_COMBINED to "Combined-Bridge \u00b7 every list but Fresh",
-                    ParallelTorManager.TRANSPORT_VANILLA to "Vanilla \u00b7 plain bridges",
-                    ParallelTorManager.TRANSPORT_OBFS4 to "obfs4 \u00b7 obfuscated",
-                    ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel \u00b7 needs IPv6",
-                    ParallelTorManager.TRANSPORT_SNOWFLAKE to "Snowflake \u00b7 the two bundled bridges",
-                    ParallelTorManager.TRANSPORT_DIRECT to "Direct \u00b7 no bridge at all",
-                    ParallelTorManager.TRANSPORT_CUSTOM to "Custom \u00b7 my own bridge lines"
+                    ParallelTorManager.TRANSPORT_AUTO to "Auto",
+                    ParallelTorManager.TRANSPORT_FRESH to "Fresh",
+                    ParallelTorManager.TRANSPORT_COMBINED to "Combined-Bridge",
+                    ParallelTorManager.TRANSPORT_VANILLA to "Vanilla",
+                    ParallelTorManager.TRANSPORT_OBFS4 to "obfs4",
+                    ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel",
+                    ParallelTorManager.TRANSPORT_SNOWFLAKE to "Snowflake",
+                    ParallelTorManager.TRANSPORT_DIRECT to "Direct",
+                    ParallelTorManager.TRANSPORT_CUSTOM to "Custom"
                 )
                 SettingsDropdown(
                     label = "CONNECT VIA",
@@ -2928,6 +2933,45 @@ private fun LazyListScope.AdvancedItems(
                         color = DeltaTor.Muted,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                    DividerLine()
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Restart on timeout",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = FontWeight.SemiBold,
+                                    letterSpacing = 0.3.sp
+                                ),
+                                color = DeltaTor.Text
+                            )
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                if (form.restartOnTimeout) {
+                                    "If Auto runs out of time, the app stops it and starts it " +
+                                        "again by itself, twice at most. After that it reports the " +
+                                        "failure instead of trying all night."
+                                } else {
+                                    "Off: when Auto runs out of time the connect fails and you " +
+                                        "are told why. Nothing is retried on its own."
+                                },
+                                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                                color = DeltaTor.Muted
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        ToggleSwitch(
+                            checked = form.restartOnTimeout,
+                            onCheckedChange = {
+                                form.restartOnTimeout = it
+                                Config.restartOnTimeout = it
+                            }
+                        )
+                    }
                 }
             }
             Spacer(Modifier.height(20.dp))

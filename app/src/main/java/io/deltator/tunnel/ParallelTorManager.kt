@@ -161,6 +161,17 @@ object ParallelTorManager {
 
     fun bundledAssetName(url: String): String = url.substringAfterLast('/')
 
+    /**
+     * Thrown when the race runs out of time with nothing at 100%.
+     *
+     * Its own type rather than a message the service has to recognise, because
+     * "timed out" is the one failure the service treats differently: it is the
+     * user-visible sign that a restart is worth trying, and matching on wording
+     * would break the moment the sentence was reworded.
+     */
+    class RaceTimeout(minutes: Int) :
+        RuntimeException("No transport reached 100% within $minutes min")
+
     private const val RACE_TIMEOUT_MS = 1_800_000L
 
     /** A recovery restart is expected to be quick: proven bridges, same port. */
@@ -442,7 +453,7 @@ object ParallelTorManager {
             if (System.currentTimeMillis() >= deadline) {
                 stopAll()
                 val minutes = RACE_TIMEOUT_MS / 60_000
-                throw RuntimeException("No transport reached 100% within $minutes min")
+                throw RaceTimeout(minutes.toInt())
             }
 
             delay(POLL_INTERVAL_MS)
