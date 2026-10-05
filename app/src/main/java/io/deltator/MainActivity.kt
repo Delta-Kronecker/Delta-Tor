@@ -206,29 +206,25 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
+        // Persian first. It is the app's own language and the one this notice was
+        // written in; the other two are there because the people who need it are
+        // not all reading the same script.
         AppState.NoticeBlock(
-            "Please be patient on your first 2-3 connections\n" +
-                "After a successful connection, DeltaTor remembers the connection paths " +
-                "and adds them as «Memory Mode»\n" +
-                "As a result, the time needed to connect will decrease in later attempts"
-        ),
-        // Marked right-to-left because the text is Persian. Without it this
-        // block is laid out left-to-right and its lines come out visually
-        // reordered: the bidi algorithm takes the paragraph direction from the
-        // first strong character it finds, not from the language of the text,
-        // so the bracketed term and the full stop end up on the wrong side.
-        AppState.NoticeBlock(
-            "لطفاً در 2-3 اتصال اول صبور باشید.\n" +
-                "پس از یک اتصال موفق، دلتاتور مسیرهای اتصال را به‌خاطر می‌سپارد و آن‌ها را به «حالت حافظه» اضافه می‌کند.\n" +
-                "در نتیجه، زمان لازم برای اتصال در تلاش‌های بعدی کاهش خواهد یافت.",
-            rtl = true
+            text = "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
+            rtl = true,
+            lead = "لطفاً در اولین اتصال صبور باشید"
         ),
         AppState.NoticeBlock(
-            "Пожалуйста, будьте терпеливы при первых 2-3 подключениях\n" +
-                "После успешного подключения DeltaTor запоминает пути подключения и " +
-                "добавляет их в режим «памяти»\n" +
-                "В результате время, необходимое для подключения, сократится при следующих " +
-                "попытках"
+            text = "After every successful connection, DeltaTor remembers the connection " +
+                "paths it used on your network, and after about 2 to 3 connections the time " +
+                "a connect takes comes down.",
+            lead = "Please be patient on your first connection"
+        ),
+        AppState.NoticeBlock(
+            text = "После каждого успешного подключения DeltaTor запоминает пути подключения, " +
+                "которые он использовал в вашей сети, и после примерно 2-3 подключений время, " +
+                "необходимое для подключения, сокращается.",
+            lead = "Пожалуйста, будьте терпеливы при первом подключении"
         )
     )
 
@@ -588,6 +584,23 @@ private fun NoticeDialog(
                             LocalLayoutDirection provides LayoutDirection.Ltr
                         }
                     ) {
+                        // The lead is its own Text so it can be bolder. Splitting a
+                        // string into two Texts is the only way to do that without
+                        // building one with a SpanStyle inside, and the dialog
+                        // already lays out one Text per direction anyway.
+                        if (block.lead.isNotBlank()) {
+                            Text(
+                                block.lead,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Start,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 20.sp
+                                ),
+                                color = DeltaTor.Text
+                            )
+                            Spacer(Modifier.height(5.dp))
+                        }
                         Text(
                             block.text,
                             modifier = Modifier.fillMaxWidth(),
