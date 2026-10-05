@@ -32,7 +32,9 @@ object BridgeMemory {
                 .also { prefs = it }
         }
 
-    private fun key(name: String) = "healthy_$name"
+    private const val KEY_PREFIX = "healthy_"
+
+    private fun key(name: String) = "$KEY_PREFIX$name"
 
     /**
      * Fingerprints remembered for one transport, in the order they were proven.
@@ -78,9 +80,20 @@ object BridgeMemory {
         return newOnes.size
     }
 
+    /**
+     * Forget every remembered bridge.
+     *
+     * Swept by key prefix rather than by the transports listed in [TRANSPORTS]: a
+     * pool is written under whichever transport the runner was named after, and
+     * that set is not the same as the set that is counted. Custom mode is the case
+     * that bites -- it has bridges and remembers them, but it is not a transport
+     * anyone selects, so its pool was written, never counted, and never cleared.
+     */
     fun clear(context: Context) {
-        TRANSPORTS.forEach { prefs(context).edit().remove(key(it)).apply() }
-        Log.i(TAG, "memory cleared")
+        val store = prefs(context)
+        val stale = store.all.keys.filter { it.startsWith(KEY_PREFIX) }
+        stale.forEach { store.edit().remove(it).apply() }
+        Log.i(TAG, "memory cleared (${stale.size} pool(s))")
     }
 
     /**
