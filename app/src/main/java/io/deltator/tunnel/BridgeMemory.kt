@@ -21,6 +21,7 @@ object BridgeMemory {
     private const val TAG = "BridgeMemory"
     private const val PREFS = "deltator_bridge_memory"
     private const val MAX_PER_TRANSPORT = 60
+    private const val FINGERPRINT_HEX_LENGTH = 40
 
     @Volatile private var prefs: SharedPreferences? = null
 
@@ -33,12 +34,20 @@ object BridgeMemory {
 
     private fun key(name: String) = "healthy_$name"
 
-    /** Fingerprints remembered for one transport, in the order they were proven. */
+    /**
+     * Fingerprints remembered for one transport, in the order they were proven.
+     *
+     * Lower-cased on the way out. The bridges a list is searched by are written in
+     * one case and Tor writes them in the log in another, so storing them as they
+     * arrive means the two only agree if the two happen to agree; normalising here
+     * makes every comparison in the file case-insensitive without the caller
+     * having to remember to do it.
+     */
     fun healthy(context: Context, name: String): List<String> =
         prefs(context).getString(key(name), "")
             .orEmpty()
             .split(',')
-            .map { it.trim() }
+            .map { it.trim().lowercase() }
             .filter { it.isNotEmpty() }
 
     /** Every remembered fingerprint across all transports. */
@@ -58,7 +67,7 @@ object BridgeMemory {
      * [MAX_PER_TRANSPORT] entries. Returns how many were new.
      */
     fun remember(context: Context, name: String, fingerprints: Collection<String>): Int {
-        val valid = fingerprints.map { it.trim() }.filter { isFingerprint(it) }.distinct()
+        val valid = fingerprints.map { it.trim().lowercase() }.filter { isFingerprint(it) }.distinct()
         if (valid.isEmpty()) return 0
         val current = healthy(context, name)
         val newOnes = valid.filter { it !in current }
@@ -125,7 +134,16 @@ object BridgeMemory {
         }
     }
 
-    private fun isFingerprint(s: String) = s.length in 32..40 && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+    /**
+     * A bridge identity digest: exactly 40 hex characters, as Tor writes it and as
+     * [TorRunner] requires of a line before it is allowed near torrc.
+     *
+     * Exactly, not 32 to 40. A shorter string is not a bridge fingerprint, and one
+     * that reached the pool would be counted on the stats screen while matching no
+     * line in any list, taking up one of the pool's sixty slots.
+     */
+    private fun isFingerprint(s: String) =
+        s.length == FINGERPRINT_HEX_LENGTH && s.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     /**
      * The identity fingerprint of a bridge line. Prefixed lines
@@ -138,7 +156,7 @@ object BridgeMemory {
         if (parts.isEmpty()) return null
         val first = parts[0].lowercase()
         val idx = if (first in PLUGGABLE_PREFIXES) 2 else 1
-        val candidate = parts.getOrNull(idx) ?: return null
+        val candidate = parts.getOrNull(idx)?.lowercase() ?: return null
         return candidate.takeIf { isFingerprint(it) }
     }
 
