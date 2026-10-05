@@ -88,9 +88,14 @@ object ParallelTorManager {
     )
 
     /**
-     * What [TRANSPORT_COMBINED] is built from: every bridge list the app has
-     * except [TRANSPORT_FRESH], which is the small 72-hour set and is a mode of
-     * its own.
+     * What [TRANSPORT_COMBINED] is built from: vanilla, obfs4 and webtunnel.
+     *
+     * Not fresh, which is the small 72-hour set and a mode of its own, and not
+     * snowflake. Snowflake is left out because its list is two lines of
+     * documentation placeholders rather than a real set, so including it adds a
+     * runner that has nothing to offer and a transport lyrebird cannot serve. It
+     * is still there as its own mode and still races in auto, where a failure
+     * costs nothing because it is racing beside others.
      *
      * Unlike the others this is not a cached list of its own. It is the other
      * lists, so it is resolved from their caches at connect time and its count in
@@ -100,8 +105,7 @@ object ParallelTorManager {
     val COMBINED_SOURCES = listOf(
         TRANSPORT_VANILLA,
         TRANSPORT_OBFS4,
-        TRANSPORT_WEBTUNNEL,
-        TRANSPORT_SNOWFLAKE
+        TRANSPORT_WEBTUNNEL
     )
 
     /**

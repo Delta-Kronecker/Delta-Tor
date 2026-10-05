@@ -2928,7 +2928,7 @@ private fun LazyListScope.AdvancedItems(
                         ParallelTorManager.TRANSPORT_FRESH ->
                             "Every 72-hour collector list in one go: vanilla, obfs4 and webtunnel, IPv4 and IPv6, merged into a single list."
                         ParallelTorManager.TRANSPORT_COMBINED ->
-                            "Every bridge the app has except Fresh: the vanilla, obfs4, webtunnel and snowflake lists merged into a single list."
+                            "Every bridge except Fresh: the vanilla, obfs4 and webtunnel lists merged into a single list."
                         ParallelTorManager.TRANSPORT_VANILLA -> "Plain bridges, no pluggable transport."
                         ParallelTorManager.TRANSPORT_OBFS4 -> "obfs4 only, via lyrebird."
                         ParallelTorManager.TRANSPORT_WEBTUNNEL -> "webtunnel only, via lyrebird. Needs IPv6."
