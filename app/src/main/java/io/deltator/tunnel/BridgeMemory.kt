@@ -79,24 +79,36 @@ object BridgeMemory {
     fun countAll(context: Context): Int = allHealthy(context).size
 
     /**
-     * Add fingerprints proven by [name] to its pool, keeping the most recent
-     * [MAX_PER_TRANSPORT] entries. Returns how many were new.
+     * Add fingerprints proven by [name] to its pool, keeping the most recently
+     * proven [MAX_PER_TRANSPORT] entries. Returns how many were new to the pool.
      *
-     * A fingerprint already in the pool is not added again, so the pool fills with
-     * distinct bridges rather than with the same ones counted once per attempt.
-     * Nothing is ever dropped for being proven twice: that is what makes the pool
-     * survive a few connects on the same working bridges.
+     * Every bridge proven this time goes to the front, whether or not it was
+     * already in there. A bridge that works again today has just been shown to work,
+     * and leaving it where it was meant three hundred newer-looking entries could
+     * push it out of a pool of three hundred -- a bridge discarded for being old
+     * that was working an hour ago. So the order is the order of proof: what this
+     * connect proved, then whatever else the pool held, unchanged, and the tail past
+     * the ceiling falls off, which is the least recently proven and therefore the
+     * least likely to still be there.
+     *
+     * Duplicates within one call are collapsed, so a runner that fetched the same
+     * bridge twice does not give it two slots.
      */
     fun remember(context: Context, name: String, fingerprints: Collection<String>): Int {
-        val valid = fingerprints.map { it.trim().lowercase() }.filter { isFingerprint(it) }.distinct()
-        if (valid.isEmpty()) return 0
+        val proven = fingerprints.map { it.trim().lowercase() }.filter { isFingerprint(it) }.distinct()
+        if (proven.isEmpty()) return 0
         val current = healthy(context, name)
-        val newOnes = valid.filter { it !in current }
-        if (newOnes.isEmpty()) return 0
-        val merged = (newOnes + current).take(MAX_PER_TRANSPORT)
+        val fresh = proven.filter { it !in current }
+        val rest = current.filter { it !in proven }
+        val merged = (proven + rest).take(MAX_PER_TRANSPORT)
+        if (merged == current) return 0
         prefs(context).edit().putString(key(name), merged.joinToString(",")).apply()
-        Log.i(TAG, "memory[$name]: +${newOnes.size} healthy bridge(s), pool=${merged.size}")
-        return newOnes.size
+        Log.i(
+            TAG,
+            "memory[$name]: +${fresh.size} new, ${proven.size - fresh.size} re-proven, " +
+                "pool=${merged.size}"
+        )
+        return fresh.size
     }
 
     /**
