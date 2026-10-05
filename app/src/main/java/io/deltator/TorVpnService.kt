@@ -411,7 +411,8 @@ class TorVpnService : VpnService() {
                 sessionId = currentSession,
                 transportMode = Config.transportMode,
                 customBridges = Config.customBridges,
-                autoTransports = Config.autoTransports
+                autoTransports = Config.autoTransports,
+                runMemory = Config.runMemory
             ) { snapshot ->
                 val progress = snapshot.mapValues { (name, r) -> if (r.failed != null) -1 else r.progress() }
                 AppState.update { it.copy(transports = progress) }

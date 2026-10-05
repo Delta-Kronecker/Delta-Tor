@@ -2067,6 +2067,76 @@ private fun AutoRecoveryButton(on: Boolean, onToggle: () -> Unit) {
 
 @Composable
 /**
+ * Whether the proven bridges get raced, as a separate line rather than another
+ * mode: it is not a transport, it changes nothing about which bridges are in the
+ * list, and it has to be visible for the modes it applies to, which is all of
+ * them except direct and custom.
+ */
+private fun RunMemoryButton(on: Boolean, onToggle: () -> Unit) {
+    Column(Modifier.fillMaxWidth()) {
+        DividerLine()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "RUN MEMORY",
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.3.sp
+                    ),
+                    color = DeltaTor.Text
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    if (on) {
+                        "On. The bridges that already worked here race beside the mode " +
+                            "you picked, e.g. webtunnel-memory."
+                    } else {
+                        "Off. Only the mode you picked is connected, with nothing beside " +
+                            "it. Healthy bridges are still read from the log and still " +
+                            "added to that mode's memory list, so the next connect is " +
+                            "still faster -- this connect just does not get to use them."
+                    },
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (on) DeltaTor.Green.copy(alpha = 0.18f) else DeltaTor.SurfaceAlt,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .border(
+                        1.dp,
+                        if (on) DeltaTor.Green else DeltaTor.BorderLight,
+                        RoundedCornerShape(12.dp)
+                    )
+                    .clickable(onClick = onToggle)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (on) "ON" else "OFF",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.2.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = if (on) DeltaTor.GreenLight else DeltaTor.Muted
+                )
+            }
+        }
+    }
+}
+
+@Composable
+/**
  * One mode's numbers: the whole list, and how much of it is already proven.
  *
  * The memory line is the more useful half once a mode has been used: it is what
@@ -2857,6 +2927,7 @@ private class AdvancedForm {
     var customBridges by mutableStateOf(Config.customBridges)
     var autoTransports by mutableStateOf(Config.autoTransports)
     var autoRecovery by mutableStateOf(Config.autoRecovery)
+    var runMemory by mutableStateOf(Config.runMemory)
     var loggingOn by mutableStateOf(Config.loggingEnabled)
     var proxyOnly by mutableStateOf(Config.proxyOnlyMode)
     var splitOn by mutableStateOf(Config.splitTunnelEnabled)
@@ -2957,11 +3028,14 @@ private fun LazyListScope.AdvancedItems(
                 )
                 if (form.transportMode in ParallelTorManager.TWINNED_MODES) {
                     // Single-transport modes are not single-runner modes: the
-                    // memory twin races next to them, so say that up front.
+                    // memory twin races next to them, so say that up front. Unless
+                    // the twin has been turned off below, which is why it says what
+                    // it is rather than promising it.
                     Text(
                         "Every bridge list also gets a memory twin: the bridges " +
                             "that worked in this transport are pulled from the log and " +
-                            "race beside it, e.g. ${form.transportMode}-memory.",
+                            "race beside it, e.g. ${form.transportMode}-memory. " +
+                            "RUN MEMORY below turns that twin off for a connect.",
                         style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                         color = DeltaTor.Muted.copy(alpha = 0.85f),
                         modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
@@ -2973,6 +3047,14 @@ private fun LazyListScope.AdvancedItems(
                         val next = !form.autoRecovery
                         form.autoRecovery = next
                         Config.autoRecovery = next
+                    }
+                )
+                RunMemoryButton(
+                    on = form.runMemory,
+                    onToggle = {
+                        val next = !form.runMemory
+                        form.runMemory = next
+                        Config.runMemory = next
                     }
                 )
             }
