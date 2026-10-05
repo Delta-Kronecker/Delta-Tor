@@ -239,6 +239,10 @@ object ParallelTorManager {
      *        every other mode, which always runs exactly one transport.
      * @param onProgress called every [POLL_INTERVAL_MS] with a live snapshot,
      *        including runners that have not finished starting yet.
+     * @param runMemory whether to race the proven bridges as well. False starts
+     *        the chosen mode's runner alone. It does not stop the log being read:
+     *        whatever proves itself on this connect is still recorded into the
+     *        pool for its transport, it just does not get raced for this one.
      */
     suspend fun race(
         context: Context,
@@ -247,6 +251,7 @@ object ParallelTorManager {
         transportMode: String,
         customBridges: String,
         autoTransports: Set<String>,
+        runMemory: Boolean = true,
         onProgress: (Map<String, TorRunner>) -> Unit
     ): TorRunner {
         stopAll()
@@ -313,17 +318,21 @@ object ParallelTorManager {
         //    of that very transport, `webtunnel-memory` next to `webtunnel`
         // Direct and custom mode have no memory twin: there are no bridges to
         // remember, or the user asked for one exact set.
+        //
+        // With runMemory off there is no memory runner in any shape, so a connect
+        // is exactly the mode that was chosen and one runner's worth of bridges.
         val singleTransport: String? = when {
             mode == TRANSPORT_AUTO && autoNames.size == 1 -> autoNames.first()
             mode in TWINNED_MODES -> mode
             else -> null
         }
-        val mixedMemoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1) {
+        val mixedMemoryLines = if (mode == TRANSPORT_AUTO && autoNames.size > 1 && runMemory) {
             BridgeMemory.bridgeLinesFor(context, lines)
         } else {
             null
         }
-        val twinMemoryLines = singleTransport?.let { BridgeMemory.bridgeLinesFor(context, lines, it) }
+        val twinMemoryLines =
+            if (runMemory) singleTransport?.let { BridgeMemory.bridgeLinesFor(context, lines, it) } else null
         val twinName = singleTransport?.let { memoryNameFor(it) }
         if (mixedMemoryLines != null) {
             val n = mixedMemoryLines.lines().count { it.isNotBlank() }
@@ -338,7 +347,14 @@ object ParallelTorManager {
                 "reusing $n previously proven $singleTransport bridge(s)"
             )
         }
-        if (mixedMemoryLines == null && twinMemoryLines == null) {
+        if (!runMemory) {
+            // Only the runners are off. The runner that does start still reads its
+            // own log and still records what worked, so the pools for this
+            // transport keep filling from this connect; only the chance to connect
+            // through a remembered bridge is gone.
+            Log.i(TAG, "Memory runner: off by choice, racing the selected mode only")
+            Log.i(TAG, "Memory runner: proven bridges from this connect are still recorded")
+        } else if (mixedMemoryLines == null && twinMemoryLines == null) {
             Log.i(TAG, "Memory runner: nothing proven yet for this mode, racing without it")
         }
 

@@ -142,6 +142,24 @@ object Config {
         set(value) = prefs.edit().putBoolean("proxy_only_mode", value).apply()
 
     /**
+     * Whether a connect also races the bridges this app has already proven.
+     *
+     * This is a toggle about the *runners*, not about the learning. Turning it off
+     * does not stop DeltaTor from reading the log and remembering what worked: a
+     * bridge that reaches the end of a bootstrap is still recorded into the pool
+     * for the transport it proved itself on, and the next connect is still faster
+     * for having done so. What it stops is the memory runner itself, so the
+     * connect races the mode that was chosen and nothing beside it.
+     *
+     * That is the right thing to want when the mode was chosen to be watched: a
+     * runner named `webtunnel-memory` that wins the race hands over a connection
+     * whose whole point was not webtunnel. It is also the only way to find out
+     * whether the chosen transport is working, since a remembered bridge
+     * otherwise gets there first and hides it.
+     *
+     * On by default, because that is what made later connects faster.
+     */
+    /**
      * Whether the app may change the plan by itself when a connect stops moving.
      *
      * On means the app keeps its existing rule: a connect that makes no progress
@@ -158,6 +176,10 @@ object Config {
      * do to someone who never asked for it, and the button that turns it on is in
      * the drawer next to the mode it changes.
      */
+    var runMemory: Boolean
+        get() = prefs.getBoolean("run_memory", true)
+        set(value) = prefs.edit().putBoolean("run_memory", value).apply()
+
     var autoRecovery: Boolean
         get() = prefs.getBoolean("auto_recovery", false)
         set(value) = prefs.edit().putBoolean("auto_recovery", value).apply()
