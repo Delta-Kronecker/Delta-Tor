@@ -141,6 +141,19 @@ object BridgeStore {
         }
     }
 
+    /**
+     * Push only the memory counts, for when a connect has just proven bridges.
+     *
+     * [refreshState] re-counts every cached list, which is wasted work here: the
+     * lists did not change, only the pools did. And the pool numbers are the ones
+     * written during a connect, so reading them from the next app start onwards
+     * means the mem figure on screen sits at its old value for the whole session
+     * in which it actually grew.
+     */
+    fun refreshMemory(context: Context) {
+        AppState.updateBridge { it.copy(memory = BridgeMemory.countsByTransport(context)) }
+    }
+
     /** Kick off a background bridge update; the UI observes progress via [AppState]. */
     fun update(context: Context) {
         if (updateInProgress) return

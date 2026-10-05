@@ -512,6 +512,9 @@ object ParallelTorManager {
             "memory[$transport] updated: ${proven.size} working bridge(s), +$added new " +
                 "(pool ${BridgeMemory.count(context, transport)})"
         )
+        // The stats on screen carry a mem figure, and it was just written, so it
+        // moves now rather than at the next app start.
+        BridgeStore.refreshMemory(context)
     }
 
     /**
