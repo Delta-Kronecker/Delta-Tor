@@ -23,18 +23,18 @@ object BridgeMemory {
     /**
      * How many proven bridges one transport keeps.
      *
-     * Two hundred, which is two full attempts' worth: [TorRunner] is given at most
-     * a hundred lines and every attempt draws a different hundred from here, so
-     * beyond two hundred the extra entries are not used this time or next, they
-     * only wait. This used to be sixty, which was a ceiling chosen when the list
-     * was used exactly as ordered; now the order is shuffled per attempt, and a
-     * pool that holds two attempts' worth gets every bridge in it a turn.
+     * Three hundred, which is two full attempts' worth: [TorRunner] is given at
+     * most a hundred and fifty lines and every attempt draws a different hundred
+     * and fifty from here, so beyond three hundred the extra entries are not used
+     * this time or next, they only wait. This used to be sixty, a ceiling chosen
+     * when the list was used exactly as ordered; now the order is shuffled per
+     * attempt, and a pool holding two attempts' worth gets every entry a turn.
      *
      * Older entries fall off the end. Nothing reports which bridge stopped
      * working, so age is the only ranking available, and a bridge that was proven
      * a long time ago and not since is the one most likely to be gone.
      */
-    private const val MAX_PER_TRANSPORT = 200
+    private const val MAX_PER_TRANSPORT = 300
     private const val FINGERPRINT_HEX_LENGTH = 40
 
     @Volatile private var prefs: SharedPreferences? = null
