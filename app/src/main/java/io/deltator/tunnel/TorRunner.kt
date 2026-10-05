@@ -259,20 +259,23 @@ class TorRunner(
         } else {
             i += CACHED_MARKER.length
         }
-        val hex = StringBuilder()
-        while (i < line.length && line[i] != '~' && hex.length < 40) {
+        // Hex only, and all of it. A partial or non-hex fingerprint is worse than
+        // none: it is stored, it counts towards the pool shown on the stats screen,
+        // and it matches no line in any list, so it can never become a bridge. The
+        // scan therefore stops at the first character that is not hex rather than
+        // accepting whatever is alphanumeric.
+        val hex = StringBuilder(FINGERPRINT_HEX_LENGTH)
+        while (i < line.length && line[i] != '~' && hex.length < FINGERPRINT_HEX_LENGTH) {
             val c = line[i]
-            if (c.isLetterOrDigit()) {
-                hex.append(c)
-                i++
-            } else if (c == '$') {
-                i++
-            } else {
-                break
-            }
+            if (c !in '0'..'9' && c !in 'a'..'f' && c !in 'A'..'F') break
+            hex.append(c)
+            i++
         }
-        val fp = hex.toString()
-        if (fp.length == 32 || fp.length == 40) {
+        // Lower-cased on the way in, because the lists are lower-cased and a
+        // fingerprint is the same fingerprint in either case. Matching them
+        // case-sensitively is a pool that fills up and never matches anything.
+        val fp = hex.toString().lowercase()
+        if (fp.length == FINGERPRINT_HEX_LENGTH) {
             synchronized(healthyBridges) { healthyBridges.add(fp) }
         }
     }
@@ -695,10 +698,12 @@ class TorRunner(
 
     /** A bridge identity digest is always 40 hex characters. */
     private fun isFingerprint(token: String): Boolean =
-        token.length == 40 && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+        token.length == FINGERPRINT_HEX_LENGTH &&
+            token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     companion object {
         private const val MAX_BRIDGE_LINES = 100
+        private const val FINGERPRINT_HEX_LENGTH = 40
         private const val TERMINATE_TIMEOUT_MS = 2_000L
         private const val TAG_EXIT = "ExitNode"
         private const val CACHED_MARKER = "(cached): \$"

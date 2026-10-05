@@ -492,12 +492,17 @@ object ParallelTorManager {
     }
 
     /**
-     * Store the bridges a 100% runner proved and, when it is the memory runner,
-     * drop the ones that just died so the pool cannot lock onto a dead set.
+     * Store the bridges a 100% runner proved.
      *
      * The proof is always filed under the real transport, never under the runner
      * name: a `webtunnel-memory` twin teaches the webtunnel pool, so both the
      * twin and the plain webtunnel runner benefit from it next time.
+     *
+     * The pool is only ever added to. A bridge that stops working is not noticed
+     * from here -- it is one line in a list of hundreds, and the runner does not
+     * say which one it gave up on -- so the cost of carrying one is a wasted
+     * attempt now and then, against a pool capped at sixty per transport, where
+     * each connect puts its own proven bridges at the front.
      */
     private fun recordMemory(context: Context, sessionId: Int, runner: TorRunner) {
         val proven = runner.healthyBridges()
@@ -570,8 +575,10 @@ object ParallelTorManager {
         // connection into a reconnect from zero. It now takes the reserved port.
         val fixedPorts = runnerPorts(basePort)
         val plans = buildList {
-            add(name to cached)
-            if (twinLines != null && fixedPorts.containsKey(twin)) add(twin to twinLines)
+            // Re-shuffled, like any other attempt: the lines that just failed are
+            // the ones this restart is least likely to get through first.
+            add(name to shuffled(cached))
+            if (twinLines != null && fixedPorts.containsKey(twin)) add(twin to shuffled(twinLines))
         }
         val ports = plans.associate { (planName, _) ->
             planName to (lastPorts[planName] ?: fixedPorts.getValue(planName))
