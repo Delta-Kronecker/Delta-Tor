@@ -116,7 +116,32 @@ object ParallelTorManager {
      */
     const val MEMORY_SUFFIX = "-memory"
 
+    /**
+     * How many remembered bridges a memory runner connects on.
+     *
+     * The newest fifty, in the order they were proven, and deliberately not
+     * shuffled. A pool is already ranked -- [BridgeMemory] puts each connect's
+     * proven bridges at the front and drops the oldest past its ceiling -- so
+     * shuffling a pool throws away the only information it carries to try a bridge
+     * the app knows is older than one that just worked. Fifty is a list Tor can
+     * get through without spending minutes on it, and the rest of the pool waits
+     * for a later connect to prove itself again and move up.
+     */
+    const val MEMORY_RUNNER_LINES = 50
+
     fun memoryNameFor(transport: String): String = "$transport$MEMORY_SUFFIX"
+
+    /**
+     * Whether this runner exists only to reuse remembered bridges: the mixed
+     * `memory` runner or any `<transport>-memory` twin. Those are the runners the
+     * [shuffled] order does not apply to.
+     */
+    fun isMemoryRunner(name: String): Boolean =
+        name == TRANSPORT_MEMORY || name.endsWith(MEMORY_SUFFIX)
+
+    /** The newest [MEMORY_RUNNER_LINES] of a pool, which is what it arrives as. */
+    private fun memoryRunnerLines(lines: String): String =
+        lines.lineSequence().filter { it.isNotBlank() }.take(MEMORY_RUNNER_LINES).joinToString("\n")
 
     /** The real transport behind a runner name (`webtunnel-memory` -> `webtunnel`). */
     fun baseTransportOf(name: String): String = name.substringBefore(MEMORY_SUFFIX)
@@ -181,7 +206,8 @@ object ParallelTorManager {
      *
      * Blank lines are dropped instead of being shuffled about, since nothing reads
      * them. Each runner is shuffled on its own, so two runners racing in the same
-     * connect do not hand Tor the same sequence.
+     * connect do not hand Tor the same sequence. Memory runners are not passed
+     * through here at all; see [isMemoryRunner].
      */
     private fun shuffled(lines: String): String =
         lines.lineSequence().filter { it.isNotBlank() }.toList().shuffled().joinToString("\n")
@@ -395,16 +421,17 @@ object ParallelTorManager {
             throw RuntimeException("No bridges available for $mode")
         }
 
-        // Every attempt gets its own order, per runner. The order means nothing to
-        // Tor, which tries them in turn until one works, but it means something to
-        // the network: the first bridge in the list is the one every attempt
-        // reaches first, so a list whose order never changes means every attempt
-        // starts in the same place. If that place is blocked, the app pays the
-        // same timeout again and again while a bridge that works sits one line
-        // further down. A new order each time gives the whole list its turn over a
-        // few attempts.
-        val shuffledPlans = plans.map { (name, bridgeLines) ->
-            name to shuffled(bridgeLines)
+        // Every attempt gets its own order, per runner -- except the memory runners,
+        // which keep the order the pool already has. The order means nothing to Tor,
+        // which tries them in turn until one works, but it means something to the
+        // network: the first bridge in the list is the one every attempt reaches
+        // first, so a list whose order never changes means every attempt starts in
+        // the same place. If that place is blocked, the app pays the same timeout
+        // again and again while a bridge that works sits one line further down. A
+        // new order each time gives the whole list its turn over a few attempts.
+        val preparedPlans = plans.map { (name, bridgeLines) ->
+            if (isMemoryRunner(name)) name to memoryRunnerLines(bridgeLines)
+            else name to shuffled(bridgeLines)
         }
 
         val planNames = plans.map { it.first }.toSet()
@@ -413,7 +440,7 @@ object ParallelTorManager {
 
         val gen = beginRunners()
 
-        shuffledPlans.forEach { (name, bridgeLines) ->
+        preparedPlans.forEach { (name, bridgeLines) ->
             val runner = TorRunner(context, name, allPorts.getValue(name), bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
@@ -591,9 +618,12 @@ object ParallelTorManager {
         val fixedPorts = runnerPorts(basePort)
         val plans = buildList {
             // Re-shuffled, like any other attempt: the lines that just failed are
-            // the ones this restart is least likely to get through first.
-            add(name to shuffled(cached))
-            if (twinLines != null && fixedPorts.containsKey(twin)) add(twin to shuffled(twinLines))
+            // the ones this restart is least likely to get through first. A memory
+            // runner keeps the pool's own order and takes its newest fifty.
+            add(name to if (isMemoryRunner(name)) memoryRunnerLines(cached) else shuffled(cached))
+            if (twinLines != null && fixedPorts.containsKey(twin)) {
+                add(twin to memoryRunnerLines(twinLines))
+            }
         }
         val ports = plans.associate { (planName, _) ->
             planName to (lastPorts[planName] ?: fixedPorts.getValue(planName))
