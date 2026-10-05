@@ -95,17 +95,19 @@ object Config {
     /**
      * Which transport a fresh install connects with.
      *
-     * Webtunnel rather than auto, because auto is not a safe first impression: it
-     * races three bridge lists, and on the censored networks this app exists for,
-     * vanilla and obfs4 are the two most likely to be blocked, so the user watches
-     * three runners crawl before the one that works is even tried. Webtunnel goes
-     * through an HTTPS CONNECT to a CDN-fronted endpoint, which is the shape most
-     * likely to be reachable, and it fails honestly and quickly when it is not.
+     * Combined-Bridge, which is every cached list in one runner: vanilla, obfs4 and
+     * webtunnel at the same time. Not auto, because auto is not a safe first
+     * impression -- it races the same lists plus snowflake, and on the censored
+     * networks this app exists for snowflake is the one that most often cannot be
+     * reached at all, so it sits there for the whole connect contributing nothing.
+     * And not a single list either: picking one transport means betting the first
+     * connect on that one being open, while combined races the three and takes
+     * whichever gets there first.
      *
      * Only the fallback moves. An install that already has a stored choice keeps
      * it, because nobody wants a preference they set silently rewritten.
      */
-    const val DEFAULT_TRANSPORT_MODE = "webtunnel"
+    const val DEFAULT_TRANSPORT_MODE = "combined"
 
     var transportMode: String
         // "auto","vanilla","obfs4","webtunnel","snowflake","direct","custom"
@@ -152,10 +154,12 @@ object Config {
      * the choice replaced, and anyone watching the log, where the swap explains
      * nothing about why their mode died.
      *
-     * On by default. The user is the one who can turn it off.
+     * Off by default. The app rewriting a mode the user chose is a big thing to
+     * do to someone who never asked for it, and the button that turns it on is in
+     * the drawer next to the mode it changes.
      */
     var autoRecovery: Boolean
-        get() = prefs.getBoolean("auto_recovery", true)
+        get() = prefs.getBoolean("auto_recovery", false)
         set(value) = prefs.edit().putBoolean("auto_recovery", value).apply()
 
     /**
