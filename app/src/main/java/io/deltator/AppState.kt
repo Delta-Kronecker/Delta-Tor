@@ -40,7 +40,13 @@ object AppState {
      * into blocks lets each be laid out in its own direction, which is the only
      * way to get the Persian one to read right-to-left.
      */
-    data class NoticeBlock(val text: String, val rtl: Boolean = false)
+    /**
+     * @param lead an optional opening line, drawn bolder than the rest. Used by
+     * the first-run explainer, where "be patient" is the instruction and
+     * everything after it is the explanation, and the two are not the same size of
+     * thing.
+     */
+    data class NoticeBlock(val text: String, val rtl: Boolean = false, val lead: String = "")
 
     /**
      * A notice the user never asked for and cannot miss.
