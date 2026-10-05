@@ -2028,8 +2028,10 @@ private fun AutoRecoveryButton(on: Boolean, onToggle: () -> Unit) {
                             "a minute, the app stops it, switches the mode to auto and starts " +
                             "again -- once per connect, since the mode is auto by then."
                     } else {
-                        "Off. A connect that makes no progress is left alone: the mode you " +
-                            "picked is the one that fails, and nothing is switched for you."
+                        "Off. If a connect is not in auto and its progress has not " +
+                            "moved for a minute, the app does nothing: the runners stay " +
+                            "on it until one connects or all of them fail, and the mode " +
+                            "is never switched for you."
                     },
                     style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                     color = DeltaTor.Muted
