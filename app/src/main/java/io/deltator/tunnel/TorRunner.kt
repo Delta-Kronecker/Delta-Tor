@@ -282,7 +282,8 @@ class TorRunner(
 
     /**
      * Start the PT (if needed) and the Tor process for this transport.
-     * Bridge lines are capped to [MAX_BRIDGE_LINES] to keep torrc manageable.
+     * Bridge lines are capped to [MAX_BRIDGE_LINES], taken from the end of a list
+     * that has already been shuffled, so which lines are used differs per attempt.
      */
     fun start(): Result<Unit> {
         stop()
@@ -702,7 +703,17 @@ class TorRunner(
             token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
 
     companion object {
-        private const val MAX_BRIDGE_LINES = 100
+        /**
+         * How many bridge lines one runner is given.
+         *
+         * Every attempt draws this many out of a shuffled list, so it is a slice of
+         * the whole list rather than the head of it, and raising it costs time
+         * rather than accuracy: Tor tries them in order and a blocked one costs a
+         * timeout each. It sits under [BridgeMemory.MAX_PER_TRANSPORT] so that a
+         * pool can still fill two attempts' worth, and the two are what they are
+         * because the pool is the knowledge and this is one read of it.
+         */
+        private const val MAX_BRIDGE_LINES = 150
         private const val FINGERPRINT_HEX_LENGTH = 40
         private const val TERMINATE_TIMEOUT_MS = 2_000L
         private const val TAG_EXIT = "ExitNode"
