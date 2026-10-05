@@ -432,67 +432,82 @@ object ParallelTorManager {
         // Runners already proven in an earlier poll, so two runners finishing in
         // the same tick both contribute their bridges to the memory.
         val recorded = mutableSetOf<String>()
+        var lastSeen = emptyMap<String, TorRunner>()
 
         val deadline = System.currentTimeMillis() + RACE_TIMEOUT_MS
-        while (true) {
-            checkGeneration(gen)
-            val snapshot = synchronized(runnersLock) { runners.toMap() }
-            onProgress(snapshot)
+        try {
+            while (true) {
+                checkGeneration(gen)
+                val snapshot = synchronized(runnersLock) { runners.toMap() }
+                lastSeen = snapshot
+                onProgress(snapshot)
 
-            // Mark runners whose Tor process died before completing. Read the
-            // real reason from their own per-transport log tail first.
-            snapshot.values.forEach { r ->
-                if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
-                    val reason = r.failureSummary()
-                    r.failed = reason
-                    Log.w(TAG, "${r.name} exited early: $reason")
-                    Log.transport(sessionId, r.name, 'E', TAG, "tor died: $reason")
+                // Mark runners whose Tor process died before completing. Read the
+                // real reason from their own per-transport log tail first.
+                snapshot.values.forEach { r ->
+                    if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
+                        val reason = r.failureSummary()
+                        r.failed = reason
+                        Log.w(TAG, "${r.name} exited early: $reason")
+                        Log.transport(sessionId, r.name, 'E', TAG, "tor died: $reason")
+                    }
                 }
-            }
 
-            // Every runner that reached 100% teaches the memory its working bridges.
-            snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+                // Every runner that reached 100% teaches the memory its working
+                // bridges there and then, so the win is banked before the losers are
+                // stopped rather than at the end of the race.
+                snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+                    .forEach { recordMemory(context, sessionId, it) }
+
+                val winner = snapshot.values.firstOrNull { it.isReady() }
+                if (winner != null) {
+                    Log.i(TAG, "Winner: ${winner.name} at ${winner.progress()}%")
+                    Log.transport(sessionId, winner.name, 'I', TAG, "*** WINNER *** bootstrapped 100%")
+                    snapshot.values.filter { it !== winner }.forEach {
+                        Log.i(TAG, "Stopping losing transport: ${it.name}")
+                        if (it.failed != null) {
+                            Log.transport(sessionId, it.name, 'E', TAG, "lost the race: ${it.failed}")
+                        }
+                        it.stop()
+                    }
+                    return winner
+                }
+
+                val live = snapshot.values.count { it.failed == null }
+                if (live == 0) {
+                    val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
+                    snapshot.values.forEach {
+                        Log.transport(sessionId, it.name, 'E', TAG, "final: ${it.failed}")
+                        it.logLines().takeLast(12).forEach { line ->
+                            Log.transport(sessionId, it.name, 'D', TAG, line)
+                        }
+                    }
+                    stopAll()
+                    throw RuntimeException("All transports failed ($details)")
+                }
+
+                if (System.currentTimeMillis() >= deadline) {
+                    stopAll()
+                    val minutes = RACE_TIMEOUT_MS / 60_000
+                    throw RuntimeException("No transport reached 100% within $minutes min")
+                }
+
+                delay(POLL_INTERVAL_MS)
+            }
+        } finally {
+            // Whatever any runner proved is kept, on every way out of here: a
+            // winner, a race where every runner failed, a timeout, a cancellation.
+            // A fetched bridge descriptor is the proof; the percentage is not. A
+            // runner that got two bridges and stalled at 60% knows those two
+            // bridges work, and without this they are thrown away with the runner
+            // that was stopped for losing.
+            lastSeen.values.filter { recorded.add(it.name) }
                 .forEach { recordMemory(context, sessionId, it) }
-
-            val winner = snapshot.values.firstOrNull { it.isReady() }
-            if (winner != null) {
-                Log.i(TAG, "Winner: ${winner.name} at ${winner.progress()}%")
-                Log.transport(sessionId, winner.name, 'I', TAG, "*** WINNER *** bootstrapped 100%")
-                snapshot.values.filter { it !== winner }.forEach {
-                    Log.i(TAG, "Stopping losing transport: ${it.name}")
-                    if (it.failed != null) {
-                        Log.transport(sessionId, it.name, 'E', TAG, "lost the race: ${it.failed}")
-                    }
-                    it.stop()
-                }
-                return winner
-            }
-
-            val live = snapshot.values.count { it.failed == null }
-            if (live == 0) {
-                val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
-                snapshot.values.forEach {
-                    Log.transport(sessionId, it.name, 'E', TAG, "final: ${it.failed}")
-                    it.logLines().takeLast(12).forEach { line ->
-                        Log.transport(sessionId, it.name, 'D', TAG, line)
-                    }
-                }
-                stopAll()
-                throw RuntimeException("All transports failed ($details)")
-            }
-
-            if (System.currentTimeMillis() >= deadline) {
-                stopAll()
-                val minutes = RACE_TIMEOUT_MS / 60_000
-                throw RuntimeException("No transport reached 100% within $minutes min")
-            }
-
-            delay(POLL_INTERVAL_MS)
         }
     }
 
     /**
-     * Store the bridges a 100% runner proved.
+     * Store the bridges a runner proved.
      *
      * The proof is always filed under the real transport, never under the runner
      * name: a `webtunnel-memory` twin teaches the webtunnel pool, so both the
@@ -608,6 +623,7 @@ object ParallelTorManager {
 
         val gen = beginRunners()
         val recorded = mutableSetOf<String>()
+        var lastSeen = emptyMap<String, TorRunner>()
         plans.forEach { (planName, bridgeLines) ->
             val runner = TorRunner(context, planName, ports.getValue(planName), bridgeLines)
             synchronized(runnersLock) { runners[planName] = runner }
@@ -622,38 +638,46 @@ object ParallelTorManager {
         }
 
         val deadline = System.currentTimeMillis() + RECOVERY_TIMEOUT_MS
-        while (true) {
-            checkGeneration(gen)
-            val snapshot = synchronized(runnersLock) { runners.toMap() }
-            onProgress(snapshot)
-            snapshot.values.forEach { r ->
-                if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
-                    r.failed = r.failureSummary()
-                    Log.transport(sessionId, r.name, 'E', TAG, "recovery: tor died: ${r.failed}")
+        try {
+            while (true) {
+                checkGeneration(gen)
+                val snapshot = synchronized(runnersLock) { runners.toMap() }
+                lastSeen = snapshot
+                onProgress(snapshot)
+                snapshot.values.forEach { r ->
+                    if (r.failed == null && r.started && !r.isReady() && !r.isRunning()) {
+                        r.failed = r.failureSummary()
+                        Log.transport(sessionId, r.name, 'E', TAG, "recovery: tor died: ${r.failed}")
+                    }
                 }
+                snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+                    .forEach { recordMemory(context, sessionId, it) }
+
+                snapshot.values.firstOrNull { it.isReady() }?.let { winner ->
+                    snapshot.values.filter { it !== winner }.forEach {
+                        Log.i(TAG, "Recovery: stopping ${it.name}")
+                        it.stop()
+                    }
+                    Log.transport(sessionId, winner.name, 'I', TAG, "*** RECOVERED *** 100% on port ${winner.torSocksPort}")
+                    return winner
+                }
+
+                if (snapshot.values.all { it.failed != null }) {
+                    val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
+                    stopAll()
+                    throw RuntimeException("Recovery failed ($details)")
+                }
+                if (System.currentTimeMillis() >= deadline) {
+                    stopAll()
+                    throw RuntimeException("Recovery of $name did not bootstrap in ${RECOVERY_TIMEOUT_MS / 1000}s")
+                }
+                delay(POLL_INTERVAL_MS)
             }
-            snapshot.values.filter { it.isReady() && recorded.add(it.name) }
+        } finally {
+            // As in race(): the descriptor lines this restart produced are proof
+            // whatever became of the restart itself.
+            lastSeen.values.filter { recorded.add(it.name) }
                 .forEach { recordMemory(context, sessionId, it) }
-
-            snapshot.values.firstOrNull { it.isReady() }?.let { winner ->
-                snapshot.values.filter { it !== winner }.forEach {
-                    Log.i(TAG, "Recovery: stopping ${it.name}")
-                    it.stop()
-                }
-                Log.transport(sessionId, winner.name, 'I', TAG, "*** RECOVERED *** 100% on port ${winner.torSocksPort}")
-                return winner
-            }
-
-            if (snapshot.values.all { it.failed != null }) {
-                val details = snapshot.values.joinToString(", ") { "${it.name}=${it.failed}" }
-                stopAll()
-                throw RuntimeException("Recovery failed ($details)")
-            }
-            if (System.currentTimeMillis() >= deadline) {
-                stopAll()
-                throw RuntimeException("Recovery of $name did not bootstrap in ${RECOVERY_TIMEOUT_MS / 1000}s")
-            }
-            delay(POLL_INTERVAL_MS)
         }
     }
 
