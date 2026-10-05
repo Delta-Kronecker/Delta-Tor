@@ -185,7 +185,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Tell a first-time user why their first connect is the slow one, once.
+     * Tell a first-time user why the first few connects are the slow ones, once.
      *
      * The flag is written before the notice is posted rather than when it is
      * dismissed, so a rotation or a process death mid-dialog cannot turn it into a
@@ -207,7 +207,7 @@ class MainActivity : ComponentActivity() {
 
     private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
         AppState.NoticeBlock(
-            "Please be patient on your first connection\n" +
+            "Please be patient on your first 2-3 connections\n" +
                 "After a successful connection, DeltaTor remembers the connection paths " +
                 "and adds them as «Memory Mode»\n" +
                 "As a result, the time needed to connect will decrease in later attempts"
@@ -218,13 +218,13 @@ class MainActivity : ComponentActivity() {
         // first strong character it finds, not from the language of the text,
         // so the bracketed term and the full stop end up on the wrong side.
         AppState.NoticeBlock(
-            "لطفاً در اولین اتصال صبور باشید.\n" +
+            "لطفاً در 2-3 اتصال اول صبور باشید.\n" +
                 "پس از یک اتصال موفق، دلتاتور مسیرهای اتصال را به‌خاطر می‌سپارد و آن‌ها را به «حالت حافظه» اضافه می‌کند.\n" +
                 "در نتیجه، زمان لازم برای اتصال در تلاش‌های بعدی کاهش خواهد یافت.",
             rtl = true
         ),
         AppState.NoticeBlock(
-            "Пожалуйста, будьте терпеливы при первом подключении\n" +
+            "Пожалуйста, будьте терпеливы при первых 2-3 подключениях\n" +
                 "После успешного подключения DeltaTor запоминает пути подключения и " +
                 "добавляет их в режим «памяти»\n" +
                 "В результате время, необходимое для подключения, сократится при следующих " +
