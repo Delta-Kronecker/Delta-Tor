@@ -2100,8 +2100,7 @@ private fun RunMemoryButton(on: Boolean, onToggle: () -> Unit) {
                     } else {
                         "Off. Only the mode you picked is connected, with nothing beside " +
                             "it. Healthy bridges are still read from the log and still " +
-                            "added to that mode's memory list, so the next connect is " +
-                            "still faster -- this connect just does not get to use them."
+                            "added to that mode's memory list."
                     },
                     style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                     color = DeltaTor.Muted
