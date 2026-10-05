@@ -99,12 +99,12 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.platform.ClipboardManager as ComposeClipboardManager
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.Clipboard
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -661,7 +661,7 @@ private fun ControlDrawer(
     onOpenSplitTunnel: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val bridges by AppState.bridgeState.collectAsStateWithLifecycle()
     // Not `AppState.state`: the bootstrap writes a new VpnState on every runner
     // progress snapshot, and a drawer that collects all of it recomposes dozens of
@@ -2966,11 +2966,11 @@ private fun LazyListScope.AdvancedItems(
     socksEndpoint: String,
     // Read by the composable caller and passed in. This function is a
     // LazyListScope builder, not a @Composable one, so it cannot call
-    // LocalClipboardManager.current itself -- and cannot do so inside a
-    // clickable lambda either, since that lambda is not composable. Aliased
-    // because android.content.ClipboardManager is imported at the top of this
-    // file for the connection-log copy, and two same-named imports are ambiguous.
-    clipboard: ComposeClipboardManager,
+    // LocalClipboard.current itself -- and cannot do so inside a clickable lambda
+    // either, since that lambda is not composable. Compose's own ClipboardManager
+    // is not what takes this any more, so the name no longer collides with the
+    // android one the connection-log copy uses.
+    clipboard: Clipboard,
     onUpdateBridges: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenSplitTunnel: () -> Unit
@@ -3184,6 +3184,9 @@ private fun LazyListScope.AdvancedItems(
         }
     }
     item(key = "adv-proxy-only") {
+        // For the SOCKS address copy further down, which is a suspending call
+        // since Compose moved its clipboard API off the composition.
+        val scope = rememberCoroutineScope()
         Column(Modifier.fillMaxWidth()) {
             SettingsCard {
                 CardTitle("PROXY ONLY")
@@ -3277,7 +3280,15 @@ private fun LazyListScope.AdvancedItems(
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
                             .clickable {
-                                clipboard.setText(AnnotatedString(copyTarget))
+                                // The current clipboard API suspends, so the copy
+                                // is launched rather than made inline. A plain
+                                // launch is enough: the write is one clip, and
+                                // nothing here waits to read it back.
+                                scope.launch {
+                                    clipboard.setClipEntry(
+                                        ClipEntry(ClipData.newPlainText("SOCKS5 address", copyTarget))
+                                    )
+                                }
                                 AppLog.i("UI", "Copied SOCKS endpoint $copyTarget")
                             }
                             .padding(vertical = 4.dp)
