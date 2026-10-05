@@ -177,6 +177,16 @@ object ParallelTorManager {
     private const val MAX_PORT_OFFSET = 15
 
     /**
+     * The same lines in a new order.
+     *
+     * Blank lines are dropped instead of being shuffled about, since nothing reads
+     * them. Each runner is shuffled on its own, so two runners racing in the same
+     * connect do not hand Tor the same sequence.
+     */
+    private fun shuffled(lines: String): String =
+        lines.lineSequence().filter { it.isNotBlank() }.toList().shuffled().joinToString("\n")
+
+    /**
      * The fixed runner<->port assignment. It is a function of [basePort] only, so a
      * runner keeps the same port across a recovery, and a runner that was not part
      * of the last race still has a known, reserved port to be restarted on.
@@ -385,13 +395,25 @@ object ParallelTorManager {
             throw RuntimeException("No bridges available for $mode")
         }
 
+        // Every attempt gets its own order, per runner. The order means nothing to
+        // Tor, which tries them in turn until one works, but it means something to
+        // the network: the first bridge in the list is the one every attempt
+        // reaches first, so a list whose order never changes means every attempt
+        // starts in the same place. If that place is blocked, the app pays the
+        // same timeout again and again while a bridge that works sits one line
+        // further down. A new order each time gives the whole list its turn over a
+        // few attempts.
+        val shuffledPlans = plans.map { (name, bridgeLines) ->
+            name to shuffled(bridgeLines)
+        }
+
         val planNames = plans.map { it.first }.toSet()
         lastPlans = plans.toMap()
         lastPorts = allPorts.filterKeys { it in planNames }
 
         val gen = beginRunners()
 
-        plans.forEach { (name, bridgeLines) ->
+        shuffledPlans.forEach { (name, bridgeLines) ->
             val runner = TorRunner(context, name, allPorts.getValue(name), bridgeLines)
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
