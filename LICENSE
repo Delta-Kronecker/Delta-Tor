@@ -9,9 +9,9 @@ https://github.com/Delta-Kronecker/DeltaTor (the "Repository").
 
 "The Core" means all source code, configuration templates, build scripts,
 workflow definitions, and documentation authored by the DeltaTor project for the
-DeltaTor launcher — including, without limitation, scripts/start-tor.cs,
-scripts/build-start-tor.ps1, scripts/bench.ps1,
-configs/torrc.jet, and .github/workflows/build.yml — but EXCLUDING third-party
+DeltaTor launcher — including, without limitation, Windrose/scripts/start-tor.cs,
+Windrose/scripts/build-start-tor.ps1, Windrose/scripts/bench.ps1,
+Windrose/configs/torrc.jet, and .github/workflows/build.yml — but EXCLUDING third-party
 components (tor, pluggable transports, and any other
 binaries or sources imported from upstream projects), which remain under their
 own respective licenses.

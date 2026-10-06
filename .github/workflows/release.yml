@@ -107,7 +107,7 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Make gradlew executable
-        run: chmod +x gradlew
+        run: chmod +x Android/gradlew
 
       - name: Decode release keystore
         # An empty secret here used to decode into a 0-byte file, pass `ls`, and
@@ -188,7 +188,7 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEYSTORE_STORE_TYPE: ${{ secrets.ANDROID_KEYSTORE_STORE_TYPE }}
-        run: ./gradlew assembleRelease --no-daemon -PdeltatorVersion=${{ steps.version.outputs.version }}
+        run: ./Android/gradlew -p Android assembleRelease --no-daemon -PdeltatorVersion=${{ steps.version.outputs.version }}
 
       - name: Collect per-ABI release APKs
         env:
@@ -196,7 +196,7 @@ jobs:
         run: |
           mkdir -p dist
           shopt -s nullglob
-          for apk in app/build/outputs/apk/release/app-*-release.apk; do
+          for apk in Android/app/build/outputs/apk/release/app-*-release.apk; do
             abi="$(basename "$apk" | sed -E 's/^app-(.+)-release\.apk$/\1/')"
             cp "$apk" "dist/deltator-$TAG_NAME-$abi.apk"
           done
@@ -220,7 +220,7 @@ jobs:
             echo "::error::no aapt2 found; cannot read the APK version"
             exit 1
           fi
-          # Same rule as app/build.gradle.kts: major*10000 + minor*100 + patch.
+          # Same rule as Android/app/build.gradle.kts: major*10000 + minor*100 + patch.
           MAJOR="${EXPECTED_VERSION%%.*}"
           REST="${EXPECTED_VERSION#*.}"
           MINOR="${REST%%.*}"

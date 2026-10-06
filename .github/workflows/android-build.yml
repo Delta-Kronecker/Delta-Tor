@@ -30,10 +30,10 @@ jobs:
             "ndk;29.0.14206865"
 
       - name: Make gradlew executable
-        run: chmod +x gradlew
+        run: chmod +x Android/gradlew
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: ./Android/gradlew -p Android assembleDebug --no-daemon
 
       - name: Package the three artifacts
         run: |
@@ -53,7 +53,7 @@ jobs:
           }
 
           # 1. The APK itself.
-          find app/build/outputs/apk -name '*.apk' -exec cp {} dist/stage/apk/ \;
+          find Android/app/build/outputs/apk -name '*.apk' -exec cp {} dist/stage/apk/ \;
           pack dist/stage/apk "$PWD/dist/deltator-debug-apk.zip"
 
           # 2. The sources, from the commit that was built, so the zip and the
@@ -63,9 +63,9 @@ jobs:
           # 3. Unstripped native libraries. Tor, lyrebird and hev-socks5-tunnel
           #    are C, and a stack trace from a crash is unreadable without these.
           for dir in \
-            app/build/intermediates/merged_native_libs \
-            app/build/intermediates/cxx \
-            app/build/intermediates/staged_native_libs
+            Android/app/build/intermediates/merged_native_libs \
+            Android/app/build/intermediates/cxx \
+            Android/app/build/intermediates/staged_native_libs
           do
             if [ -d "$dir" ]; then
               find "$dir" -name '*.so' -exec cp --parents {} dist/stage/symbols/ \;
