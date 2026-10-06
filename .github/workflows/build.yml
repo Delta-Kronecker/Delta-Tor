@@ -115,22 +115,22 @@ jobs:
       - name: Configure
         shell: msys2 {0}
         run: |
-          cd "$GITHUB_WORKSPACE/tor-src"
+          cd "$GITHUB_WORKSPACE/Windrose/tor-src"
           chmod +x configure
           ./configure --host=x86_64-w64-mingw32 \
             --disable-asciidoc --disable-man --disable-html-docs
 
       - name: Upload configure log (on failure)
-        if: failure() && hashFiles('tor-src/config.log') != ''
+        if: failure() && hashFiles('Windrose/tor-src/config.log') != ''
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
         with:
           name: config-log
-          path: tor-src/config.log
+          path: Windrose/tor-src/config.log
 
       - name: Build
         shell: msys2 {0}
         run: |
-          cd "$GITHUB_WORKSPACE/tor-src"
+          cd "$GITHUB_WORKSPACE/Windrose/tor-src"
           # No autotools are installed (the workflow never regenerates), so
           # stop make's maintainer-mode rules from trying: restamp generated
           # files strictly NEWER than their inputs (sources -> aclocal.m4 ->
@@ -148,15 +148,15 @@ jobs:
       - name: Smoke test
         shell: msys2 {0}
         run: |
-          cd "$GITHUB_WORKSPACE/tor-src"
+          cd "$GITHUB_WORKSPACE/Windrose/tor-src"
           ./src/app/tor.exe --version
 
       - name: Stage tor + runtime DLLs + geoip
         shell: msys2 {0}
         run: |
-          cd "$GITHUB_WORKSPACE/tor-src"
-          mkdir -p ../dist/data/bridges
-          cp src/app/tor.exe ../dist/data/
+          cd "$GITHUB_WORKSPACE/Windrose/tor-src"
+          mkdir -p $GITHUB_WORKSPACE/dist/data/bridges
+          cp src/app/tor.exe $GITHUB_WORKSPACE/dist/data/
 
           # Copy every DLL that tor.exe (and the DLLs it loads) imports from the
           # MSYS2 runtime dir, transitively, so the bundle is self-contained on
@@ -170,16 +170,16 @@ jobs:
             added=0
             for f in $NEED; do
               for d in $(objdump -p "$f" | awk '/DLL Name:/{print $3}'); do
-                if [ -f "$BIN/$d" ] && [ ! -f "../dist/data/$d" ]; then
-                  cp "$BIN/$d" ../dist/data/
-                  NEED="$NEED ../dist/data/$d"
+                if [ -f "$BIN/$d" ] && [ ! -f "$GITHUB_WORKSPACE/dist/data/$d" ]; then
+                  cp "$BIN/$d" $GITHUB_WORKSPACE/dist/data/
+                  NEED="$NEED $GITHUB_WORKSPACE/dist/data/$d"
                   added=1
                 fi
               done
             done
           done
-          cp src/config/geoip src/config/geoip6 ../dist/data/
-          ls ../dist/data/
+          cp src/config/geoip src/config/geoip6 $GITHUB_WORKSPACE/dist/data/
+          ls $GITHUB_WORKSPACE/dist/data/
 
       - name: Download transports
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0 (node24)
@@ -220,16 +220,16 @@ jobs:
       - name: Copy config template, snowflake bridge, README
         shell: pwsh
         run: |
-          Copy-Item "configs\torrc.jet" "dist\data\torrc.template" -Force
+          Copy-Item "Windrose\configs\torrc.jet" "dist\data\torrc.template" -Force
           # torrc.template.default is the pristine copy the in-app Torrc editor
           # RESETS to, so a user edit can never destroy the shipped baseline.
-          Copy-Item "configs\torrc.jet" "dist\data\torrc.template.default" -Force
-          Copy-Item "bridges\snowflake_tested.txt" "dist\data\bridges\" -Force
+          Copy-Item "Windrose\configs\torrc.jet" "dist\data\torrc.template.default" -Force
+          Copy-Item "Windrose\bridges\snowflake_tested.txt" "dist\data\bridges\" -Force
           Copy-Item "README.md" "dist\data\README.md" -Force
           # Country table + per-country exit capacity for the drawer's LOCATION
           # picker. Same two files the Android client bundles as assets.
-          Copy-Item "scripts\geoip\countries.tsv" "dist\data\countries.tsv" -Force
-          Copy-Item "scripts\geoip\exit-capacity.tsv" "dist\data\exit-capacity.tsv" -Force
+          Copy-Item "Windrose\scripts\geoip\countries.tsv" "dist\data\countries.tsv" -Force
+          Copy-Item "Windrose\scripts\geoip\exit-capacity.tsv" "dist\data\exit-capacity.tsv" -Force
 
       - name: Download and combine bridges
         shell: pwsh
@@ -278,7 +278,7 @@ jobs:
           $ver = $env:INPUT_TAG
           if (-not $ver) { $ver = "${{ github.ref_name }}" }
           if ($ver -notmatch '^v?\d') { $ver = "" }
-          & "scripts\build-start-tor.ps1" -OutFile "dist\DeltaTor.exe" -Version $ver
+          & "Windrose\scripts\build-start-tor.ps1" -OutFile "dist\DeltaTor.exe" -Version $ver
 
       - name: Upload single release artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
@@ -291,7 +291,7 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 (node24)
         with:
           name: build-log-win
-          path: tor-src/build-win.log
+          path: Windrose/tor-src/build-win.log
 
   release:
     name: Publish GitHub Release
