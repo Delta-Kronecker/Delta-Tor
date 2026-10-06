@@ -262,11 +262,13 @@ jobs:
         # existing user is stuck on their current version with no way forward,
         # and CI would have been green the whole time.
         #
-        # The expected SHA-256 lives in release-signing-cert.sha256 at the repo
-        # root. Replace the placeholder with the digest printed below on the
+        # The expected SHA-256 lives in Android/release-signing-cert.sha256.
+        # Replace the placeholder with the digest printed below on the
         # first run that has a real one; after that this check is exact.
+        # The path is repo-root relative: this step's working directory is the
+        # checkout, not the Android/ project.
         env:
-          PIN_FILE: release-signing-cert.sha256
+          PIN_FILE: Android/release-signing-cert.sha256
         run: |
           set -euo pipefail
           # Every `run:` block is its own shell, so a variable set in an earlier

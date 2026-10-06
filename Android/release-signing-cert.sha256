@@ -1,6 +1,6 @@
 # SHA-256 fingerprint of the certificate that signs release APKs.
 #
-# CN=DeltaRay, OU=Release, O=Delta-Kronecker, C=IR
+# CN=DeltaTor, OU=Release, O=Delta-Kronecker, C=IR
 # Taken from the v2 signing block of the published v2.0.0 APKs and confirmed
 # with: keytool -printcert -file cert.der
 #
