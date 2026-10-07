@@ -387,18 +387,24 @@ public static class RouteManager
         return null;
     }
 
-    private static string WaitAndInstallTunRoutes() => $"""
+    // Not an interpolated raw string: a single-$ interpolated raw literal
+    // cannot contain {{ (it would need $$-level escaping), and the braces
+    // below are PowerShell's, so the two holes are plain @TOKEN@ replaces.
+    private static string WaitAndInstallTunRoutes() =>
+        """
         $ErrorActionPreference='Stop'
         $deadline=(Get-Date).AddSeconds(8)
         $ad=$null
-        while((Get-Date) -lt $deadline){{ $ad=Get-NetAdapter -Name '{AdapterName}' -ErrorAction SilentlyContinue; if($ad){{break}}; Start-Sleep -Milliseconds 100 }}
-        if(-not $ad){{ 'ADAPTER_TIMEOUT'; exit 1 }}
-        Set-NetIPInterface -InterfaceAlias '{AdapterName}' -AutomaticMetric Disabled -InterfaceMetric 5 -ErrorAction Stop
-        if(-not (Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue)){{ Add-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias '{AdapterName}' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }}
-        if(-not (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){{ Add-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias '{AdapterName}' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }}
-        Set-DnsClientServerAddress -InterfaceAlias '{AdapterName}' -ServerAddresses '{DefaultDns}' -ErrorAction Stop
-        if((Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue) -and (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){{ 'TUN_ROUTES_OK' }} else {{ 'TUN_ROUTES_FAIL'; exit 1 }}
-        """;
+        while((Get-Date) -lt $deadline){ $ad=Get-NetAdapter -Name '@ADAPTER@' -ErrorAction SilentlyContinue; if($ad){break}; Start-Sleep -Milliseconds 100 }
+        if(-not $ad){ 'ADAPTER_TIMEOUT'; exit 1 }
+        Set-NetIPInterface -InterfaceAlias '@ADAPTER@' -AutomaticMetric Disabled -InterfaceMetric 5 -ErrorAction Stop
+        if(-not (Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue)){ Add-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
+        if(-not (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){ Add-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
+        Set-DnsClientServerAddress -InterfaceAlias '@ADAPTER@' -ServerAddresses '@DNS@' -ErrorAction Stop
+        if((Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue) -and (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){ 'TUN_ROUTES_OK' } else { 'TUN_ROUTES_FAIL'; exit 1 }
+        """
+        .Replace("@ADAPTER@", AdapterName)
+        .Replace("@DNS@", DefaultDns);
 
     private readonly record struct PsResult(bool Ok, string Output);
 
