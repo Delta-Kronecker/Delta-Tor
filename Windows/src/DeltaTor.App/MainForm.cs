@@ -86,6 +86,11 @@ public sealed class MainForm : Form
             StopOrStartVpn();
         };
         _pillDisconnect.Clicked += (_, _) => Task.Run(BridgeRace.Disconnect);
+        _drawer.OpenLog += () =>
+        {
+            using var log = new LogForm();
+            log.ShowDialog(this);
+        };
 
         _tick.Tick += (_, _) => AnimationFrame();
 
