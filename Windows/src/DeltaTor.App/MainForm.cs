@@ -59,6 +59,10 @@ public sealed class MainForm : Form
     // The control drawer sits over everything, pills included.
     private readonly DrawerPanel _drawer = new();
 
+    // Tray/toast surface (Android foreground notification equivalent).
+    private readonly TrayIcon _tray;
+    private ReleaseChecker.ReleaseNotice? _pendingRelease;
+
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 16 };
 
     public MainForm()
@@ -92,12 +96,24 @@ public sealed class MainForm : Form
             log.ShowDialog(this);
         };
 
+        if (TrayIcon.LoadAppIcon() is { } appIcon) Icon = appIcon;
+        _tray = new TrayIcon(this);
+        _tray.DisconnectRequested += () => Task.Run(BridgeRace.Disconnect);
+        _tray.StopVpnRequested += () => Task.Run(BridgeRace.StopVpn);
+        _tray.StartVpnRequested += () => Task.Run(BridgeRace.StartVpn);
+        BridgeRace.NotificationChanged += OnEngineNotification;
+        ReleaseChecker.NotificationRaised += OnReleaseNotice;
+        _tray.UpdateMenu(_state);
+
         _tick.Tick += (_, _) => AnimationFrame();
 
         AppState.Changed += OnStateChanged;
         FormClosed += (_, _) =>
         {
             AppState.Changed -= OnStateChanged;
+            BridgeRace.NotificationChanged -= OnEngineNotification;
+            ReleaseChecker.NotificationRaised -= OnReleaseNotice;
+            _tray.Dispose();
             _tick.Stop();
             _tick.Dispose();
         };
@@ -106,6 +122,11 @@ public sealed class MainForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        if (_pendingRelease is { } pending)
+        {
+            _pendingRelease = null;
+            _tray.ShowRelease(pending);
+        }
         RefreshFromState();
     }
 
@@ -132,6 +153,46 @@ public sealed class MainForm : Form
             return;
         }
         RefreshFromState();
+    }
+
+    // Engine notifications arrive on engine threads; the tray is UI.
+    private void OnEngineNotification(EngineNotification? n)
+    {
+        if (IsDisposed || !IsHandleCreated) return;
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => _tray.SetNotification(n));
+            else _tray.SetNotification(n);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+            // The handle went away between the check and the post.
+        }
+    }
+
+    // The release check runs before the window is up: hold its toast for OnShown.
+    private void OnReleaseNotice(ReleaseChecker.ReleaseNotice notice)
+    {
+        if (IsDisposed) return;
+        if (!IsHandleCreated)
+        {
+            _pendingRelease = notice;
+            return;
+        }
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => _tray.ShowRelease(notice));
+            else _tray.ShowRelease(notice);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private void RefreshFromState()
@@ -179,6 +240,7 @@ public sealed class MainForm : Form
 
         _tick.Start();
         _drawer.NotifyStateChanged();
+        _tray.UpdateMenu(_state);
         Invalidate();
         ShowNoticeIfAny();
     }
