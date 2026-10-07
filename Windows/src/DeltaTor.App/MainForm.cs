@@ -56,6 +56,9 @@ public sealed class MainForm : Form
     private readonly GradientPill _pillDisconnect = new() { Label = "DISCONNECT", Filled = false };
     private bool _proxyLive;
 
+    // The control drawer sits over everything, pills included.
+    private readonly DrawerPanel _drawer = new();
+
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 16 };
 
     public MainForm()
@@ -74,6 +77,7 @@ public sealed class MainForm : Form
 
         Controls.Add(_pillAction);
         Controls.Add(_pillDisconnect);
+        Controls.Add(_drawer);
         _pillAction.Clicked += (_, _) =>
         {
             // In proxy mode the left pill shows the endpoint and does nothing;
@@ -98,6 +102,12 @@ public sealed class MainForm : Form
     {
         base.OnShown(e);
         RefreshFromState();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        _drawer.SetBounds(0, 0, ClientSize.Width, ClientSize.Height);
     }
 
     // ---- state plumbing -----------------------------------------------------
@@ -163,6 +173,7 @@ public sealed class MainForm : Form
         _wasGlow = glow;
 
         _tick.Start();
+        _drawer.NotifyStateChanged();
         Invalidate();
         ShowNoticeIfAny();
     }
@@ -289,7 +300,7 @@ public sealed class MainForm : Form
 
         if (_menuRect.Contains(e.Location))
         {
-            // The control drawer opens here once ControlDrawer lands.
+            _drawer.Open();
             return;
         }
 
