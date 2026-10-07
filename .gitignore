@@ -40,3 +40,7 @@ runs.json
 
 # Windows port: fetched Tor Expert Bundle (extracted dir + archive), never committed
 /tor-expert-bundle-*
+
+# Windows port: hev-socks5-tunnel build outputs (build-hev.sh runs in CI/MSYS2)
+Android/app/src/main/cpp/hev-socks5-tunnel-src/**/build/
+Android/app/src/main/cpp/hev-socks5-tunnel-src/**/bin/

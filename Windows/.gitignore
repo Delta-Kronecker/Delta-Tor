@@ -1,6 +1,9 @@
 # Fetched official binaries (fetch-binaries.ps1 output)
 vendor/
 
+# Native tunnel build output (native/build-hev.sh, runs in the CI MSYS2 step)
+native/hev-socks5-tunnel/
+
 # Build output
 bin/
 obj/

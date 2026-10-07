@@ -1,4 +1,5 @@
 using DeltaTor.Core;
+using DeltaTor.Native;
 
 namespace DeltaTor.App;
 
@@ -26,6 +27,14 @@ internal static class Program
         Task.Run(ReleaseChecker.Check);
         Task.Run(InstallCounter.CountInstall);
         MaybeShowFirstRunNotice();
+
+        // Stage 4: the tun2socks engine behind TunnelEngine, plus recovery
+        // from a previous run that died with its catch-all routes installed
+        // (those would black-hole system traffic until someone noticed).
+        TunnelEngine.Impl = new WindowsTunnel();
+        RouteManager.CleanupLeftovers();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => RouteManager.RemoveTunnel();
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => RouteManager.RemoveTunnel();
 
         Application.Run(new MainForm());
     }
