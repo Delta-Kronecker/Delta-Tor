@@ -1212,7 +1212,7 @@ public static class BridgeRace
                         $"located {info.Ip} \u00b7 {info.Label()}" +
                         (selected.Count == 0
                             ? ""
-                            : $" \u00b7 {(match ? "MATCHES " + string.Join(",", selected) : "NOT yet " + string.Join(",", selected)}") +
+                            : $" \u00b7 {(match ? "MATCHES " + string.Join(",", selected) : "NOT yet " + string.Join(",", selected))}") +
                         (info.Asn.Length > 0 ? $" \u00b7 {info.Asn}" : ""));
                     if (selected.Count == 0 || match) return;
                 }
