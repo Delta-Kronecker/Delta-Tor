@@ -3,14 +3,21 @@
 #   Source archive (official, pinned):
 #   https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz
 #
+#   The archive is FLAT (no top-level directory): tor/, data/, docs/ sit at
+#   the archive root. This script extracts it into
+#   Windows/vendor/tor-expert-bundle-windows-x86_64-15.0.24/ anyway, and
+#   Find-BundleRoot also tolerates any other layout by locating the directory
+#   that actually contains tor/tor.exe.
+#
 # Resolution order (first hit wins):
-#   1. already extracted -> Windows/vendor/tor-expert-bundle-windows-x86_64-15.0.24/
+#   1. already extracted -> Windows/vendor/**/ (bundle root with tor+lyrebird+geoip)
 #   2. local archive cache (repo root or Windows/) -> verify SHA-256 -> extract
 #   3. repo-root extracted cache (../tor-expert-bundle-windows-x86_64-15.0.24/) -> copy
 #   4. download from the pinned URL -> verify SHA-256 -> extract
 #
-# Hash policy: $ExpectedSha256 empty => local run warns and prints the computed
-# hash so it can be pinned; -CI always fails (fail closed, no unpinned CI).
+# Hash policy: SHA-256 pinned below (from the official signed checksums at
+# https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt).
+# -CI refuses to run unpinned; a mismatch always fails.
 #
 # wintun.dll is added here in stage 4 (full-tunnel work), not yet.
 
@@ -35,15 +42,29 @@ $ExpectedSha256 = 'e9dc6ccc93cd6afa507193f4de284d6424233ff5102155cd2c94b259e8a22
 
 function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
 
-function Test-Extraction {
+function Test-Extraction([string]$Root) {
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
     # Layout inside the official archive:
     #   <root>/tor/tor.exe
     #   <root>/tor/pluggable_transports/lyrebird.exe
     #   <root>/data/geoip, data/geoip6, data/torrc-defaults
-    $tor      = Join-Path $TargetDir 'tor/tor.exe'
-    $lyrebird = Join-Path $TargetDir 'tor/pluggable_transports/lyrebird.exe'
-    $geoip    = Join-Path $TargetDir 'data/geoip'
+    $tor      = Join-Path $Root 'tor/tor.exe'
+    $lyrebird = Join-Path $Root 'tor/pluggable_transports/lyrebird.exe'
+    $geoip    = Join-Path $Root 'data/geoip'
     return (Test-Path $tor) -and (Test-Path $lyrebird) -and (Test-Path $geoip)
+}
+
+# Locate an already-extracted bundle root regardless of top-level layout:
+# preferred target first, then any child of vendor, then vendor itself.
+function Find-BundleRoot {
+    if (Test-Extraction $TargetDir) { return $TargetDir }
+    if (Test-Path $VendorDir) {
+        foreach ($d in (Get-ChildItem -Directory $VendorDir | Sort-Object Name)) {
+            if (Test-Extraction $d.FullName) { return $d.FullName }
+        }
+        if (Test-Extraction $VendorDir) { return $VendorDir }
+    }
+    return $null
 }
 
 function Show-BundleLayout {
@@ -75,7 +96,9 @@ function Assert-Hash([string]$Path) {
 }
 
 # 1) already extracted
-if (Test-Extraction) {
+$found = Find-BundleRoot
+if ($found) {
+    $TargetDir = $found
     Write-Step "Using existing extraction: $TargetDir"
     exit 0
 }
@@ -92,10 +115,13 @@ foreach ($dir in @($CacheRoot, $PSScriptRoot)) {
 # 3) repo-root extracted cache (offline machines), tried before any download
 if (-not $archivePath) {
     $rootCache = Join-Path $CacheRoot $BaseName
-    if (Test-Path (Join-Path (Join-Path $rootCache 'tor') 'tor.exe')) {
+    if (Test-Extraction $rootCache) {
         Write-Step "No archive found; copying extracted cache: $rootCache"
-        Copy-Item -Recurse -Force $rootCache $TargetDir
-        if (-not (Test-Extraction)) { throw "Repo-root cache is incomplete: $rootCache" }
+        New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+        Copy-Item -Recurse -Force (Join-Path $rootCache '*') $TargetDir
+        $found = Find-BundleRoot
+        if (-not $found) { Show-BundleLayout; throw "Repo-root cache is incomplete: $rootCache" }
+        $TargetDir = $found
         Write-Step "OK -> $TargetDir (cache copy; hash only applies to the archive)"
         exit 0
     }
@@ -115,14 +141,18 @@ else {
 
 Assert-Hash $archivePath
 
-# 5) extract (tar ships with Windows 10+ and every GitHub windows runner)
-Write-Step "Extracting $Archive -> $VendorDir"
-tar -xzf $archivePath -C $VendorDir
+# 5) extract into the preferred target (tar ships with Windows 10+ and every
+#    GitHub windows runner); the archive itself is flat.
+Write-Step "Extracting $Archive -> $TargetDir"
+New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+tar -xzf $archivePath -C $TargetDir
 if ($LASTEXITCODE -ne 0) { throw "Extraction failed (tar exit $LASTEXITCODE)" }
 
-if (-not (Test-Extraction)) {
+$found = Find-BundleRoot
+if (-not $found) {
     Show-BundleLayout
     throw "Bundle incomplete after extraction: $TargetDir"
 }
-
+$TargetDir = $found
+Write-Step "Bundle root: $TargetDir"
 Write-Step "OK -> $TargetDir"
