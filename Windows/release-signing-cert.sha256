@@ -1,0 +1,12 @@
+# SHA-256 of the DeltaTor Windows code-signing certificate (DER bytes,
+# 64 hex characters on one line, colons optional).
+#
+# The release workflow fails closed until a real digest is present here: it
+# signs DeltaTor.exe + hev-socks5-tunnel.dll, reads the signer certificate
+# back out of the shipped exe, and prints the actual digest into the step
+# summary of the first signing run. Paste that value onto the line below
+# (comments and formatting are tolerated: the first 64-hex run wins, same
+# rules as Android/release-signing-cert.sha256) and rerun.
+#
+# Until WINDOWS_CERT_BASE64 / WINDOWS_CERT_PASSWORD secrets exist, no
+# release run gets this far — decode fails earlier, on purpose.
