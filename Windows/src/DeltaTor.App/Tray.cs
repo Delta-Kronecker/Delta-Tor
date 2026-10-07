@@ -31,9 +31,9 @@ public sealed class TrayIcon : IDisposable
         _owner = owner;
 
         _open = Item("Open DeltaTor", null, ShowOwner);
-        _disconnect = Item("Disconnect", GlyphPower, () => DisconnectRequested?.Invoke());
-        _stop = Item("Stop VPN", GlyphSquare, () => StopVpnRequested?.Invoke());
-        _start = Item("Start VPN", GlyphTriangle, () => StartVpnRequested?.Invoke());
+        _disconnect = Item("Disconnect", GlyphPower(), () => DisconnectRequested?.Invoke());
+        _stop = Item("Stop VPN", GlyphSquare(), () => StopVpnRequested?.Invoke());
+        _start = Item("Start VPN", GlyphTriangle(), () => StartVpnRequested?.Invoke());
         var exit = Item("Exit", null, () => _owner.Close());
 
         _menu.Items.Add(_open);
