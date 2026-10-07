@@ -11,6 +11,7 @@ public sealed class GradientPill : Control
     private string _label = "";
     private bool _filled;
     private float _labelPt = DeltaTorTheme.BodyPt;
+    private float _radius = 20f;
 
     public GradientPill()
     {
@@ -40,6 +41,12 @@ public sealed class GradientPill : Control
         set { _labelPt = value; Invalidate(); }
     }
 
+    public float Radius
+    {
+        get => _radius;
+        set { _radius = value; Invalidate(); }
+    }
+
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
@@ -62,7 +69,7 @@ public sealed class GradientPill : Control
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
         var rect = new RectangleF(0.5f, 0.5f, Width - 1f, Height - 1f);
-        var radius = Math.Min(20f, Height / 2f);
+        var radius = Math.Min(_radius, Height / 2f);
 
         using var path = DrawUtil.RoundedRect(rect, radius);
         Color from, to;
