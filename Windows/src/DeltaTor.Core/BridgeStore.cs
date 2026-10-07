@@ -105,7 +105,7 @@ public static class BridgeStore
             {
                 var body = DownloadText(url);
                 if (!string.IsNullOrWhiteSpace(body)) bodies.Add(body);
-                else Log.w(TAG, $"Empty download for {url}");
+                else AppLog.W(TAG, $"Empty download for {url}");
             }
             if (bodies.Count == 0) continue;
             var merged = ParallelTorManager.MergeBridgeLists(bodies);
@@ -189,7 +189,7 @@ public static class BridgeStore
         {
             if (ShouldAutoUpdate())
             {
-                Log.i(TAG, "Bridges are stale; auto-updating");
+                AppLog.I(TAG, "Bridges are stale; auto-updating");
                 Update();
             }
         }
@@ -210,7 +210,7 @@ public static class BridgeStore
 
     private static string DownloadText(string url)
     {
-        Log.i(TAG, $"Downloading {url}");
+        AppLog.I(TAG, $"Downloading {url}");
         try
         {
             using var cts = new CancellationTokenSource(ConnectTimeoutMs);
@@ -219,12 +219,12 @@ public static class BridgeStore
             {
                 return resp.Content.ReadAsStringAsync(cts.Token).GetAwaiter().GetResult();
             }
-            Log.e(TAG, $"HTTP {(int)resp.StatusCode} for {url}");
+            AppLog.E(TAG, $"HTTP {(int)resp.StatusCode} for {url}");
             return "";
         }
         catch (Exception e)
         {
-            Log.e(TAG, $"download failed for {url}: {e.Message}");
+            AppLog.E(TAG, $"download failed for {url}: {e.Message}");
             return "";
         }
     }
