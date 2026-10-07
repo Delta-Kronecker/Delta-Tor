@@ -1,7 +1,6 @@
-# Gradle
+# Gradle. Anchored under Android/ so a bare `build/` can never swallow tracked
+# source dirs that happen to sit in a folder named build.
 .gradle/
-# Anchored on purpose: a bare `build/` would also swallow the tracked
-# scripts/build/ source dirs that ship with the tor tree.
 /Android/build/
 /Android/*/build/
 local.properties
@@ -35,10 +34,6 @@ runs.json
 # Android app's own data dirs and any tracked data/ in the tree.
 /data/
 /Android/app/src/main/assets/data/
-/Windows/scripts/data/
-
-# locally compiled launcher (CI builds it into the artifact)
-/Windows/scripts/DeltaTor.exe
 
 # local scratch trees
 /portable/

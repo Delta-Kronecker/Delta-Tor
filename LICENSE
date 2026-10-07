@@ -1,93 +1,21 @@
-DELTATOR CORE LICENSE
-Version 1.0
+MIT License
+
 Copyright (c) 2026 Delta-Kronecker
 
-1. DEFINITIONS
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-"DeltaTor" means the software project published at
-https://github.com/Delta-Kronecker/DeltaTor (the "Repository").
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-"The Core" means all source code, configuration templates, build scripts,
-workflow definitions, and documentation authored by the DeltaTor project for the
-DeltaTor launcher — including, without limitation, Windows/scripts/start-tor.cs,
-Windows/scripts/build-start-tor.ps1, Windows/scripts/bench.ps1,
-Windows/configs/torrc.jet, and .github/workflows/build.yml — but EXCLUDING third-party
-components (tor, pluggable transports, and any other
-binaries or sources imported from upstream projects), which remain under their
-own respective licenses.
-
-"Derivative Work" means any work based on, derived from, or embedding all or
-any part of the Core, including any program in which the Core or a modified
-form of it is used or linked.
-
-"Your Program" means a program, application, or product that incorporates the
-Core or a Derivative Work.
-
-2. GRANT OF LICENSE
-
-Subject to the terms and conditions of this License, the copyright holder
-grants you a non-exclusive, worldwide, royalty-free license to use, copy,
-modify, and distribute the Core, and to incorporate it into Your Program.
-
-3. MANDATORY ATTRIBUTION — UNCONDITIONAL REQUIREMENT
-
-You may not exercise the rights granted in Section 2 unless BOTH of the
-following requirements are satisfied, without exception:
-
-(a) Prominent link. You must display, in a clearly visible and unmodified
-    form, the address https://github.com/Delta-Kronecker/DeltaTor on the main
-    page or main screen of Your Program and/or on the main page of Your
-    Program's repository.
-
-(b) Explicit statement. Immediately next to that address you must display the
-    following exact statement (in the same language(s) as the rest of Your
-    Program's interface):
-
-    "This software uses the DeltaTor core, obtained from
-    https://github.com/Delta-Kronecker/DeltaTor"
-
-    If Your Program has no graphical or textual interface, this statement and
-    the address must appear in your repository's main README file and in the
-    program's "About" documentation.
-
-You must not remove, alter, obscure, or relocate this attribution in any way
-that makes it less visible than required above.
-
-4. SHARE-ALIKE (COPYLEFT)
-
-Any Derivative Work you create or distribute must itself be licensed under
-this same License, and you must make the complete corresponding source code
-of any such Derivative Work available — including when Your Program is
-offered as a network service (for example, SaaS), in which case you must
-provide the source code on request to any user of that service.
-
-5. NO ENDORSEMENT
-
-Nothing in this License grants you the right to use the name "DeltaTor", or any
-trademark, logo, or trade name of the copyright holder, in a way that implies
-that the copyright holder endorses or sponsors Your Program, except for the
-attribution required by Section 3.
-
-6. THIRD-PARTY COMPONENTS
-
-This License applies only to the Core as defined in Section 1. All third-party
-components distributed with the Core remain subject to their own copyright
-notices and licenses, which you must preserve.
-
-7. TERMINATION
-
-Any breach of Sections 3, 4, or 5 automatically and immediately terminates
-all rights granted under this License. Rights may be reinstated only by
-written permission from the copyright holder.
-
-8. NO WARRANTY
-
-The Core is provided "as is", without warranty of any kind, express or
-implied, including but not limited to the warranties of merchantability,
-fitness for a particular purpose, and non-infringement.
-
-9. LIMITATION OF LIABILITY
-
-In no event shall the copyright holder be liable for any claim, damages, or
-other liability arising from, out of, or in connection with the Core or its
-use, whether in contract, tort, or otherwise.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
