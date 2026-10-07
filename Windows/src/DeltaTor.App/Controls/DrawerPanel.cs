@@ -9,7 +9,7 @@ namespace DeltaTor.App.Controls;
 /// the ADVANCED section and the GITHUB pill. Rows are painted and hit-tested
 /// against the same rects; only the pill is a child control.
 /// </summary>
-public sealed class DrawerPanel : Panel
+public sealed partial class DrawerPanel : Panel
 {
     private const string RepoUrl = "https://github.com/Delta-Kronecker/Delta-Tor";
     private const int PickerTop = 25; // EXIT_PICKER_TOP (MainActivity 499)
@@ -21,6 +21,23 @@ public sealed class DrawerPanel : Panel
     private readonly GradientPill _github = new() { Label = "GITHUB", Filled = true };
     private readonly System.Windows.Forms.Timer _slide = new() { Interval = 15 };
     private readonly System.Windows.Forms.Timer _sync = new() { Interval = 1000 };
+
+    // Fonts for the painted cards (owned here, shared across paints so a 60fps
+    // loop does not churn GDI handles; _fBody is the static theme font).
+    private readonly Font _fCaption = new(DeltaTorTheme.FontFamilyName,
+        DeltaTorTheme.CaptionPt, FontStyle.Bold);
+    private readonly Font _fCaptionReg = new(DeltaTorTheme.FontFamilyName,
+        DeltaTorTheme.CaptionPt, FontStyle.Regular);
+    private readonly Font _fBody = DeltaTorTheme.Body;
+    private readonly Font _fBodyBold = new(DeltaTorTheme.FontFamilyName,
+        DeltaTorTheme.BodyPt, FontStyle.Bold);
+    private readonly Font _fSmall = new(DeltaTorTheme.FontFamilyName, 7.5f);
+    private readonly Font _fLarge = new(DeltaTorTheme.FontFamilyName, 10.5f, FontStyle.Bold);
+    private readonly Font _fMono = new("Consolas", 7.5f);
+    private readonly Font _fMonoBig = new("Consolas", 10f, FontStyle.Bold);
+    private float _captionLineH;
+    private float _bodyLineH;
+    private float _largeLineH;
 
     private bool _open;
     private bool _closing;
@@ -47,6 +64,14 @@ public sealed class DrawerPanel : Panel
         Controls.Add(_github);
         _github.Clicked += (_, _) => ReleaseChecker.OpenInBrowser(RepoUrl);
 
+        using (var bmp = new Bitmap(1, 1))
+        using (var mg = Graphics.FromImage(bmp))
+        {
+            _captionLineH = mg.MeasureString("A", _fCaption).Height;
+            _bodyLineH = mg.MeasureString("A", _fBody).Height;
+            _largeLineH = mg.MeasureString("A", _fLarge).Height;
+        }
+
         _slide.Tick += (_, _) => SlideFrame();
         // The capacity table and the country list arrive in the background and
         // raise no event of their own, so a visible drawer re-checks them while
@@ -58,6 +83,23 @@ public sealed class DrawerPanel : Panel
     }
 
     public bool IsOpen => _open;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _slide.Dispose();
+            _sync.Dispose();
+            _fCaption.Dispose();
+            _fCaptionReg.Dispose();
+            _fBodyBold.Dispose();
+            _fSmall.Dispose();
+            _fLarge.Dispose();
+            _fMono.Dispose();
+            _fMonoBig.Dispose();
+        }
+        base.Dispose(disposing);
+    }
 
     /// <summary>Slide in from the left (ModalNavigationDrawer's open).</summary>
     public void Open()
@@ -116,6 +158,11 @@ public sealed class DrawerPanel : Panel
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        if (_drop != null)
+        {
+            _drop = null;
+            Invalidate();
+        }
         _scroll = Math.Max(0, _scroll - e.Delta / 120 * 60);
         Invalidate();
     }
@@ -124,6 +171,25 @@ public sealed class DrawerPanel : Panel
     {
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
+
+        // An open dropdown consumes the click: pick a row, or dismiss.
+        if (_drop != null)
+        {
+            foreach (var (rect, value) in _drop.Rows)
+            {
+                if (!rect.Contains(e.Location)) continue;
+                var select = _drop.OnSelect;
+                var picked = value;
+                _drop = null;
+                select(picked);
+                Invalidate();
+                return;
+            }
+            _drop = null;
+            Invalidate();
+            return;
+        }
+
         var inView = e.Y >= _viewTop && e.Y < _viewBottom;
         foreach (var (rect, act, row) in _hits)
         {
@@ -139,7 +205,15 @@ public sealed class DrawerPanel : Panel
         base.OnKeyDown(e);
         if (e.KeyCode == Keys.Escape)
         {
-            Close();
+            if (_drop != null)
+            {
+                _drop = null;
+                Invalidate();
+            }
+            else
+            {
+                Close();
+            }
             e.Handled = true;
         }
     }
@@ -204,6 +278,9 @@ public sealed class DrawerPanel : Panel
         g.Restore(state);
 
         _contentH = y + _scroll - viewTop;
+
+        // The dropdown popup floats above the clipped content region.
+        PaintDropdown(g);
 
         _github.SetBounds(20, Height - 56, w - 40, 40);
     }
@@ -615,11 +692,24 @@ public sealed class DrawerPanel : Panel
         y = PaintSection(g, y, w, "ADVANCED",
             "Transport, bridges, torrc and the log", _showAdvanced,
             () => { _showAdvanced = !_showAdvanced; Invalidate(); });
-        if (_showAdvanced)
+        if (!_showAdvanced)
         {
-            // The seven cards land with the AdvancedItems pass; the section
-            // itself already toggles and keeps its state.
+            if (_customBox != null) _customBox.Visible = false;
+            return y;
         }
+
+        // Android syncs the form from the live mode (LaunchedEffect(liveMode));
+        // once the service has a mode, it wins over the stored one.
+        var live = AppState.Mode;
+        if (live.Length > 0 && live != _transportMode) _transportMode = live;
+
+        y = PaintTransportCard(g, y, w);
+        if (_transportMode == ParallelTorManager.TransportAuto)
+            y = PaintAutoRacersCard(g, y, w);
+        if (_transportMode == ParallelTorManager.TransportCustom)
+            y = PaintCustomBridgesCard(g, y, w);
+        else if (_customBox != null)
+            _customBox.Visible = false;
         return y;
     }
 
