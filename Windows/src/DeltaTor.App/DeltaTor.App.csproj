@@ -23,11 +23,17 @@
     <ProjectReference Include="..\DeltaTor.Native\DeltaTor.Native.csproj" />
   </ItemGroup>
 
-  <!-- Bundled bridge lists (parity with Android assets/bridges/): first
-       fallback before the network, resolved from the exe dir at runtime. -->
+  <!-- Bundled assets (parity with Android assets/): bridge lists are the first
+       fallback before the network, geoip tables feed the LOCATION cards.
+       Resolved from the exe dir at runtime. -->
   <ItemGroup>
     <Content Include="..\..\assets\bridges\*.txt">
       <Link>bridges\%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\assets\geoip\*">
+      <Link>geoip\%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
