@@ -327,7 +327,7 @@ public sealed class DrawerPanel : Panel
         {
             var only = codes[0];
             var names = ExitNodes.Names;
-            return $"{UiHelpers.FlagEmoji(only)}  {names.TryGetValue(only, out var n) ? n : ""}".Trim();
+            return $"{UiHelpers.FlagEmoji(only)}  {(names.TryGetValue(only, out var n) ? n : "")}".Trim();
         }
         return $"{codes.Count} countries selected";
     }
