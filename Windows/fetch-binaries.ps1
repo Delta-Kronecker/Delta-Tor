@@ -29,8 +29,9 @@ $Url       = "https://dist.torproject.org/torbrowser/$Version/$Archive"
 $VendorDir = Join-Path $PSScriptRoot 'vendor'
 $TargetDir = Join-Path $VendorDir $BaseName
 
-# TODO(stage 1): pin the archive hash after the first verified download.
-$ExpectedSha256 = ''
+# SHA-256 from the official signed checksums:
+# https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt
+$ExpectedSha256 = 'e9dc6ccc93cd6afa507193f4de284d6424233ff5102155cd2c94b259e8a22b65'
 
 function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
 
