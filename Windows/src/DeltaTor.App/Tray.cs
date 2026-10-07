@@ -103,7 +103,7 @@ public sealed class TrayIcon : IDisposable
         _releaseUrl = notice.Url;
         _icon.BalloonTipTitle = notice.Title;
         _icon.BalloonTipText = notice.Body;
-        _icon.BalloonTipIcon = BalloonTipIcon.Info;
+        _icon.BalloonTipIcon = System.Windows.Forms.BalloonTipIcon.Info;
         _icon.ShowBalloonTip(5_000);
     }
 
