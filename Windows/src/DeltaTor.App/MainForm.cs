@@ -6,26 +6,49 @@ namespace DeltaTor.App;
 /// <summary>
 /// The main window, laid out 1:1 with MainActivity's MainScreen: layered
 /// ambient background (AirBackground), header with drawer button, wordmark
-/// and status chip, and — added in the following passes — the state block,
-/// the floating power ring and the bottom panel.
+/// and status chip, the update banner, the big state word, the floating
+/// power ring and its action label. The bottom panel and drawer land in the
+/// following passes.
 /// </summary>
 public sealed class MainForm : Form
 {
     private VpnState _state = AppState.State;
 
-    // The state color animates over 450ms (animateColorAsState(sc, tween(450))).
+    // The state color and the subline color animate over 450ms
+    // (animateColorAsState(sc, tween(450))).
     private Color _scCurrent;
     private Color _scFrom;
     private Color _scTo;
-    private long _scStart;
+    private Color _subCurrent;
+    private Color _subFrom;
+    private Color _subTo;
+    private long _colorStart;
     private bool _tweening;
 
-    // The background halo pulses 0.5→1→0.5 over 2×2600ms while connecting and
-    // rests at 0.5 otherwise (rememberActiveLoop, resting = from).
+    // Background halo pulse: 0.5→1→0.5 over 2×2600ms while connecting,
+    // resting at 0.5 otherwise (rememberActiveLoop, resting = from).
     private long _pulseStart;
     private const int PulseDuration = 2600;
 
+    // Ring loops: rotation 0→360 over 9000ms (restart) and breathe
+    // 1→1.035 over 2400ms while connecting; halo pulse 0.55→1 over 2200ms
+    // while the halo is lit, resting at 0.78.
+    private long _rotStart;
+    private long _breathStart;
+    private long _ringPulseStart;
+    private const int RotDuration = 9000;
+    private const int BreathDuration = 2400;
+    private const int RingPulseDuration = 2200;
+
+    // Bootstrap peak: max transport percent seen this connect, cleared as
+    // soon as the connect ends (peakPct, MainActivity 1181).
+    private int _peak;
+    private bool _wasConnecting;
+    private bool _wasGlow;
+
     private RectangleF _menuRect;
+    private RectangleF _ringRect;
+    private RectangleF _bannerRect;
     private bool _noticeOpen;
 
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 16 };
@@ -42,6 +65,7 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
 
         _scCurrent = _scFrom = _scTo = UiHelpers.StateColor(_state);
+        _subCurrent = _subFrom = _subTo = SubColor(_state);
 
         _tick.Tick += (_, _) => AnimationFrame();
 
@@ -83,17 +107,45 @@ public sealed class MainForm : Form
     {
         var prev = _state;
         _state = AppState.State;
+        var now = Environment.TickCount64;
 
         var sc = UiHelpers.StateColor(_state);
-        if (sc != _scTo)
+        var sub = SubColor(_state);
+        if (sc != _scTo || sub != _subTo)
         {
             _scFrom = _scCurrent;
             _scTo = sc;
-            _scStart = Environment.TickCount64;
+            _subFrom = _subCurrent;
+            _subTo = sub;
+            _colorStart = now;
             _tweening = true;
         }
-        if (_state.Connecting && !prev.Connecting)
-            _pulseStart = Environment.TickCount64;
+
+        // peakPct: reset on both edges of connecting, keep the high water
+        // mark while a connect is running.
+        var connecting = _state.Connecting;
+        if (connecting && !_wasConnecting) _peak = 0;
+        if (!connecting) _peak = 0;
+        if (connecting)
+        {
+            var max = 0;
+            foreach (var v in _state.Transports.Values)
+                if (v >= 0 && v > max) max = v;
+            _peak = Math.Max(_peak, max);
+        }
+        _wasConnecting = connecting;
+
+        if (connecting && !prev.Connecting)
+        {
+            _pulseStart = now;
+            _rotStart = now;
+            _breathStart = now;
+        }
+
+        var glow = connecting || _state.Connected;
+        if (glow && !_wasGlow) _ringPulseStart = now;
+        _wasGlow = glow;
+
         _tick.Start();
         Invalidate();
         ShowNoticeIfAny();
@@ -126,28 +178,46 @@ public sealed class MainForm : Form
         }
     }
 
+    private static Color SubColor(VpnState state)
+    {
+        if (state.Stopping || state.Reconnecting) return DeltaTorTheme.AmberLight;
+        if (state.Connected) return DeltaTorTheme.GreenLight;
+        return DeltaTorTheme.Muted;
+    }
+
     private void AnimationFrame()
     {
         var invalidate = false;
 
         if (_tweening)
         {
-            var p = (Environment.TickCount64 - _scStart) / 450.0;
+            var p = (Environment.TickCount64 - _colorStart) / 450.0;
             if (p >= 1.0)
             {
                 p = 1.0;
                 _tweening = false;
             }
-            _scCurrent = LerpColor(_scFrom, _scTo, Easing.FastOutSlowIn((float)p));
+            var t = Easing.FastOutSlowIn((float)p);
+            _scCurrent = LerpColor(_scFrom, _scTo, t);
+            _subCurrent = LerpColor(_subFrom, _subTo, t);
             invalidate = true;
         }
 
         if (_state.Connecting)
-            invalidate = true; // the halo pulse runs every frame while connecting
+            invalidate = true; // bg pulse, ring rotation and breathe
+        else if (GlowLit)
+            invalidate = true; // ring halo pulse stays lit while connected
 
         if (invalidate) Invalidate();
         else _tick.Stop();
     }
+
+    private bool GlowLit => _state.Connecting || _state.Connected;
+
+    private static Color LerpColor(Color a, Color b, float t) => Color.FromArgb(
+        (int)(a.R + (b.R - a.R) * t),
+        (int)(a.G + (b.G - a.G) * t),
+        (int)(a.B + (b.B - a.B) * t));
 
     /// <summary>Background pulse: 0.5→1 over <see cref="PulseDuration"/>, reversing.</summary>
     private float Pulse
@@ -163,10 +233,36 @@ public sealed class MainForm : Form
         }
     }
 
-    private static Color LerpColor(Color a, Color b, float t) => Color.FromArgb(
-        (int)(a.R + (b.R - a.R) * t),
-        (int)(a.G + (b.G - a.G) * t),
-        (int)(a.B + (b.B - a.B) * t));
+    private float RingRotation =>
+        _state.Connecting
+            ? (Environment.TickCount64 - _rotStart) % RotDuration * 360f / RotDuration
+            : 0f;
+
+    private float RingBreathe
+    {
+        get
+        {
+            if (!_state.Connecting) return 1f;
+            var phase = (Environment.TickCount64 - _breathStart) % (BreathDuration * 2L);
+            var p = phase < BreathDuration
+                ? (float)phase / BreathDuration
+                : 1f - (float)(phase - BreathDuration) / BreathDuration;
+            return 1f + 0.035f * Easing.FastOutSlowIn(p);
+        }
+    }
+
+    private float RingPulse
+    {
+        get
+        {
+            if (!GlowLit) return 0.78f;
+            var phase = (Environment.TickCount64 - _ringPulseStart) % (RingPulseDuration * 2L);
+            var p = phase < RingPulseDuration
+                ? (float)phase / RingPulseDuration
+                : 1f - (float)(phase - RingPulseDuration) / RingPulseDuration;
+            return 0.55f + 0.45f * Easing.FastOutSlowIn(p);
+        }
+    }
 
     // ---- input --------------------------------------------------------------
 
@@ -174,10 +270,47 @@ public sealed class MainForm : Form
     {
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
+
         if (_menuRect.Contains(e.Location))
         {
             // The control drawer opens here once ControlDrawer lands.
+            return;
         }
+
+        if (_bannerRect.Width > 0 && _bannerRect.Contains(e.Location))
+        {
+            var rel = AppState.ReleaseState;
+            if (rel.Newer && rel.LatestUrl.Length > 0)
+                ReleaseChecker.OpenInBrowser(rel.LatestUrl);
+            return;
+        }
+
+        if (_ringRect.Contains(e.Location))
+        {
+            PrimaryAction();
+        }
+    }
+
+    /// <summary>MainScreen's onPrimary (MainActivity 162): each state gets
+    /// the only action that actually does something.</summary>
+    private void PrimaryAction()
+    {
+        var s = AppState.State;
+        if (s.Stopping) return;
+        // A live SOCKS endpoint means proxy mode, where there is no VPN to
+        // start. Must be checked before torRunning, which is also true in
+        // this state and would otherwise send a start the engine declines.
+        if (s.SocksEndpoint.Length > 0 || s.Connecting || s.Connected)
+        {
+            Task.Run(BridgeRace.Disconnect);
+            return;
+        }
+        if (s.TorRunning)
+        {
+            Task.Run(BridgeRace.StartVpn);
+            return;
+        }
+        Task.Run(BridgeRace.Connect);
     }
 
     // ---- painting -----------------------------------------------------------
@@ -189,6 +322,10 @@ public sealed class MainForm : Form
 
         PaintAirBackground(g);
         PaintHeader(g);
+        PaintUpdateBanner(g);
+        PaintStateBlock(g);
+        PaintRing(g);
+        PaintPrimaryLabel(g);
     }
 
     /// <summary>AirBackground (MainActivity 1204): base gradient, corner key
@@ -316,5 +453,239 @@ public sealed class MainForm : Form
             };
             g.FillRectangle(brush, padX, ruleY, ClientSize.Width - padX * 2f, 1f);
         }
+    }
+
+    /// <summary>UpdateBanner (MainActivity 2647): sits 98px from the top while
+    /// a newer release exists, and opens the release page on click.</summary>
+    private void PaintUpdateBanner(Graphics g)
+    {
+        _bannerRect = RectangleF.Empty;
+        var rel = AppState.ReleaseState;
+        if (!rel.Newer || rel.LatestVersion.Length == 0) return;
+
+        const float x = 20f;
+        const float y = 98f;
+        var w = ClientSize.Width - x * 2f;
+
+        using var titleFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
+        using var bodyFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Regular);
+        var rowH = Math.Max(9f, g.MeasureString("A", titleFont).Height);
+        var subH = g.MeasureString("A", bodyFont).Height;
+        var h = 12f + rowH + 5f + subH + 12f;
+
+        var rect = new RectangleF(x, y, w, h);
+        _bannerRect = rect;
+        using (var path = DrawUtil.RoundedRect(rect, 16f))
+        {
+            using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
+                rect, Color.FromArgb(0xFF, 0x2A, 0x21, 0x40), DeltaTorTheme.Surface, 0f))
+                g.FillPath(brush, path);
+            using var pen = new Pen(Color.FromArgb(115, DeltaTorTheme.Accent)); // accent 0.45
+            g.DrawPath(pen, path);
+        }
+
+        using (var dot = new SolidBrush(DeltaTorTheme.Green))
+            g.FillEllipse(dot, x + 14f, y + 12f + (rowH - 9f) / 2f, 9f, 9f);
+        using (var brush = new SolidBrush(DeltaTorTheme.GreenLight))
+            DrawUtil.DrawSpaced(g, $"NEW RELEASE v{rel.LatestVersion}", titleFont, brush,
+                x + 14f + 9f + 8f, y + 12f, w - 14f * 2f - 17f, 1.3f);
+        using (var brush = new SolidBrush(DeltaTorTheme.Muted))
+            g.DrawString("An update is available · tap anywhere to open on GitHub",
+                bodyFont, brush, x + 14f, y + 12f + rowH + 5f);
+    }
+
+    /// <summary>StateBlock (MainActivity 1355): the big state word with its
+    /// soft shadow and the animated subline under it, centered 112 above the
+    /// window center.</summary>
+    private void PaintStateBlock(Graphics g)
+    {
+        var s = _state;
+        var hasError = s.Error != null;
+        var word = UiHelpers.WordFor(
+            s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping, hasError);
+        var sub = UiHelpers.SublineFor(
+            s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping,
+            s.Transport, _peak, hasError);
+
+        using var wordFont = new Font(DeltaTorTheme.FontFamilyName, 20f, FontStyle.Bold);
+        using var subFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
+
+        var wordH = g.MeasureString(word, wordFont).Height;
+        var subH = sub.Length > 0 ? g.MeasureString(sub, subFont).Height : 0f;
+        var blockH = wordH + 8f + subH;
+        var cy = ClientSize.Height / 2f;
+        var top = cy - 112f - blockH / 2f;
+
+        DrawSpacedShadow(g, word, wordFont, _scCurrent, top,
+            Color.FromArgb(115, Color.Black)); // black 0.45, offset (0, 4)
+        if (sub.Length > 0)
+        {
+            using var brush = new SolidBrush(_subCurrent);
+            DrawUtil.DrawSpacedCentered(g, sub, subFont, brush,
+                new RectangleF(32f, top + wordH + 8f, ClientSize.Width - 64f, subH), 1.4f);
+        }
+    }
+
+    /// <summary>Centered letter-spaced text with the big word's soft shadow
+    /// (Compose Shadow(black 0.45, offset (0,4), blur 10) approximated by a
+    /// jittered low-alpha pass under the glyphs).</summary>
+    private static void DrawSpacedShadow(
+        Graphics g, string text, Font font, Color color, float top, Color shadow)
+    {
+        var w = DrawUtil.SpacedWidth(g, text, font, 2.5f);
+        var x0 = (g.ClipBounds.Width - w) / 2f;
+        var y = top;
+
+        using var shadowBrush = new SolidBrush(shadow);
+        using var mainBrush = new SolidBrush(color);
+        // Shadow pass: a small jittered ring under and slightly right of the
+        // glyphs, standing in for the blur radius.
+        for (var i = 0; i < 8; i++)
+        {
+            var a = i * Math.PI / 4.0;
+            var dx = (float)Math.Cos(a) * 4f;
+            var dy = 4f + (float)Math.Sin(a) * 4f;
+            DrawGlyphs(g, text, font, shadowBrush, x0 + dx, y + dy, 2.5f);
+        }
+        DrawGlyphs(g, text, font, mainBrush, x0, y, 2.5f);
+    }
+
+    private static void DrawGlyphs(
+        Graphics g, string text, Font font, Brush brush, float x, float y, float spacing)
+    {
+        foreach (var c in text)
+        {
+            var cs = c.ToString();
+            g.DrawString(cs, font, brush, x, y);
+            x += g.MeasureString(cs, font).Width + spacing;
+        }
+    }
+
+    /// <summary>RingButton (MainActivity 1415): halo, rotating beam, track,
+    /// progress arc, matte disc and the power glyph — always dead-center,
+    /// scaled by the breathing loop while connecting.</summary>
+    private void PaintRing(Graphics g)
+    {
+        var cx = ClientSize.Width / 2f;
+        var cy = ClientSize.Height / 2f;
+        _ringRect = new RectangleF(cx - 76f, cy - 76f, 152f, 152f);
+
+        var connecting = _state.Connecting;
+        var glow = GlowLit ? _scCurrent : (Color?)null;
+        var scale = connecting ? RingBreathe : 1f;
+
+        // Ambient halo (pulse while lit), radius 130.
+        var haloR = 130f * scale;
+        if (glow.HasValue)
+        {
+            var alpha = (int)(255 * 0.30f * RingPulse);
+            FillRadial(g, new PointF(cx, cy), haloR, Color.FromArgb(alpha, glow.Value));
+        }
+        else
+        {
+            FillRadial(g, new PointF(cx, cy), haloR,
+                Color.FromArgb(26, DeltaTorTheme.BorderLight)); // borderLight 0.10
+        }
+
+        var r = 76f * scale;
+
+        // Rotating beam trail behind the track while connecting: a sweep
+        // gradient [0, 0.30, 0], drawn as fading arc slices.
+        if (connecting)
+        {
+            var rot = RingRotation;
+            const int slices = 60;
+            for (var i = 0; i < slices; i++)
+            {
+                var pos = (i + 0.5f) / slices;
+                var a = pos < 0.5f
+                    ? 0.30f * pos / 0.5f
+                    : 0.30f * (1f - (pos - 0.5f) / 0.5f);
+                using var pen = new Pen(Color.FromArgb((int)(255 * a), _scCurrent), 10f)
+                {
+                    StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                    EndCap = System.Drawing.Drawing2D.LineCap.Round
+                };
+                g.DrawArc(pen, cx - r, cy - r, r * 2f, r * 2f,
+                    rot + i * (360f / slices), 360f / slices + 1f);
+            }
+        }
+
+        // Thin flat track ring.
+        using (var pen = new Pen(Color.FromArgb(89, DeltaTorTheme.BorderLight), 2f)) // 0.35
+        {
+            pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+            pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+            g.DrawArc(pen, cx - r, cy - r, r * 2f, r * 2f, -90f, 360f);
+        }
+
+        // Progress arc: one solid state color, always from the top.
+        var prog = Math.Clamp(RingProgress(), 0f, 1f);
+        if (prog > 0f)
+        {
+            using var pen = new Pen(_scCurrent, 6f)
+            {
+                StartCap = System.Drawing.Drawing2D.LineCap.Round,
+                EndCap = System.Drawing.Drawing2D.LineCap.Round
+            };
+            g.DrawArc(pen, cx - r, cy - r, r * 2f, r * 2f, -90f, 360f * prog);
+        }
+
+        // Flat matte disc: Surface → #0F1119, hairlined in Border.
+        var inner = r - 9f * scale;
+        using (var disc = new System.Drawing.Drawing2D.GraphicsPath())
+        {
+            disc.AddEllipse(cx - inner, cy - inner, inner * 2f, inner * 2f);
+            using var brush = new System.Drawing.Drawing2D.PathGradientBrush(disc)
+            {
+                CenterPoint = new PointF(cx, cy),
+                CenterColor = DeltaTorTheme.Surface,
+                SurroundColors = new[] { Color.FromArgb(0xFF, 0x0F, 0x11, 0x19) }
+            };
+            g.FillEllipse(brush, cx - inner, cy - inner, inner * 2f, inner * 2f);
+        }
+        using (var pen = new Pen(Color.FromArgb(230, DeltaTorTheme.Border))) // Border 0.9
+            g.DrawEllipse(pen, cx - inner, cy - inner, inner * 2f, inner * 2f);
+
+        // The power glyph — crisp single color: 280° arc from 310° plus the stem.
+        var rg = inner * 0.46f;
+        var gp = 9f;
+        var glyphColor = UiHelpers.GlyphColor(connecting, _state.Connected, _state.Stopping);
+        using (var pen = new Pen(glyphColor, gp)
+        {
+            StartCap = System.Drawing.Drawing2D.LineCap.Round,
+            EndCap = System.Drawing.Drawing2D.LineCap.Round
+        })
+        {
+            g.DrawArc(pen, cx - rg, cy - rg, rg * 2f, rg * 2f, 310f, 280f);
+            g.DrawLine(pen, cx, cy - rg, cx, cy + rg * 0.5f);
+        }
+    }
+
+    /// <summary>ringProgressOf (MainActivity 1196): bootstrap progress only
+    /// while connecting and Tor is not up yet.</summary>
+    private float RingProgress()
+    {
+        var s = _state;
+        return s.Connecting && !s.TorRunning && _peak > 0 ? _peak / 100f : 0f;
+    }
+
+    /// <summary>The action word under the ring (MainActivity 420): CANCEL /
+    /// DISCONNECT / START VPN / CONNECT, or the error itself in red.</summary>
+    private void PaintPrimaryLabel(Graphics g)
+    {
+        var text = UiHelpers.LabelText(_state);
+        if (text.Length == 0) return;
+
+        using var font = new Font(DeltaTorTheme.FontFamilyName, 10.5f, FontStyle.Regular);
+        var lineH = g.MeasureString(text, font).Height;
+        var cy = ClientSize.Height / 2f + 106f;
+        var color = _state.Error != null ? DeltaTorTheme.Red : DeltaTorTheme.Muted;
+        using var brush = new SolidBrush(color);
+        DrawUtil.DrawSpacedCentered(g, text, font, brush,
+            new RectangleF(32f, cy - lineH / 2f, ClientSize.Width - 64f, lineH), 1.4f);
     }
 }
