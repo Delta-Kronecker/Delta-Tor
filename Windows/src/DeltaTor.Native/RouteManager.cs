@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using DeltaTor.Core;
+using DeltaTor.Core.Util;
 
 namespace DeltaTor.Native;
 
