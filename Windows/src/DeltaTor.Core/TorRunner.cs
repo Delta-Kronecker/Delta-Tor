@@ -151,16 +151,16 @@ public sealed partial class TorRunner
         AppLog.I(TagExit, $"[{_name}] control port: {_listenHost}:{port}");
         return SendControl(port, new[]
         {
-            new ControlCommand("AUTHENTICATE", optional: false),
-            new ControlCommand($"SETCONF ExitNodes=\"{exitValue}\"", optional: false),
-            new ControlCommand("SETCONF StrictNodes=0", optional: false),
-            new ControlCommand("SETCONF MaxCircuitDirtiness=600", optional: true),
-            new ControlCommand("SETCONF ConfluxEnabled=0", optional: true),
-            new ControlCommand("SETCONF CircuitBuildTimeout=180", optional: true),
-            new ControlCommand("SETCONF LearnCircuitBuildTimeout=1", optional: true),
-            new ControlCommand("SIGNAL NEWNYM", optional: true),
-            new ControlCommand("GETCONF ExitNodes", optional: false),
-            new ControlCommand("GETCONF StrictNodes", optional: false)
+            new ControlCommand("AUTHENTICATE", Optional: false),
+            new ControlCommand($"SETCONF ExitNodes=\"{exitValue}\"", Optional: false),
+            new ControlCommand("SETCONF StrictNodes=0", Optional: false),
+            new ControlCommand("SETCONF MaxCircuitDirtiness=600", Optional: true),
+            new ControlCommand("SETCONF ConfluxEnabled=0", Optional: true),
+            new ControlCommand("SETCONF CircuitBuildTimeout=180", Optional: true),
+            new ControlCommand("SETCONF LearnCircuitBuildTimeout=1", Optional: true),
+            new ControlCommand("SIGNAL NEWNYM", Optional: true),
+            new ControlCommand("GETCONF ExitNodes", Optional: false),
+            new ControlCommand("GETCONF StrictNodes", Optional: false)
         });
     }
 
