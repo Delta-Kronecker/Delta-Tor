@@ -290,7 +290,7 @@ public static class BridgeRace
         {
             var recovery = await RunConnectAttemptAsync();
             if (recovery == null) return;
-            ApplyRecovery(recovery);
+            ApplyRecovery(recovery.Value);
         }
     }
 
