@@ -15,6 +15,10 @@ internal static class Program
         // on the line right after Config.init.
         Config.Init();
         ExitNodes.Init();
+        // Android ExitNodes.loadDirectory (MainActivity 157): the capacity
+        // table and the picker list both arrive in the background.
+        ExitCapacityIndex.Load();
+        Task.Run(BridgeCountries.TopSync);
         // Notification channels (Android createNotificationChannels) have no
         // Windows equivalent; the tray/toast surface initializes with the UI.
         BridgeStore.RefreshState();
