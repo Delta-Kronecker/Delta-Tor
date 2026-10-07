@@ -1258,13 +1258,19 @@ proxy_port), same QUIC/UDP rejection toggles.
    (`MAJOR.MINOR.PATCH`), same fail-closed philosophy; replace the
    Android signing block with Windows code signing (Authenticode cert
    from secrets e.g. `WINDOWS_CERT_BASE64`/`WINDOWS_CERT_PASSWORD`,
-   `signtool`), version check = exe file version/product version vs tag,
-   pin check = expected signer thumbprint in a
-   `Windows/release-signing-cert.sha256`-equivalent file; publish with
-   `softprops/action-gh-release@v2` attaching the Windows zip/exe
-   installer (plus optionally re-attaching nothing from Android —
-   releases can carry both platforms' assets under one tag, which also
-   keeps `ReleaseChecker` (one endpoint) working for both apps).
+   `signtool` with an RFC3161 timestamp) — applied to **our own binaries
+   only** (`DeltaTor.exe`, `hev-socks5-tunnel.dll`); upstream signatures on
+   `tor.exe`/`lyrebird.exe`/`wintun.dll`/`msys-2.0.dll` stay intact because
+   erasing them would destroy the upstream authors' attestations, version check = exe
+   FileVersion (first three parts) vs tag,
+   pin check = SHA-256 of the signer DER cert read back out of the shipped
+   exe, expected digest in
+   `Windows/release-signing-cert.sha256` (fail closed; first signing run
+   prints the actual digest into the step summary), publish with
+   `softprops/action-gh-release@v2` attaching
+   `deltator-<tag>-windows-x64.zip` (same tag releases may also carry the
+   Android APKs, so the existing single `ReleaseChecker` endpoint keeps
+   serving both platforms).
    Download/verify assets must include the official pre-built binaries —
    the **Tor Expert Bundle for Windows x86_64-15.0.24** (contains
    `tor.exe`, `lyrebird.exe` = all 5 transports incl. snowflake, and the

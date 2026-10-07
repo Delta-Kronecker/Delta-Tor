@@ -41,17 +41,52 @@ jobs:
       - name: Build
         run: dotnet build Windows/DeltaTor.sln -c Release --nologo
 
-      - name: Package the build output
+      - name: Package the three artifacts
         shell: pwsh
         run: |
-          $out = "deltator-windows-ci"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $out
-          Copy-Item -Recurse "Windows/vendor" "$out/vendor"
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
 
-      - name: Upload artifact
+          # 1. The portable app itself (exe + managed/native DLLs + the
+          #    fetched vendor bundle), the same shape a user unpacks.
+          $stage = "dist/stage/app"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
+          Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
+          Compress-Archive -Path "$stage/*" -DestinationPath "dist/deltator-debug-windows.zip" -Force
+
+          # 2. The sources of the commit that was built, so the zip and the
+          #    app cannot disagree about what "this build" was.
+          git archive --format=zip --output="dist/deltator-sources.zip" HEAD
+
+          # 3. Unstripped native pieces + PDBs: hev-socks5-tunnel.dll is C,
+          #    and a stack trace from a crash is unreadable without these.
+          $sym = "dist/stage/symbols"
+          New-Item -ItemType Directory -Force -Path $sym | Out-Null
+          Copy-Item "Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll" $sym
+          Get-ChildItem -Recurse "Windows/src" -Filter *.pdb -ErrorAction SilentlyContinue |
+            ForEach-Object { Copy-Item $_.FullName $sym }
+          Compress-Archive -Path "$sym/*" -DestinationPath "dist/deltator-native-symbols.zip" -Force
+
+          Get-ChildItem dist/*.zip
+
+      - name: Upload the portable app
         uses: actions/upload-artifact@v4
         with:
-          name: deltator-windows-ci
-          path: deltator-windows-ci/
+          name: deltator-debug-windows
+          path: dist/deltator-debug-windows.zip
+          if-no-files-found: error
+
+      - name: Upload the sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: deltator-sources
+          path: dist/deltator-sources.zip
+          if-no-files-found: error
+
+      - name: Upload the native debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: deltator-native-symbols
+          path: dist/deltator-native-symbols.zip
           if-no-files-found: error
