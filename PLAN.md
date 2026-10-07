@@ -783,7 +783,7 @@ launch, same torrc generation incl. the Socks5Proxy-without-PT rule, same
 bootstrap parsing. **Snowflake on Windows = lyrebird** (verified: the Tor
 Expert Bundle 15.0.24 ships
 `ClientTransportPlugin snowflake exec lyrebird.exe` in `data/torrc-defaults`
-and the same mapping in `pluggable_transports/pt_config.json`, and
+and the same mapping in `tor/pluggable_transports/pt_config.json`, and
 `lyrebird.exe` contains the snowflake code): no `snowflake-client.exe`,
 no gomobile Go lib. The built-in zero-config / AMP / SMART modes become a
 synthetic bridge line handed to lyrebird's managed-PT process —

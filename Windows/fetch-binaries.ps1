@@ -36,9 +36,26 @@ $ExpectedSha256 = 'e9dc6ccc93cd6afa507193f4de284d6424233ff5102155cd2c94b259e8a22
 function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
 
 function Test-Extraction {
-    $tor      = Join-Path (Join-Path $TargetDir 'tor') 'tor.exe'
-    $lyrebird = Join-Path (Join-Path $TargetDir 'pluggable_transports') 'lyrebird.exe'
-    return (Test-Path $tor) -and (Test-Path $lyrebird)
+    # Layout inside the official archive:
+    #   <root>/tor/tor.exe
+    #   <root>/tor/pluggable_transports/lyrebird.exe
+    #   <root>/data/geoip, data/geoip6, data/torrc-defaults
+    $tor      = Join-Path $TargetDir 'tor/tor.exe'
+    $lyrebird = Join-Path $TargetDir 'tor/pluggable_transports/lyrebird.exe'
+    $geoip    = Join-Path $TargetDir 'data/geoip'
+    return (Test-Path $tor) -and (Test-Path $lyrebird) -and (Test-Path $geoip)
+}
+
+function Show-BundleLayout {
+    Write-Step "Actual layout under ${VendorDir}:"
+    if (Test-Path $VendorDir) {
+        Get-ChildItem -Recurse -File $VendorDir | Select-Object -First 40 | ForEach-Object {
+            Write-Step ("  " + $_.FullName.Substring($VendorDir.Length))
+        }
+    }
+    else {
+        Write-Step "  (vendor directory does not exist)"
+    }
 }
 
 function Assert-Hash([string]$Path) {
@@ -104,6 +121,7 @@ tar -xzf $archivePath -C $VendorDir
 if ($LASTEXITCODE -ne 0) { throw "Extraction failed (tar exit $LASTEXITCODE)" }
 
 if (-not (Test-Extraction)) {
+    Show-BundleLayout
     throw "Bundle incomplete after extraction: $TargetDir"
 }
 
