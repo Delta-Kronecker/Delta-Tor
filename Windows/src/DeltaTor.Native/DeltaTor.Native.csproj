@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>DeltaTor.Native</RootNamespace>
+    <AssemblyName>DeltaTor.Native</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Placeholder project for the stage-4 native layer:
+         P/Invoke into hev-socks5-tunnel.dll (built from the vendored
+         source) + wintun.dll helpers. No code yet. -->
+  </PropertyGroup>
+
+</Project>

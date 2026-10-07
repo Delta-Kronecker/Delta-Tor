@@ -1,0 +1,7 @@
+# Fetched official binaries (fetch-binaries.ps1 output)
+vendor/
+
+# Build output
+bin/
+obj/
+*.user
