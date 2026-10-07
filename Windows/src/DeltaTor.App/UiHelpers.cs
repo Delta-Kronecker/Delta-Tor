@@ -10,7 +10,7 @@ namespace DeltaTor.App;
 /// </summary>
 public static class UiHelpers
 {
-    public static Color StateColor(AppState.VpnState state)
+    public static Color StateColor(VpnState state)
     {
         if (state.Stopping) return DeltaTorTheme.Amber;
         if (state.Connecting) return DeltaTorTheme.Amber;
@@ -20,7 +20,7 @@ public static class UiHelpers
         return DeltaTorTheme.Muted;
     }
 
-    public static string StatusLabel(AppState.VpnState state)
+    public static string StatusLabel(VpnState state)
     {
         if (state.Stopping) return "";
         if (state.Connecting) return "CONNECTING";
@@ -37,7 +37,7 @@ public static class UiHelpers
         return DeltaTorTheme.Text;
     }
 
-    public static string LabelText(AppState.VpnState state)
+    public static string LabelText(VpnState state)
     {
         // Nothing here. The only STOPPING the user sees is the big word at the top.
         if (state.Stopping) return "";
