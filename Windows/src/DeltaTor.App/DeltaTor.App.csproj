@@ -10,6 +10,8 @@
     <RootNamespace>DeltaTor.App</RootNamespace>
     <AssemblyName>DeltaTor</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- Full-tunnel mode touches the route table and the Wintun adapter. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Version is overridden by the release workflow from the git tag
          (DELTATOR_VERSION parity: -p:Version=X.Y.Z); fallback = VERSION file rule. -->
     <Version>2.0.0</Version>
@@ -39,6 +41,35 @@
     </Content>
     <Content Include="..\..\assets\app\*.ico">
       <Link>%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- Stage-4 native pieces, all required next to DeltaTor.exe (a missing
+       file here fails the build on purpose — CI builds/fetches them before
+       dotnet build): hev-socks5-tunnel.dll + its msys runtime from
+       Windows/native/build-hev.sh, wintun.dll (pinned) from
+       fetch-binaries.ps1. hev's Windows backend LoadLibraryExW()s
+       wintun.dll by bare name, so it must live in the app directory. -->
+  <ItemGroup>
+    <Content Include="..\..\native\hev-socks5-tunnel\hev-socks5-tunnel.dll">
+      <Link>hev-socks5-tunnel.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\native\hev-socks5-tunnel\msys-2.0.dll">
+      <Link>msys-2.0.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\vendor\wintun\bin\amd64\wintun.dll">
+      <Link>wintun.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="..\..\vendor\wintun\LICENSE.txt">
+      <Link>wintun-LICENSE.txt</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

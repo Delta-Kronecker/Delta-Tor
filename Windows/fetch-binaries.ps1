@@ -19,7 +19,10 @@
 # https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt).
 # -CI refuses to run unpinned; a mismatch always fails.
 #
-# wintun.dll is added here in stage 4 (full-tunnel work), not yet.
+# wintun.dll: pinned official wintun.net build (stage 4, full tunnel). The
+# hev-socks5-tunnel Windows backend LoadLibraryExW()s it from the app
+# directory, so it lands in Windows/vendor/wintun/ and is copied next to
+# DeltaTor.exe by the app csproj.
 
 [CmdletBinding()]
 param(
@@ -93,6 +96,45 @@ function Assert-Hash([string]$Path) {
     else {
         Write-Step "SHA-256 verified: $actual"
     }
+}
+
+# ---------------------------------------------------------------------------
+# wintun.dll — official wintun.net build, pinned by version + SHA-256.
+# Runs before the bundle short-circuit so it is fetched on every path.
+# ---------------------------------------------------------------------------
+$WintunVersion = '0.14.1'
+$WintunArchive = "wintun-$WintunVersion.zip"
+$WintunUrl     = "https://www.wintun.net/builds/$WintunArchive"
+$WintunSha256  = '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51'
+$WintunDir     = Join-Path $VendorDir 'wintun'
+$WintunDll     = Join-Path $WintunDir 'bin/amd64/wintun.dll'
+
+if (Test-Path $WintunDll) {
+    Write-Step "wintun.dll already extracted: $WintunDll"
+}
+else {
+    New-Item -ItemType Directory -Force -Path $WintunDir | Out-Null
+    $wintunArchivePath = $null
+    foreach ($dir in @($CacheRoot, $PSScriptRoot)) {
+        $candidate = Join-Path $dir $WintunArchive
+        if (Test-Path $candidate) { $wintunArchivePath = $candidate; break }
+    }
+    if (-not $wintunArchivePath) {
+        $wintunArchivePath = Join-Path $CacheRoot $WintunArchive
+        Write-Step "Downloading $WintunUrl"
+        curl.exe -fsSL --retry 3 --retry-delay 2 -o $wintunArchivePath $WintunUrl
+        if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE): $WintunUrl" }
+    }
+    $wintunActual = (Get-FileHash -Algorithm SHA256 -Path $wintunArchivePath).Hash.ToLowerInvariant()
+    if ($wintunActual -ne $WintunSha256) {
+        throw "SHA-256 mismatch for $wintunArchivePath. Expected $WintunSha256 but got $wintunActual"
+    }
+    Write-Step "wintun SHA-256 verified: $wintunActual"
+    # The archive has a top-level wintun/ directory, so extract into vendor/.
+    tar -xf $wintunArchivePath -C $VendorDir
+    if ($LASTEXITCODE -ne 0) { throw "wintun extraction failed (tar exit $LASTEXITCODE)" }
+    if (-not (Test-Path $WintunDll)) { throw "wintun.dll missing after extraction: $WintunDll" }
+    Write-Step "wintun.dll -> $WintunDll"
 }
 
 # 1) already extracted

@@ -20,6 +20,21 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      # Stage 4: hev-socks5-tunnel.dll (tun2socks with the Wintun backend)
+      # is built from the vendored source with the only Windows toolchain
+      # upstream supports — MSYS2. Must run before dotnet build, which copies
+      # the DLL next to DeltaTor.exe.
+      - name: Set up MSYS2 (native tunnel toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          update: false
+          install: gcc make
+
+      - name: Build hev-socks5-tunnel.dll
+        shell: msys2 {0}
+        run: ./Windows/native/build-hev.sh
+
       - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.24)
         run: ./Windows/fetch-binaries.ps1 -CI
 

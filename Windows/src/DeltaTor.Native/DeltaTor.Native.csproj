@@ -8,9 +8,13 @@
     <RootNamespace>DeltaTor.Native</RootNamespace>
     <AssemblyName>DeltaTor.Native</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Placeholder project for the stage-4 native layer:
-         P/Invoke into hev-socks5-tunnel.dll (built from the vendored
-         source) + wintun.dll helpers. No code yet. -->
+    <!-- Stage-4 native layer: P/Invoke into hev-socks5-tunnel.dll (built by
+         Windows/native/build-hev.sh from the vendored source) plus the
+         Windows tunnel/routing implementation (WindowsTunnel, RouteManager). -->
   </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DeltaTor.Core\DeltaTor.Core.csproj" />
+  </ItemGroup>
 
 </Project>

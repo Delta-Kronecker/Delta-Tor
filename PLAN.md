@@ -1312,6 +1312,47 @@ proxy_port), same QUIC/UDP rejection toggles.
 | FileProvider share sheet for bridge zip | Save-File dialog / "Open folder" for the same zip |
 | install counter / release check / bridge download | unchanged HTTP code (same URLs, UA `DeltaTor-Windows` for the counter) |
 
+**Full-tunnel routing on Windows (stage 4, implemented):**
+
+- **Catch-all:** `0.0.0.0/1` + `128.0.0.0/1` on-link via the Wintun adapter
+  (same v4-only reach as Android's `addRoute(0.0.0.0/0)` — v6 stays direct,
+  exactly as on Android), adapter DNS `8.8.8.8` (Android `DEFAULT_DNS`) with
+  a low interface metric so the resolver prefers it. All installed through
+  one PowerShell (`Add-NetRoute`/`Set-DnsClientServerAddress`) after hev
+  creates the adapter.
+- **Self-exclusion:** Android keeps its own sockets out of the tunnel with
+  `addDisallowedApplication(packageName)` (TorVpnService.kt); Windows has no
+  per-process routing, so tor.exe/lyrebird.exe/our probe sockets would be
+  swallowed by the catch-all and re-enter the tunnel — a deadlock loop (the
+  winning Tor can only build circuits over the very outbound connections
+  being captured). The Windows equivalent is destination-based bypass: a
+  `/32` host route out the physical default gateway for every remote IPv4
+  destination tor or lyrebird actually uses, learned from the live TCP table
+  (`GetExtendedTcpTable`, in-process, 1 s tick): guards are already
+  connected when `TunnelEngine.Start` runs, so a seed pass covers them;
+  anything later surfaces as `SYN_SENT` within a tick and Tor retries, so a
+  missed first packet self-heals in about a second. **Consequence: full
+  tunnel + Snowflake does not work in v1** — Snowflake's STUN/DTLS peer UDP
+  has no TCP state to learn and `TorSocksBridge.FWD_UDP` drops non-53 UDP
+  anyway; Snowflake stays a Proxy-Only-mode transport on Windows (documented
+  limitation, Android unaffected by its own exclusion).
+- **Elevation:** route table + Wintun adapter need admin, so the app runs
+  with `requireAdministrator` (`app.manifest`) — the standard shape for
+  Windows VPN clients.
+- **Crash safety:** installed prefixes are persisted to
+  `%LOCALAPPDATA%\DeltaTor\tun-routes.txt` before the routes go in and
+  deleted only on clean removal; startup `CleanupLeftovers` reclaims
+  leftovers so a killed run can never leave a black-holing `0.0.0.0/1`
+  behind until reboot.
+- **Native build:** `Windows/native/build-hev.sh` compiles the vendored tree
+  (`make static` + one `gcc -shared` link) in the CI MSYS2 step — the only
+  Windows toolchain upstream supports (POSIX sources + `__MSYS__`-gated
+  backend/IOCP reactor) — producing `hev-socks5-tunnel.dll` plus its
+  `msys-2.0.dll` runtime, both shipped next to the exe; `wintun.dll` comes
+  pinned from `fetch-binaries.ps1`. Adapter name comes from a Windows-only
+  `name:` line in the YAML config (Android omits it; the Windows backend
+  cannot take a null name).
+
 **Binaries (official, pre-built, pinned)**
 
 - **Tor Expert Bundle for Windows x86_64-15.0.24** — the single core
@@ -1453,6 +1494,8 @@ To be verified item-by-item against the Android app before calling the port done
 - [ ] TorSocksBridge: no-auth SOCKS5 CONNECT, 32768 buffers, 8-thread DNS pool + 5-min cache over Tor, repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
 - [ ] Snowflake: runs **through lyrebird** (managed-PT `CMETHOD snowflake`, no separate binary); built-in/AMP/SMART modes expressed as a synthetic bridge line with the same broker/front/STUN/uTLS/fingerprint constants; torrc rules incl. no Socks5Proxy+CTP combo
 - [ ] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.24** + `wintun.dll`, SHA-256 verified, fail on mismatch; `tor.exe`/`lyrebird.exe` versions match the pin
+- [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2) + `msys-2.0.dll` + `wintun.dll` land next to the exe; `TunnelEngine.Impl = WindowsTunnel`; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present; stats tx/rx feed the same UI counters
+- [ ] Full tunnel known limitation (documented, not a bug): Snowflake does not work through the tunnel on Windows — Proxy Only is the supported mode for it
 - [ ] DomainRouter dormant: `DISABLED` default, no UI exposure, no `geo/` assets shipped (hooks still wired in the bridge)
 - [ ] Notifications/toasts: same wording (Connecting…, Connected via X · Tor Network, traffic line, update banner "NEW RELEASE vX.Y.Z", release notification id-equivalent), tray menu actions
 - [ ] ReleaseChecker: same endpoint, compareVersions, banner + toast open GitHub
