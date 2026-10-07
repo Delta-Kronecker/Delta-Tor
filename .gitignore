@@ -37,3 +37,6 @@ runs.json
 
 # local scratch trees
 /portable/
+
+# Windows port: fetched Tor Expert Bundle (extracted dir + archive), never committed
+/tor-expert-bundle-*
