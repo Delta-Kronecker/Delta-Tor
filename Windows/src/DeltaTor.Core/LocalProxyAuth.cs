@@ -38,7 +38,7 @@ public static class LocalProxyAuth
         }
 
         // Check if client supports USERNAME/PASSWORD (0x02).
-        if (!methods.Contains(0x02))
+        if (Array.IndexOf(methods, (byte)0x02) < 0)
         {
             // Client doesn't support USERNAME/PASSWORD — reject with 0xFF (no
             // acceptable methods). Expected for readiness probes and apps that
