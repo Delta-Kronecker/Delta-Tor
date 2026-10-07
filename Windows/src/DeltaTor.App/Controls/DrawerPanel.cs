@@ -35,9 +35,13 @@ public sealed partial class DrawerPanel : Panel
     private readonly Font _fLarge = new(DeltaTorTheme.FontFamilyName, 10.5f, FontStyle.Bold);
     private readonly Font _fMono = new("Consolas", 7.5f);
     private readonly Font _fMonoBig = new("Consolas", 10f, FontStyle.Bold);
+    private readonly Font _fTiny = new(DeltaTorTheme.FontFamilyName, 7f, FontStyle.Bold);
     private float _captionLineH;
     private float _bodyLineH;
     private float _largeLineH;
+    private float _smallLineH;
+    private float _tinyLineH;
+    private float _monoBigLineH;
 
     private bool _open;
     private bool _closing;
@@ -70,6 +74,9 @@ public sealed partial class DrawerPanel : Panel
             _captionLineH = mg.MeasureString("A", _fCaption).Height;
             _bodyLineH = mg.MeasureString("A", _fBody).Height;
             _largeLineH = mg.MeasureString("A", _fLarge).Height;
+            _smallLineH = mg.MeasureString("A", _fSmall).Height;
+            _tinyLineH = mg.MeasureString("A", _fTiny).Height;
+            _monoBigLineH = mg.MeasureString("A", _fMonoBig).Height;
         }
 
         _slide.Tick += (_, _) => SlideFrame();
@@ -97,6 +104,7 @@ public sealed partial class DrawerPanel : Panel
             _fLarge.Dispose();
             _fMono.Dispose();
             _fMonoBig.Dispose();
+            _fTiny.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -694,7 +702,7 @@ public sealed partial class DrawerPanel : Panel
             () => { _showAdvanced = !_showAdvanced; Invalidate(); });
         if (!_showAdvanced)
         {
-            if (_customBox != null) _customBox.Visible = false;
+            HideCardControls();
             return y;
         }
 
@@ -710,6 +718,10 @@ public sealed partial class DrawerPanel : Panel
             y = PaintCustomBridgesCard(g, y, w);
         else if (_customBox != null)
             _customBox.Visible = false;
+        y = PaintProxyCard(g, y, w);
+        y = PaintTorrcCard(g, y, w);
+        y = PaintBridgeStoreCard(g, y, w);
+        y = PaintLogCard(g, y, w);
         return y;
     }
 
