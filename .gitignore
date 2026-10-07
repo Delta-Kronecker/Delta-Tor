@@ -1,6 +1,9 @@
 # Gradle
 .gradle/
-build/
+# Anchored on purpose: a bare `build/` would also swallow the tracked
+# scripts/build/ source dirs that ship with the tor tree.
+/Android/build/
+/Android/*/build/
 local.properties
 
 # IDE
@@ -32,10 +35,10 @@ runs.json
 # Android app's own data dirs and any tracked data/ in the tree.
 /data/
 /Android/app/src/main/assets/data/
-/Windrose/scripts/data/
+/Windows/scripts/data/
 
 # locally compiled launcher (CI builds it into the artifact)
-/Windrose/scripts/DeltaTor.exe
+/Windows/scripts/DeltaTor.exe
 
 # local scratch trees
 /portable/
