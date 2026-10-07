@@ -112,7 +112,7 @@ public static class AppState
 
     private static VpnState _state = new();
     private static BridgeState _bridgeState = new();
-    private static ReleaseState _releaseState = new(checking: true);
+    private static ReleaseState _releaseState = new() { Checking = true };
     private static string _mode = "";
     private static volatile bool _vpnStarted;
 

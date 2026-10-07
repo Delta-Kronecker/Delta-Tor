@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -84,13 +85,9 @@ public static class AppLog
         {
             var id = (int)Interlocked.Increment(ref _sessionIds);
             Volatile.Write(ref _currentSession, id);
-            lock (SessionLock)
-            {
-                var next = new List<LogSession>(_sessions) { new(id, label, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) };
-                if (next.Count > 12) next = next[^12..];
-                _sessions = next;
-                Volatile.Write(ref _sessionsSnapshot, _sessions);
-            }
+            _sessions.Add(new LogSession(id, label, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            while (_sessions.Count > 12) _sessions.RemoveAt(0);
+            Volatile.Write(ref _sessionsSnapshot, _sessions.ToArray());
             Append('=', "DeltaTor", $"=== connection #{id} · {label} ===");
             return id;
         }
@@ -108,7 +105,7 @@ public static class AppLog
                 if (_sessions[i].Id == id)
                     _sessions[i] = _sessions[i] with { Outcome = outcome };
             }
-            Volatile.Write(ref _sessionsSnapshot, _sessions);
+            Volatile.Write(ref _sessionsSnapshot, _sessions.ToArray());
             Append('=', "DeltaTor", $"=== connection #{id} · {outcome} ===");
         }
     }
