@@ -248,7 +248,7 @@ public static class TorSocksBridge
                 {
                     socket.ReceiveTimeout = 30_000;
                     socket.NoDelay = true;
-                    var input = socket.GetStream();
+                    var input = new NetworkStream(socket);
                     var output = input;
 
                     // SOCKS5 greeting.
@@ -489,7 +489,7 @@ public static class TorSocksBridge
 
         try
         {
-            var remoteInput = remoteSocket.GetStream();
+            var remoteInput = new NetworkStream(remoteSocket);
             var remoteOutput = remoteInput;
 
             // SOCKS5 greeting to Tor (no auth).
@@ -786,7 +786,7 @@ public static class TorSocksBridge
             socket.SendTimeout = DnsTimeoutMs;
             socket.NoDelay = true;
 
-            var stream = socket.GetStream();
+            var stream = new NetworkStream(socket);
             var input = stream;
             var output = stream;
 
@@ -903,7 +903,7 @@ public static class TorSocksBridge
     {
         using var remote = directSocket;
         remote.NoDelay = true;
-        var remoteInput = remote.GetStream();
+        var remoteInput = new NetworkStream(remote);
         var remoteOutput = remoteInput;
 
         var t1 = new Thread(() =>
