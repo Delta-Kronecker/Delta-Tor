@@ -1,5 +1,6 @@
 using System.Text;
 using DeltaTor.Core;
+using DeltaTor.Core.Util;
 
 namespace DeltaTor.Native;
 
