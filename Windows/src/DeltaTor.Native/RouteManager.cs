@@ -320,7 +320,9 @@ public static class RouteManager
         foreach (var ip in ips)
         {
             var prefix = ip + "/32";
-            if (InstalledPrefixes.Add(prefix)) Bypassed.Add(ip);
+            if (InstalledPrefixes.Contains(prefix)) continue;
+            InstalledPrefixes.Add(prefix);
+            Bypassed.Add(ip);
         }
         PersistLocked();
         AppLog.D(Tag, $"bypass routes: +{ips.Count} (total {InstalledPrefixes.Count})");
