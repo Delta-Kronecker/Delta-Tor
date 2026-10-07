@@ -20,6 +20,12 @@ public static class AppPaths
     /// <summary>BridgeMemory pool file (Android: prefs file "deltator_bridge_memory").</summary>
     public static readonly string MemoryFile = Path.Combine(Root, "bridge-memory.json");
 
+    /// <summary>InstallCounter one-shot state (Android: prefs file "deltator_install").</summary>
+    public static readonly string InstallStateFile = Path.Combine(Root, "install-state.json");
+
+    /// <summary>Bridge export zips (Android: cacheDir/exports).</summary>
+    public static readonly string ExportDir = Path.Combine(Root, "cache", "exports");
+
     /// <summary>Per-Tor-instance data directories (stage 2, TorRunner).</summary>
     public static string TorDataDir(string runnerName)
     {
