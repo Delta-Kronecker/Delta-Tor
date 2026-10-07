@@ -260,7 +260,7 @@ public static partial class ParallelTorManager
                 }
             }
         }
-        Log.i(TAG, $"merged {lists.Count} bridge files into {merged.Count} unique bridge(s)");
+        AppLog.I(TAG, $"merged {lists.Count} bridge files into {merged.Count} unique bridge(s)");
         return string.Join("\n", merged.Values);
     }
 
@@ -321,16 +321,16 @@ public static partial class ParallelTorManager
             }
             if (free)
             {
-                if (attempt > 0) Log.i(TAG, $"port {port} free after {attempt} wait(s)");
+                if (attempt > 0) AppLog.I(TAG, $"port {port} free after {attempt} wait(s)");
                 return true;
             }
             if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() >= deadline)
             {
-                Log.e(TAG, $"port {port} still in use after {timeoutMs}ms");
+                AppLog.E(TAG, $"port {port} still in use after {timeoutMs}ms");
                 return false;
             }
             attempt++;
-            Log.w(TAG, $"port {port} still held, waiting (attempt {attempt})");
+            AppLog.W(TAG, $"port {port} still held, waiting (attempt {attempt})");
             Thread.Sleep((int)PortFreePollMs);
         }
     }

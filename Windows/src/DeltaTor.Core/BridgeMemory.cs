@@ -132,7 +132,7 @@ public static class BridgeMemory
             if (merged.SequenceEqual(current)) return 0;
             _pool[Key(name)] = string.Join(",", merged);
             SaveLocked();
-            Log.i(TAG,
+            AppLog.I(TAG,
                 $"memory[{name}]: +{fresh} new, {proven.Count - fresh} re-proven, pool={merged.Count}");
             return fresh;
         }
@@ -161,7 +161,7 @@ public static class BridgeMemory
             var stale = _pool.Keys.Where(k => k.StartsWith(KeyPrefix, StringComparison.Ordinal)).ToList();
             foreach (var k in stale) _pool.Remove(k);
             SaveLocked();
-            Log.i(TAG, $"memory cleared ({stale.Count} pool(s))");
+            AppLog.I(TAG, $"memory cleared ({stale.Count} pool(s))");
         }
     }
 
