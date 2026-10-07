@@ -109,6 +109,32 @@ public static class Config
 
     private static void SetInt(string key, int value) => SetString(key, value.ToString());
 
+    // --- raw access for other pref-backed modules (TorrcSettings, ...) --------
+
+    /// <summary>Read a raw string pref (null when unset), same file as everything else.</summary>
+    internal static string? GetRaw(string key)
+    {
+        lock (Lock) return _prefs.TryGetValue(key, out var v) ? v : null;
+    }
+
+    internal static void SetRaw(string key, string value)
+    {
+        lock (Lock)
+        {
+            _prefs[key] = value;
+            SaveLocked();
+        }
+    }
+
+    internal static void RemoveRaw(string key)
+    {
+        lock (Lock)
+        {
+            _prefs.Remove(key);
+            SaveLocked();
+        }
+    }
+
     public static int ProxyPort
     {
         get => GetInt("proxy_port", DefaultProxyPort);
