@@ -225,6 +225,7 @@ public static partial class SnowflakeBridge
             {
                 FileName = torBinary,
                 UseShellExecute = false,
+                CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 WorkingDirectory = torDataDir
@@ -300,6 +301,7 @@ public static partial class SnowflakeBridge
         {
             FileName = ptBinaryPath,
             UseShellExecute = false,
+            CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true
