@@ -3,15 +3,19 @@ using System.Drawing.Drawing2D;
 namespace DeltaTor.App.Controls;
 
 /// <summary>
-/// Shared GDI+ drawing helpers for the owner-drawn controls: rounded
-/// rectangles and letter-spaced text (Compose adds letterSpacing between
-/// glyphs; GDI+ has no such concept, so labels are drawn glyph by glyph at
-/// the requested pitch). Advances come from prefix-width differences, never
-/// from single-character MeasureString: a one-character measure carries
-/// GDI+'s right-side bearing, and summing that per glyph opened a visible
-/// gap between every letter. Prefix differences telescope to the whole
-/// string's width, so the drawn pitch equals DrawString's own layout plus
-/// the requested spacing.
+/// Shared GDI+ drawing helpers: rounded rectangles and letter-spaced text
+/// (Compose sets letterSpacing between glyphs; GDI+ has no such concept, so
+/// labels are drawn glyph by glyph at the requested pitch).
+///
+/// Widths come from TextRenderer with TextFormatFlags.NoPadding — the GDI
+/// advance of the text, with no trailing cell padding. MeasureString must
+/// not be used to position glyphs: it returns ink-plus-bearings with a
+/// padded right edge, so a one-character measure is WIDER than that
+/// character's advance. Taking prefix differences of padded measures cancels
+/// the padding everywhere except the first prefix, which inflated the first
+/// advance and opened a visible gap after the first letter ("A dvance").
+/// GDI advances telescope exactly: prefix i lands at the sum of the
+/// advances before it, which is where DrawString's own layout would put it.
 /// </summary>
 internal static class DrawUtil
 {
@@ -33,38 +37,53 @@ internal static class DrawUtil
         return path;
     }
 
+    /// <summary>Single-line pixel width of <paramref name="text"/>: the exact
+    /// GDI advance, no cell padding — the measure glyph positioning needs.</summary>
+    public static float AdvanceWidth(string text, Font font) =>
+        string.IsNullOrEmpty(text)
+            ? 0f
+            : TextRenderer.MeasureText(text, font, Size.Empty,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+
     /// <summary>Total width of <paramref name="text"/> when drawn with pitch spacing.</summary>
-    public static float SpacedWidth(Graphics g, string text, Font font, float spacing)
+    public static float SpacedWidth(string text, Font font, float spacing)
     {
         if (string.IsNullOrEmpty(text)) return 0f;
-        return g.MeasureString(text, font).Width + spacing * (text.Length - 1);
+        return AdvanceWidth(text, font) + spacing * (text.Length - 1);
     }
 
     /// <summary>Ellipsize <paramref name="text"/> to <paramref name="maxWidth"/> px when drawn with pitch spacing.</summary>
-    public static string Ellipsize(Graphics g, string text, Font font, float spacing, float maxWidth)
+    public static string Ellipsize(string text, Font font, float spacing, float maxWidth)
     {
-        if (string.IsNullOrEmpty(text) || SpacedWidth(g, text, font, spacing) <= maxWidth)
+        if (string.IsNullOrEmpty(text) || SpacedWidth(text, font, spacing) <= maxWidth)
             return text ?? "";
         var line = text;
-        while (line.Length > 1 && SpacedWidth(g, line + "…", font, spacing) > maxWidth)
+        while (line.Length > 1 && SpacedWidth(line + "…", font, spacing) > maxWidth)
             line = line[..^1];
         return line + "…";
     }
 
     /// <summary>
-    /// Draw <paramref name="text"/> glyph-by-glyph left-aligned from
-    /// (x, y), ellipsized to <paramref name="maxWidth"/>.
+    /// Draw <paramref name="text"/> left-aligned from (x, y), ellipsized to
+    /// <paramref name="maxWidth"/>, with <paramref name="spacing"/> px
+    /// between glyphs. At spacing 0 the string goes down in one DrawString,
+    /// which is already exactly the zero-pitch layout.
     /// </summary>
     public static void DrawSpaced(
         Graphics g, string text, Font font, Brush brush,
         float x, float y, float maxWidth, float spacing)
     {
-        var line = Ellipsize(g, text, font, spacing, maxWidth);
+        var line = Ellipsize(text, font, spacing, maxWidth);
         if (line.Length == 0) return;
+        if (spacing <= 0f)
+        {
+            g.DrawString(line, font, brush, x, y);
+            return;
+        }
         var prev = 0f;
         for (var i = 0; i < line.Length; i++)
         {
-            var upTo = g.MeasureString(line[..(i + 1)], font).Width;
+            var upTo = AdvanceWidth(line[..(i + 1)], font);
             g.DrawString(line[i].ToString(), font, brush, x, y);
             x += upTo - prev + spacing;
             prev = upTo;
@@ -72,19 +91,18 @@ internal static class DrawUtil
     }
 
     /// <summary>
-    /// Draw <paramref name="text"/> glyph-by-glyph centered horizontally in
-    /// <paramref name="bounds"/>, vertically centered, with
-    /// <paramref name="spacing"/> px between glyphs. Single line, ellipsized
-    /// to the bounds width (like Compose maxLines=1 ellipsis).
+    /// Draw <paramref name="text"/> centered horizontally in
+    /// <paramref name="bounds"/>, vertically centered, single line,
+    /// ellipsized to the bounds width (Compose maxLines=1 ellipsis).
     /// </summary>
     public static void DrawSpacedCentered(
         Graphics g, string text, Font font, Brush brush, RectangleF bounds, float spacing)
     {
-        var line = Ellipsize(g, text, font, spacing, bounds.Width);
-        var w = SpacedWidth(g, line, font, spacing);
+        var line = Ellipsize(text, font, spacing, bounds.Width);
+        var w = SpacedWidth(line, font, spacing);
         var lineSize = g.MeasureString(line, font);
         var x = bounds.X + (bounds.Width - w) / 2f;
         var y = bounds.Y + (bounds.Height - lineSize.Height) / 2f;
-        DrawSpaced(g, line, font, brush, x, y, bounds.Width, spacing);
+        DrawSpaced(g, line, font, brush, x, y, float.MaxValue, spacing);
     }
 }

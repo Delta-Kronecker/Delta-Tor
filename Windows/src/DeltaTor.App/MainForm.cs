@@ -70,10 +70,9 @@ public sealed class MainForm : Form
         Text = "DeltaTor";
         BackColor = DeltaTorTheme.Bg;
         StartPosition = FormStartPosition.CenterScreen;
-        // 1080x2300, the Android phone aspect ratio: 420x894 at launch,
-        // resizable down to 360x767 (the 360dp-wide floor keeps the ratio).
-        ClientSize = new Size(420, 894);
-        MinimumSize = new Size(360, 767);
+        // 450x700 launch size; resizable down to 400x560.
+        ClientSize = new Size(450, 700);
+        MinimumSize = new Size(400, 560);
         KeyPreview = true;
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -517,7 +516,7 @@ public sealed class MainForm : Form
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
         {
             DrawUtil.DrawSpaced(g, "DELTA", wmFont, brush, x, wmY, 200f, 2.6f);
-            x += DrawUtil.SpacedWidth(g, "DELTA", wmFont, 2.6f) + 2.6f;
+            x += DrawUtil.SpacedWidth("DELTA", wmFont, 2.6f) + 2.6f;
         }
         using (var brush = new SolidBrush(DeltaTorTheme.AccentLight))
             DrawUtil.DrawSpaced(g, "TOR", wmFont, brush, x, wmY, 200f, 2.6f);
@@ -528,7 +527,7 @@ public sealed class MainForm : Form
         using var capFont = new Font(
             DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
         var textH = g.MeasureString(label, capFont).Height;
-        var textW = DrawUtil.SpacedWidth(g, label, capFont, 1.1f);
+        var textW = DrawUtil.SpacedWidth(label, capFont, 1.1f);
         var chipH = Math.Max(9f, textH) + 12f;
         var chipW = 12f + 9f + 8f + textW + 12f;
         var chip = new RectangleF(
@@ -645,7 +644,7 @@ public sealed class MainForm : Form
         Graphics g, string text, Font font, Color color, float clientW, float top,
         Color shadow)
     {
-        var w = DrawUtil.SpacedWidth(g, text, font, 2.5f);
+        var w = DrawUtil.SpacedWidth(text, font, 2.5f);
         var x0 = (clientW - w) / 2f;
         var y = top;
 
@@ -658,26 +657,10 @@ public sealed class MainForm : Form
             var a = i * Math.PI / 4.0;
             var dx = (float)Math.Cos(a) * 4f;
             var dy = 4f + (float)Math.Sin(a) * 4f;
-            DrawGlyphs(g, text, font, shadowBrush, x0 + dx, y + dy, 2.5f);
+            DrawUtil.DrawSpaced(g, text, font, shadowBrush, x0 + dx, y + dy,
+                float.MaxValue, 2.5f);
         }
-        DrawGlyphs(g, text, font, mainBrush, x0, y, 2.5f);
-    }
-
-    private static void DrawGlyphs(
-        Graphics g, string text, Font font, Brush brush, float x, float y, float spacing)
-    {
-        if (text.Length == 0) return;
-        // Prefix-width differences, not a per-character MeasureString: a
-        // one-character measure carries GDI+'s right-side bearing and opened
-        // a visible gap between the glyphs of the big state word.
-        var prev = 0f;
-        for (var i = 0; i < text.Length; i++)
-        {
-            var upTo = g.MeasureString(text[..(i + 1)], font).Width;
-            g.DrawString(text[i].ToString(), font, brush, x, y);
-            x += upTo - prev + spacing;
-            prev = upTo;
-        }
+        DrawUtil.DrawSpaced(g, text, font, mainBrush, x0, y, float.MaxValue, 2.5f);
     }
 
     /// <summary>RingButton (MainActivity 1415): halo, rotating beam, track,

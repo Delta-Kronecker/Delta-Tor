@@ -8,7 +8,7 @@ namespace DeltaTor.App;
 /// push-over form with the ScreenTopBar and COPY action, the recording-off
 /// notice, the transport and severity filter chips, and the grouped, filtered
 /// list painted newest-last with auto-follow at the bottom. The window is a
-/// fixed 420x894 (1080x2300, the Android phone ratio) and the chip rows scroll
+/// fixed 450x700 (matching the main window) and the chip rows scroll
 /// sideways under the wheel, matching Android's horizontalScroll.
 /// </summary>
 public sealed class LogForm : Form
@@ -46,7 +46,7 @@ public sealed class LogForm : Form
         Text = "DeltaTor — Connection Log";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(420, 894);
+        ClientSize = new Size(450, 700);
         BackColor = DeltaTorTheme.Bg;
         KeyPreview = true;
         DoubleBuffered = true;
@@ -173,7 +173,7 @@ public sealed class LogForm : Form
             DrawUtil.DrawSpaced(g, "CONNECTION LOG", DeltaTorTheme.Title, brush,
                 back.Right + 14f, 16f + (38f - DeltaTorTheme.Title.Height) / 2f, 400f, 1.6f);
 
-        var copyW = 16f + DrawUtil.SpacedWidth(g, _copied ? "COPIED" : "COPY",
+        var copyW = 16f + DrawUtil.SpacedWidth(_copied ? "COPIED" : "COPY",
             DeltaTorTheme.Caption, 1.2f) + 16f;
         var copyH = 8f + DeltaTorTheme.Caption.Height + 8f;
         var copyRect = new RectangleF(w - 20f - copyW, 16f + (38f - copyH) / 2f, copyW, copyH);
@@ -320,7 +320,7 @@ public sealed class LogForm : Form
     private void DrawChip(Graphics g, float x, float y, string label, bool selected,
         Action onClick, float padH, float padV, ref float cursorX)
     {
-        var textW = DrawUtil.SpacedWidth(g, label, DeltaTorTheme.Caption, 1.1f);
+        var textW = DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f);
         var h = padV * 2f + DeltaTorTheme.Caption.Height;
         var rect = new RectangleF(x, y, padH * 2f + textW, h);
         using (var path = DrawUtil.RoundedRect(rect, h / 2f))
@@ -344,7 +344,7 @@ public sealed class LogForm : Form
     {
         var x = 20f;
         foreach (var label in labels)
-            x += padH * 2f + DrawUtil.SpacedWidth(g, label, DeltaTorTheme.Caption, 1.1f) + 8f;
+            x += padH * 2f + DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f) + 8f;
         return x - 8f;
     }
 
@@ -372,13 +372,13 @@ public sealed class LogForm : Form
 
                 var tx = x + 10f + 8f + 8f;
                 var idText = $"CONNECTION #{s.Id}";
-                var idW = DrawUtil.SpacedWidth(g, idText, DeltaTorTheme.Caption, 1.6f);
+                var idW = DrawUtil.SpacedWidth(idText, DeltaTorTheme.Caption, 1.6f);
                 using (var br = new SolidBrush(DeltaTorTheme.AccentLight))
                     DrawUtil.DrawSpaced(g, idText, DeltaTorTheme.Caption, br, tx, y + 6f, idW + 2f, 1.6f);
                 tx += idW + 8f;
 
                 var countText = $"· {s.Count} lines";
-                var countW = DrawUtil.SpacedWidth(g, countText, DeltaTorTheme.Caption, 0.4f);
+                var countW = DrawUtil.SpacedWidth(countText, DeltaTorTheme.Caption, 0.4f);
                 if (s.Title.Length > 0)
                 {
                     var titleMax = Math.Max(20f, w - 20f - (tx - x) - countW - 16f);
@@ -408,7 +408,7 @@ public sealed class LogForm : Form
 
                 var tx = x + 10f + 8f + 8f;
                 var levelText = LevelLabel(lh.Level);
-                var levelW = DrawUtil.SpacedWidth(g, levelText, DeltaTorTheme.Caption, 1.6f);
+                var levelW = DrawUtil.SpacedWidth(levelText, DeltaTorTheme.Caption, 1.6f);
                 using (var br = new SolidBrush(DeltaTorTheme.Text))
                     DrawUtil.DrawSpaced(g, levelText, DeltaTorTheme.Caption, br,
                         tx, y + 5f, levelW + 2f, 1.6f);
