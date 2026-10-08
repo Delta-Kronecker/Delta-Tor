@@ -1423,28 +1423,31 @@ Windows/
 │   │   ├── Config.cs           #   Exit*, TorrcSettings, DomainRouter, …)
 │   │   ├── AppLog.cs
 │   │   ├── …
-│   │   └── Race/ParallelTorManager.cs, TorRunner.cs, SnowflakeBridge.cs
+│   │   └── ParallelTorManager.cs + ParallelTorManager.Race.cs, TorRunner.cs, SnowflakeBridge.cs
 │   ├── DeltaTor.App/           # WinForms UI: MainForm (ring, header, drawer,
 │   │   ├── MainForm.cs         #   7 advanced cards), LogForm — NO SplitTunnelForm,
 │   │   ├── Controls/*.cs       #   NoticeDialog, ToggleSwitch, GradientPill, …
 │   │   └── Program.cs          #   startup sequence = DeltaTorApp.onCreate
-│   └── DeltaTor.Native/        # P/Invoke to hev-socks5-tunnel.dll + wintun helpers
+│   └── DeltaTor.Native/        # P/Invoke to hev-socks5-tunnel.dll + RouteManager (Wintun routes)
 ├── native/
-│   └── hev-socks5-tunnel/      # built DLL output (+ wrapper .c if needed)
+│   ├── build-hev.sh            # MSYS2 build of the vendored hev-socks5-tunnel sources
+│   └── hev-socks5-tunnel/      # built DLL output (gitignored; Content-copied next to the exe)
 ├── assets/
-│   ├── bridges/                # same 11 bundled .txt lists as Android
-│   └── geoip/                  # country.csv(.gz), countries.tsv, exit-capacity.tsv
-│                               #   (NO geo/ dir — geo-bypass ships data-less, as on Android)
-├── bin/                        # build output: DeltaTor.exe + hev-socks5-tunnel.dll,
-│                               #   + fetched: tor.exe, lyrebird.exe, data/geoip(+geoip6),
-│                               #   wintun.dll, README-licenses.txt → zipped artifact
+│   ├── bridges/                # same 11 bundled .txt lists as Android (verified identical)
+│   ├── geoip/                  # country.csv(.gz), countries.tsv, exit-capacity.tsv
+│   │                           #   (NO geo/ dir — geo-bypass ships data-less, as on Android)
+│   └── app/                    # icons
+├── (build output)              # src/*/bin/Release/net8.0-windows/: DeltaTor.exe +
+│                               #   hev-socks5-tunnel.dll + msys-2.0.dll + wintun.dll,
+│                               #   + fetched: tor.exe, lyrebird.exe, data/geoip(+geoip6) → CI zips it
 └── release-signing-cert.sha256 # pinned Authenticode signer digest (parity with Android)
 ```
 
-Config/data at runtime (parity with Android's `filesDir`):
-`%LOCALAPPDATA%\DeltaTor\` — `config.json` (same keys as SharedPreferences),
-`bridges/`, `bridge_memory.json`, `tor_data_<name>/`, `exports/`,
-`deltator.log` ring snapshot optional.
+Config/data at runtime (parity with Android's `filesDir` / SharedPreferences):
+`%APPDATA%\DeltaTor\prefs.json` holds the config (same keys as Android's
+SharedPreferences); the machine-local `%LOCALAPPDATA%\DeltaTor\` holds the caches:
+`bridges/`, `bridge-memory.json`, `install-state.json`, `tor/<runner>/`,
+`cache/exports/`.
 
 ---
 
