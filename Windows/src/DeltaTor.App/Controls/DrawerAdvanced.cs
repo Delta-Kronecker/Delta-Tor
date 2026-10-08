@@ -932,7 +932,7 @@ public sealed partial class DrawerPanel
                 new RectangleF(x, sy + statusRel + (statusSize.Height - 7f) / 2f, 7f, 7f), 3.5f))
             using (var b = new SolidBrush(failed ? DeltaTorTheme.Red : DeltaTorTheme.Accent))
                 g.FillPath(b, path);
-            DrawWrap(g, statusLine, failed ? DeltaTorTheme.Red : DeltaTorTheme.Muted,
+            DrawWrap(g, statusLine, _fBody, failed ? DeltaTorTheme.Red : DeltaTorTheme.Muted,
                 x + 15f, sy + statusRel, statusSize);
         });
     }
