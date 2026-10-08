@@ -1,10 +1,12 @@
 # DeltaTor
 
-DeltaTor is an Android Tor client built on one idea: **race several pluggable transports
-at the same time and keep whichever one actually works on the network you are on.**
+DeltaTor is an Android and Windows Tor client built on one idea: **race several pluggable
+transports at the same time and keep whichever one actually works on the network you are on.**
 
-Tor, lyrebird and tun2socks are compiled into the APK — there is no external Tor install
-and no companion app. The bridge lists come from
+On Android, Tor, lyrebird and tun2socks are compiled into the APK — there is no external
+Tor install and no companion app. On Windows, the same client ships as a portable zip that
+runs the official Tor Expert Bundle binaries next to its own exe and builds its tun2socks
+in CI. The bridge lists come from
 [Delta-Kronecker/Tor-Bridges-Collector](https://github.com/Delta-Kronecker/Tor-Bridges-Collector),
 the transports are `obfs4`, `webtunnel` and `snowflake`, and the `auto` mode races them
 side by side. There are no accounts, analytics, telemetry or crash reporting.
@@ -19,6 +21,7 @@ side by side. There are no accounts, analytics, telemetry or crash reporting.
   - [Transport selection](#transport-selection)
   - [Exit country](#exit-country)
   - [Using it](#using-it)
+- [Windows](#windows)
 - [Building](#building)
 - [CI](#ci)
 - [Privacy](#privacy)
@@ -34,12 +37,17 @@ Grab the asset you need from the
 | `deltator-vX.Y.Z-arm64-v8a.apk` | almost every phone and tablet made in the last decade | ~22 MB |
 | `deltator-vX.Y.Z-armeabi-v7a.apk` | 32-bit ARM devices | ~22 MB |
 | `deltator-vX.Y.Z-universal.apk` | anything else, carries every ABI | ~38 MB |
+| `deltator-vX.Y.Z-windows-x64.zip` | Windows 10/11 on 64-bit Intel/AMD | ~40 MB |
 
 `x86` and `x86_64` payloads only contain tun2socks, because Tor and lyrebird are not built
 for x86. The app is therefore meant for real ARM devices; x86 emulators will not work.
 
 Requirements: Android 7.0 (API 24) or newer. The APK is signed with the release key, so
 Android will ask you to allow installs from your browser the first time.
+
+The Windows zip is portable: unpack it anywhere and run `DeltaTor.exe`. The full-tunnel
+mode asks Windows for administrator rights when it starts (the route table and the Wintun
+adapter need them); Proxy Only runs without elevation.
 
 ## Android
 
@@ -159,6 +167,25 @@ Three things make a pinned exit country actually work, and all three are needed:
 Stopping the VPN and disconnecting are separate actions: stopping tears the tunnel down but
 keeps Tor alive, disconnecting starts a fresh race.
 
+## Windows
+
+The Windows client is the same app with the same race engine, state machine and settings,
+ported to .NET 8 / WinForms and shipped as a portable zip (`Windows/` in this repo):
+
+- **Official binaries, fetched not committed.** `tor.exe`, `lyrebird.exe` (all five
+  transports, including snowflake) and the official `data/geoip` come from the pinned
+  Tor Expert Bundle x86_64-15.0.24; `wintun.dll` comes from wintun.net. Both are
+  downloaded and SHA-256 verified by `Windows/fetch-binaries.ps1`.
+- **Full tunnel** runs `hev-socks5-tunnel.dll` (built in CI with MSYS2 from the vendored
+  upstream sources) over a Wintun adapter named `DeltaTor`, with a catch-all default route
+  plus per-destination `/32` bypass routes for tor's own traffic and a crash-recovery
+  route list. This is the Windows counterpart of Android's `addDisallowedApplication`.
+- **Proxy Only** is unchanged: start Tor, race the transports, point a browser at
+  `socks5://127.0.0.1:9050`. It needs no elevation.
+- **Known limitation:** snowflake does not work through the Windows full tunnel (its
+  STUN/DTLS peers cannot be bypassed reliably and the local proxy drops non-DNS UDP);
+  use Proxy Only for snowflake on Windows. Everything else works through the tunnel.
+
 ## Building
 
 Everything is built by Gradle and the NDK from `Android/`; the toolchain is pinned in the
@@ -177,6 +204,20 @@ Release signing reads the keystore from `ANDROID_KEYSTORE_FILE` plus the
 `ANDROID_KEYSTORE_STORE_TYPE` environment variables. For a local build, drop an ignored
 `keystore.properties` at the Gradle root (`Android/keystore.properties`). Never commit a keystore.
 
+The Windows app builds with the .NET SDK 8; the pinned binaries and the native tunnel DLL
+must exist first (CI runs these two steps before `dotnet build`):
+
+```powershell
+./Windows/fetch-binaries.ps1              # Tor Expert Bundle + wintun, SHA-256 verified
+bash Windows/native/build-hev.sh          # from an MSYS2 shell: builds hev-socks5-tunnel.dll
+dotnet build Windows/DeltaTor.sln -c Release
+```
+
+Release code signing on Windows reads `WINDOWS_CERT_BASE64` plus
+`WINDOWS_CERT_PASSWORD`; the signer certificate's SHA-256 is pinned in
+`Windows/release-signing-cert.sha256` and the release workflow fails closed until it
+matches. Never commit the pfx.
+
 The bridge list files are plain text, one bridge per line, in Tor's own format, and are also
 committed under `Android/app/src/main/assets/bridges/` so the app has something to work with before
 its first download.
@@ -186,10 +227,12 @@ its first download.
 | Workflow | Trigger | Does |
 |---|---|---|
 | `android-build.yml` | push to `main`/`android`, manual | debug APKs as an artifact |
+| `windows-build.yml` | push to `main`/`test`, PRs, manual | portable Windows zip, sources and native symbols as artifacts |
 | `release.yml` | tag `v*`, manual with a tag input | signed APKs, signature verification, GitHub release |
+| `windows-release.yml` | tag `v*`, manual with a tag input | signed Windows zip (Authenticode + signer pin), GitHub release |
 
-Both workflows install their own SDK/build tools and pinned toolchain, so no runner setup is
-needed. A `v*` tag publishes the signed APKs to the GitHub release.
+All workflows install their own SDK/build tools and pinned toolchain, so no runner setup is
+needed. One `v*` tag publishes both platforms' assets to the same GitHub release.
 
 ## Privacy
 
