@@ -70,10 +70,10 @@ public sealed class MainForm : Form
         Text = "DeltaTor";
         BackColor = DeltaTorTheme.Bg;
         StartPosition = FormStartPosition.CenterScreen;
-        // 9:19.5, the Android phone aspect ratio: 420x910 at launch, resizable
-        // down to 360x780 (the 360dp-wide floor keeps the ratio exact).
-        ClientSize = new Size(420, 910);
-        MinimumSize = new Size(360, 780);
+        // 1080x2300, the Android phone aspect ratio: 420x894 at launch,
+        // resizable down to 360x767 (the 360dp-wide floor keeps the ratio).
+        ClientSize = new Size(420, 894);
+        MinimumSize = new Size(360, 767);
         KeyPreview = true;
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -666,11 +666,17 @@ public sealed class MainForm : Form
     private static void DrawGlyphs(
         Graphics g, string text, Font font, Brush brush, float x, float y, float spacing)
     {
-        foreach (var c in text)
+        if (text.Length == 0) return;
+        // Prefix-width differences, not a per-character MeasureString: a
+        // one-character measure carries GDI+'s right-side bearing and opened
+        // a visible gap between the glyphs of the big state word.
+        var prev = 0f;
+        for (var i = 0; i < text.Length; i++)
         {
-            var cs = c.ToString();
-            g.DrawString(cs, font, brush, x, y);
-            x += g.MeasureString(cs, font).Width + spacing;
+            var upTo = g.MeasureString(text[..(i + 1)], font).Width;
+            g.DrawString(text[i].ToString(), font, brush, x, y);
+            x += upTo - prev + spacing;
+            prev = upTo;
         }
     }
 
