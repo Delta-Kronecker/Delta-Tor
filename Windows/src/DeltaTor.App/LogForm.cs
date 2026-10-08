@@ -8,7 +8,7 @@ namespace DeltaTor.App;
 /// push-over form with the ScreenTopBar and COPY action, the recording-off
 /// notice, the transport and severity filter chips, and the grouped, filtered
 /// list painted newest-last with auto-follow at the bottom. The window is a
-/// fixed 420x910 (9:19.5, the Android phone ratio) and the chip rows scroll
+/// fixed 420x894 (1080x2300, the Android phone ratio) and the chip rows scroll
 /// sideways under the wheel, matching Android's horizontalScroll.
 /// </summary>
 public sealed class LogForm : Form
@@ -46,7 +46,7 @@ public sealed class LogForm : Form
         Text = "DeltaTor — Connection Log";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(420, 910);
+        ClientSize = new Size(420, 894);
         BackColor = DeltaTorTheme.Bg;
         KeyPreview = true;
         DoubleBuffered = true;
