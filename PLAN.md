@@ -1492,17 +1492,17 @@ are only partially audited (marked inline).
 - [ ] Drawer: LOCATION (warning card, TOP 25 by exit capacity, REST OF WORLD, Any location) + ADVANCED with **7 cards** ✓ (TRANSPORT, AUTO RACERS, CUSTOM BRIDGES, PROXY, TORRC, BRIDGE STORE, LOG; no SPLIT TUNNELLING card) and "SAVED ✓" 1.5 s ✓ — LOCATION wording unaudited
 - [ ] Log screen: session grouping, transport chips + counts, EWIDV severity chips, copy button, recording-off banner, empty states
 - [x] Split tunnelling CUT: no card, no screen, no picker, no `split_tunnel_*` config — and Proxy Only remains the documented way to route selected apps
-- [ ] Race engine (partially audited: port map +1..+15 ✓, 30-min/120-s timeouts ✓, 1-s poll ✓, 150-line cap ✓, memory runner 50 ✓): shuffle rules, generation guard, memory banking at 100 %, combined merge + webtunnel ver replace, all-failed error text
-- [ ] BridgeStore (partially audited: `bridges_last_update_v4` ✓, UA `DeltaTor/1.0` ✓, 24-h interval + stats rule ✓, 20-s timeouts ✓): atomic saves impl, combined counts
-- [ ] BridgeMemory (partially audited: 300/transport ✓, 40-hex fingerprint ✓): proof-order front insert, prefix sweep clear, twin filtering
+- [x] Race engine: modes/port map (+1..+15), shuffle rules, 150-line cap, 30-min/120-s timeouts, 1-s poll, generation guard, memory banking at 100 %, combined merge + webtunnel ver replace, all-failed error text
+- [x] BridgeStore: 24-h auto update, `_v4` key, UA `DeltaTor/1.0`, atomic saves, stats/combined counts
+- [x] BridgeMemory: 300/transport, proof-order front insert, prefix sweep clear, twin filtering, 40-hex fingerprints
 - [x] Torrc: `torrc_template_v5` default text verbatim, assembly order (defaults → template → CTP → Bridge → ControlPort), `intValue` last-wins
-- [ ] Control-port exit steering (SETCONF ExitNodes + StrictNodes 0, NEWNYM, GETCONF verify ✓, 4-s timeouts)
+- [x] Control-port exit steering (SETCONF ExitNodes + StrictNodes 0, NEWNYM, GETCONF verify, 4-s timeouts)
 - [ ] GeoIP: generated torrc references the bundle's official `data/geoip` + `data/geoip6` ✓; `ExitNodes {cc}` actually steers (verify exit country after connect); `GeoIpFile` generation NOT present ✓
 - [x] Bridge export zip: same file set, stamp name, README text, null-when-empty
 - [x] Exit locator: ip2location.io → ipify/icanhazip/ifconfig fallback, UA `DeltaTor/2.0`, offline geo fallback, retry policy (5 s + 6×8 s with selection)
-- [ ] Service state machine (partially audited: stall watchdog 60 s ✓, one-shot AutoRecovery notice exact title/body ✓, probe intervals 5/20/45/90 ✓, stats change-only cadence, STOPPING ≥3 s ✓): probe Ok/Live/Dead + grace formula, 90-s cooldown ✓, teardown order
-- [ ] Proxy-only mode: endpoint string ✓, no tunnel, locator only ✓, same ring logic
-- [ ] TorSocksBridge (partially audited: no-auth SOCKS5 CONNECT, 32768 buffers ✓, 8-thread DNS pool + 5-min cache constants ✓): repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
+- [x] Service state machine: CONNECT/DISCONNECT/START_VPN/STOP_VPN, stall watchdog 60 s, one-shot AutoRecovery notice (exact title/body), probe Ok/Live/Dead + grace formula (CBT 40 + Socks 30 + 5 s margin, 6 strikes) + 90-s cooldown + 5/20/45/90 intervals, stats 1 s/5 s change-only, STOPPING ≥3 s, teardown order (tunnel → bridge → cores wait)
+- [ ] Proxy-only mode: endpoint string ✓, no tunnel ✓, locator only ✓, same ring logic (runtime)
+- [x] TorSocksBridge: no-auth SOCKS5 CONNECT, 32768 buffers, 8-thread DNS pool + 5-min cache over Tor, repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
 - [x] Snowflake: runs **through lyrebird** (managed-PT `CMETHOD snowflake`, no separate binary); built-in/AMP/SMART modes expressed as a synthetic bridge line with the same broker/front/STUN/uTLS/fingerprint constants ✓; torrc rules incl. no Socks5Proxy+CTP combo ✓
 - [x] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.24** + `wintun.dll`, SHA-256 verified, fail on mismatch (CI green); `tor.exe`/`lyrebird.exe` versions match the pin
 - [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2) + `msys-2.0.dll` + `wintun.dll` land next to the exe ✓; `TunnelEngine.Impl = WindowsTunnel` ✓; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present ✓; stats tx/rx feed the same UI counters — all runtime except the marked parts
@@ -1511,7 +1511,7 @@ are only partially audited (marked inline).
 - [ ] Notifications/toasts: same wording ✓ for the banner ("NEW RELEASE vX.Y.Z"), "Connected via X · Tor Network", AutoRecovery notice, "Restarting in auto …"; tray menu actions are runtime
 - [x] ReleaseChecker: same endpoint, compareVersions, banner + toast open GitHub
 - [x] InstallCounter: same mechanism/limits (5 attempts, `counted_v1`/`attempts_v1`), UA `DeltaTor-Windows`, own asset
-- [ ] Bridge download: same base URL set ✓ (every file identical, order included), 20-s timeouts ✓, UA ✓; merge algorithm unaudited
+- [x] Bridge download: same base URL set, merge algorithm (interleaved, fingerprint dedup, newest `ver=` wins in place), 20-s timeouts, UA
 - [x] CI parity: debug build workflow + release workflow with tag guard, version check, signer pin check, artifact names in the `deltator-*` family
 - [ ] No Persian/RTL text issues: RTL blocks render correctly on Win32 (per-block direction)
 - [x] Privacy: no telemetry; only bridge download, update check, one-time install count (README contract — Privacy section covers all three)
