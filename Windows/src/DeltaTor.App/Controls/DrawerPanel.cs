@@ -22,26 +22,45 @@ public sealed partial class DrawerPanel : Panel
     private readonly System.Windows.Forms.Timer _slide = new() { Interval = 15 };
     private readonly System.Windows.Forms.Timer _sync = new() { Interval = 1000 };
 
-    // Fonts for the painted cards (owned here, shared across paints so a 60fps
-    // loop does not churn GDI handles; _fBody is the static theme font).
+    // Fonts for the painted cards (owned here, created once and shared across
+    // paints — a per-paint `new Font` churned GDI handles and made every
+    // scroll frame pay for it). Sizes are retuned for the 420px-wide drawer:
+    // titles down, descriptions up, so a card reads title → body instead of
+    // shouting over it.
     private readonly Font _fCaption = new(DeltaTorTheme.FontFamilyName,
-        DeltaTorTheme.CaptionPt, FontStyle.Bold);
+        8f, FontStyle.Bold);
     private readonly Font _fCaptionReg = new(DeltaTorTheme.FontFamilyName,
-        DeltaTorTheme.CaptionPt, FontStyle.Regular);
+        8f, FontStyle.Regular);
     private readonly Font _fBody = DeltaTorTheme.Body;
     private readonly Font _fBodyBold = new(DeltaTorTheme.FontFamilyName,
         DeltaTorTheme.BodyPt, FontStyle.Bold);
-    private readonly Font _fSmall = new(DeltaTorTheme.FontFamilyName, 7.5f);
-    private readonly Font _fLarge = new(DeltaTorTheme.FontFamilyName, 10.5f, FontStyle.Bold);
-    private readonly Font _fMono = new("Consolas", 7.5f);
+    private readonly Font _fSmall = new(DeltaTorTheme.FontFamilyName, 9f);
+    private readonly Font _fLarge = new(DeltaTorTheme.FontFamilyName, 10f, FontStyle.Bold);
+    private readonly Font _fMono = new("Consolas", 9f);
     private readonly Font _fMonoBig = new("Consolas", 10f, FontStyle.Bold);
-    private readonly Font _fTiny = new(DeltaTorTheme.FontFamilyName, 7f, FontStyle.Bold);
+    private readonly Font _fTiny = new(DeltaTorTheme.FontFamilyName, 7.5f, FontStyle.Bold);
+
+    // Header, section and row type, cached like the rest.
+    private readonly Font _fHeader = new(DeltaTorTheme.FontFamilyName, 11f, FontStyle.Bold);
+    private readonly Font _fHeaderSub = new(DeltaTorTheme.FontFamilyName, 8.5f);
+    private readonly Font _fSection = new(DeltaTorTheme.FontFamilyName, 9f, FontStyle.Bold);
+    private readonly Font _fSummary = new(DeltaTorTheme.FontFamilyName, 10f);
+    private readonly Font _fNameReg = new(DeltaTorTheme.FontFamilyName, 10f);
+    private readonly Font _fNameBold = new(DeltaTorTheme.FontFamilyName, 10f, FontStyle.Bold);
+    private Font? _fEmoji; // EmojiFont(): the family lookup runs once
+
     private float _captionLineH;
     private float _bodyLineH;
     private float _largeLineH;
     private float _smallLineH;
     private float _tinyLineH;
     private float _monoBigLineH;
+    private float _headerLineH;
+    private float _headerSubLineH;
+    private float _sectionLineH;
+    private float _summaryLineH;
+    private float _nameLineH;
+    private float _emojiLineH;
 
     private bool _open;
     private bool _closing;
@@ -77,6 +96,13 @@ public sealed partial class DrawerPanel : Panel
             _smallLineH = mg.MeasureString("A", _fSmall).Height;
             _tinyLineH = mg.MeasureString("A", _fTiny).Height;
             _monoBigLineH = mg.MeasureString("A", _fMonoBig).Height;
+            _headerLineH = mg.MeasureString("A", _fHeader).Height;
+            _headerSubLineH = mg.MeasureString("A", _fHeaderSub).Height;
+            _sectionLineH = mg.MeasureString("A", _fSection).Height;
+            _summaryLineH = mg.MeasureString("A", _fSummary).Height;
+            _nameLineH = mg.MeasureString("A", _fNameReg).Height;
+            _fEmoji = EmojiFont();
+            _emojiLineH = mg.MeasureString("A", _fEmoji).Height;
         }
 
         _slide.Tick += (_, _) => SlideFrame();
@@ -105,6 +131,13 @@ public sealed partial class DrawerPanel : Panel
             _fMono.Dispose();
             _fMonoBig.Dispose();
             _fTiny.Dispose();
+            _fHeader.Dispose();
+            _fHeaderSub.Dispose();
+            _fSection.Dispose();
+            _fSummary.Dispose();
+            _fNameReg.Dispose();
+            _fNameBold.Dispose();
+            _fEmoji?.Dispose();
         }
         base.Dispose(disposing);
     }
@@ -237,19 +270,18 @@ public sealed partial class DrawerPanel : Panel
         var w = Width;
 
         // Header row: CONTROLS + subtitle, close box on the right.
-        using var bigFont = new Font(DeltaTorTheme.FontFamilyName, 12.5f, FontStyle.Bold);
-        using var bodySmall = new Font(DeltaTorTheme.FontFamilyName, 7.5f, FontStyle.Regular);
-        var titleH = g.MeasureString("CONTROLS", bigFont).Height;
-        var subH = g.MeasureString("A", bodySmall).Height;
+        var titleH = _headerLineH;
+        var subH = _headerSubLineH;
         var colH = titleH + 3f + subH;
         var rowH = Math.Max(36f, colH);
         var rowY = 18f;
 
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
-            g.DrawString("CONTROLS", bigFont, brush, 20f, rowY + (rowH - colH) / 2f);
+            DrawUtil.DrawSpaced(g, "CONTROLS", _fHeader, brush,
+                20f, rowY + (rowH - colH) / 2f, w - 70f, 2.4f);
         using (var brush = new SolidBrush(DeltaTorTheme.Muted))
             g.DrawString("Everything here applies on the next connect",
-                bodySmall, brush, 20f, rowY + (rowH - colH) / 2f + titleH + 3f);
+                _fHeaderSub, brush, 20f, rowY + (rowH - colH) / 2f + titleH + 3f);
 
         var close = new RectangleF(w - 16f - 36f, rowY + (rowH - 36f) / 2f, 36f, 36f);
         using (var path = DrawUtil.RoundedRect(close, 12f))
@@ -452,26 +484,21 @@ public sealed partial class DrawerPanel : Panel
         Graphics g, float y, float w, string title, string summary,
         bool expanded, Action onClick)
     {
-        using var titleFont = new Font(DeltaTorTheme.FontFamilyName, 9.5f, FontStyle.Bold);
-        using var summaryFont = new Font(DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt);
-        using var actionFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
-
-        var titleH = g.MeasureString(title, titleFont).Height;
-        var summaryH = g.MeasureString("A", summaryFont).Height;
+        var titleH = _sectionLineH;
+        var summaryH = _summaryLineH;
         var h = 18f + titleH + 4f + summaryH + 12f;
 
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
-            g.DrawString(title, titleFont, brush, 20f, y + 18f);
+            DrawUtil.DrawSpaced(g, title, _fSection, brush, 20f, y + 18f, w * 0.5f, 2f);
         using (var brush = new SolidBrush(DeltaTorTheme.Muted))
-            DrawUtil.DrawSpaced(g, summary, summaryFont, brush,
+            DrawUtil.DrawSpaced(g, summary, _fSummary, brush,
                 20f, y + 18f + titleH + 4f, w - 40f - 90f, 0.2f);
 
         var chev = new RectangleF(w - 20f - 12f, y + 18f + (titleH + 4f + summaryH - 12f) / 2f, 12f, 12f);
         var actionText = expanded ? "HIDE" : "SHOW";
-        var actionW = DrawUtil.SpacedWidth(g, actionText, actionFont, 1.2f);
+        var actionW = DrawUtil.SpacedWidth(g, actionText, _fCaption, 1.2f);
         using (var brush = new SolidBrush(expanded ? DeltaTorTheme.AccentLight : DeltaTorTheme.Muted))
-            DrawUtil.DrawSpaced(g, actionText, actionFont, brush,
+            DrawUtil.DrawSpaced(g, actionText, _fCaption, brush,
                 chev.X - 8f - actionW, chev.Y - 2f, actionW + 2f, 1.2f);
         Icons.Chevron(g, chev, DeltaTorTheme.AccentLight, expanded ? 180f : 0f);
 
@@ -485,17 +512,15 @@ public sealed partial class DrawerPanel : Panel
     {
         const float marginX = 20f;
         var cardW = w - marginX * 2f;
-        using var labelFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
-        using var bodyFont = new Font(DeltaTorTheme.FontFamilyName, 7.5f, FontStyle.Regular);
-        using var clearFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
+        var labelFont = _fCaption;
+        var bodyFont = _fSmall;
+        var clearFont = _fCaption;
 
         var innerX = marginX + 16f;
         var innerW = cardW - 32f;
         var boxX = innerX + 12f;
         var boxW = innerW - 24f;
-        var labelH = g.MeasureString("A", labelFont).Height;
+        var labelH = _captionLineH;
         var paragraph =
             "Picking a country sends your traffic through a relay there. " +
             "It can lower your speed and make the connection less stable.";
@@ -506,6 +531,12 @@ public sealed partial class DrawerPanel : Panel
         var headH = Math.Max(16f, labelH);
         var boxH = 11f + headH + 6f + paraSize.Height + 11f;
         var cardH = 8f + boxH + 8f;
+
+        // Off-screen: the height was all this pass needed (the y-flow still
+        // has to advance), so the gradient card, the icon and the paragraph
+        // are skipped — this is what keeps scrolling the country list smooth.
+        if (y + cardH < _viewTop || y > _viewBottom)
+            return y + cardH;
 
         var card = new RectangleF(marginX, y, cardW, cardH);
         using (var path = DrawUtil.RoundedRect(card, 18f))
@@ -561,18 +592,24 @@ public sealed partial class DrawerPanel : Panel
         int exits, double share, Action onClick, bool last)
     {
         const float inset = 20f;
-        using var emojiFont = EmojiFont(12.5f);
-        using var nameFont = new Font(DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt,
-            selected ? FontStyle.Bold : FontStyle.Regular);
-        using var capFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
-        using var capRegFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Regular);
 
-        var emojiH = g.MeasureString(emoji, emojiFont).Height;
-        var nameH = g.MeasureString(name, nameFont).Height;
-        var blockH = Math.Max(17f, Math.Max(emojiH, nameH));
+        // Heights are font properties, not text properties: one measure per
+        // font at startup replaces two MeasureString calls per row per paint.
+        var blockH = Math.Max(17f, Math.Max(_emojiLineH, _nameLineH));
         var h = 10f + blockH + 10f;
+
+        // Off-screen rows only advance the y-flow. Nothing is measured,
+        // drawn or hit-tested — the country list is ~60 rows deep and this
+        // is what makes scrolling it cheap.
+        if (y + h < _viewTop || y > _viewBottom)
+            return y + h + (last ? 0f : 1f);
+
+        var emojiFont = EmojiFont();
+        var nameFont = selected ? _fNameBold : _fNameReg;
+        var capFont = _fCaption;
+        var capRegFont = _fCaptionReg;
+        var nameH = _nameLineH;
+        var emojiH = _emojiLineH;
 
         var row = new RectangleF(inset, y, w - inset * 2f, h);
         if (selected)
@@ -660,12 +697,18 @@ public sealed partial class DrawerPanel : Panel
         Graphics g, float y, float w, string title, string trailing,
         bool muted, Action? onClick)
     {
-        using var font = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
-        using var regFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Regular);
-        var lineH = g.MeasureString(title, font).Height;
+        var font = _fCaption;
+        var regFont = _fCaptionReg;
+        var lineH = _captionLineH;
         var h = 14f + lineH + 6f;
+
+        // Off-screen group headers still cost height, nothing else.
+        if (y + h < _viewTop || y > _viewBottom)
+        {
+            if (onClick != null)
+                _hits.Add((new RectangleF(0, y, w, h), onClick, true));
+            return y + h;
+        }
 
         var color = muted
             ? Color.FromArgb(153, DeltaTorTheme.Muted) // Muted 0.6
@@ -686,10 +729,12 @@ public sealed partial class DrawerPanel : Panel
 
     private float PaintLoading(Graphics g, float y, float w)
     {
-        using var font = new Font(DeltaTorTheme.FontFamilyName, 7.5f, FontStyle.Regular);
-        var h = 12f + g.MeasureString("A", font).Height + 12f;
-        using var brush = new SolidBrush(Color.FromArgb(189, DeltaTorTheme.Muted)); // 0.75
-        g.DrawString("Reading country list …", font, brush, 26f, y + 12f);
+        var h = 12f + _smallLineH + 12f;
+        if (y + h >= _viewTop && y <= _viewBottom)
+        {
+            using var brush = new SolidBrush(Color.FromArgb(189, DeltaTorTheme.Muted)); // 0.75
+            g.DrawString("Reading country list …", _fSmall, brush, 26f, y + 12f);
+        }
         return y + h;
     }
 
@@ -725,11 +770,19 @@ public sealed partial class DrawerPanel : Panel
         return y;
     }
 
-    private static Font EmojiFont(float pt)
+    /// <summary>The emoji face, found once: the original per-row helper
+    /// walked FontFamily.Families — every installed family — per row per
+    /// paint, which was the single most expensive thing in a scroll frame.</summary>
+    private Font EmojiFont()
     {
+        if (_fEmoji != null) return _fEmoji;
         foreach (var f in FontFamily.Families)
-            if (f.Name is "Segoe UI Emoji" or "Segoe UI Symbol")
-                return new Font(f, pt);
-        return new Font(DeltaTorTheme.FontFamilyName, pt);
+        {
+            if (f.Name is not ("Segoe UI Emoji" or "Segoe UI Symbol")) continue;
+            _fEmoji = new Font(f, 13f);
+            return _fEmoji;
+        }
+        _fEmoji = new Font(DeltaTorTheme.FontFamilyName, 13f);
+        return _fEmoji;
     }
 }

@@ -64,7 +64,11 @@ public sealed partial class DrawerPanel
         g.DrawPath(pen, path);
     }
 
-    /// <summary>Runs the deferred draw ops after the card box is behind them.</summary>
+    /// <summary>Runs the deferred draw ops after the card box is behind them.
+    /// An off-screen card still lays out (the y-flow needs its height) but
+    /// draws nothing: no gradient tile, no text, no hits. Its child control
+    /// keeps the visibility its own op last set, so nothing floats over the
+    /// cards that are on screen.</summary>
     private float RunCard(Graphics g, float y, float w,
         Func<float, float, List<Action<Graphics>>, float> layout, float padY = CardPadY)
     {
@@ -72,9 +76,13 @@ public sealed partial class DrawerPanel
         var innerX = CardMargin + CardPadX;
         var innerW = w - CardMargin * 2f - CardPadX * 2f;
         var contentH = layout(innerX, innerW, ops);
-        CardBg(g, CardMargin, y, w - CardMargin * 2f, contentH + padY * 2f);
-        foreach (var op in ops) op(g);
-        return y + contentH + padY * 2f + 20f;
+        var h = contentH + padY * 2f;
+        if (y + h > _viewTop && y < _viewBottom)
+        {
+            CardBg(g, CardMargin, y, w - CardMargin * 2f, h);
+            foreach (var op in ops) op(g);
+        }
+        return y + h + 20f;
     }
 
     /// <summary>Approximate letter-spaced width without a Graphics handle
@@ -445,6 +453,9 @@ public sealed partial class DrawerPanel
             BackColor = DeltaTorTheme.Surface,
             ForeColor = DeltaTorTheme.Text,
             BorderStyle = BorderStyle.FixedSingle,
+            // Hidden until its card's ops position it on screen: the card may
+            // be laid out far below the viewport before ever being drawn.
+            Visible = false,
             Text = _customBridges,
             PlaceholderText =
                 "snowflake 192.0.2.3:80 FINGERPRINT url=...\nobfs4 1.2.3.4:443 FINGERPRINT cert=..."
@@ -568,7 +579,7 @@ public sealed partial class DrawerPanel
     private void EnsureProxySwitch()
     {
         if (_proxySwitch != null) return;
-        _proxySwitch = new ToggleSwitch { Checked = _proxyOnly };
+        _proxySwitch = new ToggleSwitch { Checked = _proxyOnly, Visible = false };
         _proxySwitch.CheckedChanged += (_, _) =>
         {
             _proxyOnly = _proxySwitch.Checked;
@@ -671,6 +682,7 @@ public sealed partial class DrawerPanel
             BackColor = Color.FromArgb(0xFF, 0x1A, 0x1E, 0x28),
             ForeColor = DeltaTorTheme.Text,
             BorderStyle = BorderStyle.FixedSingle,
+            Visible = false,
             Text = _templateText
         };
         _torrcBox.TextChanged += (_, _) =>
@@ -970,7 +982,7 @@ public sealed partial class DrawerPanel
     private void EnsureLogSwitch()
     {
         if (_logSwitch != null) return;
-        _logSwitch = new ToggleSwitch { Checked = _loggingOn };
+        _logSwitch = new ToggleSwitch { Checked = _loggingOn, Visible = false };
         _logSwitch.CheckedChanged += (_, _) =>
         {
             _loggingOn = _logSwitch.Checked;

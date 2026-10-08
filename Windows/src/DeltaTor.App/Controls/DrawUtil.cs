@@ -5,8 +5,13 @@ namespace DeltaTor.App.Controls;
 /// <summary>
 /// Shared GDI+ drawing helpers for the owner-drawn controls: rounded
 /// rectangles and letter-spaced text (Compose adds letterSpacing between
-/// glyphs; GDI+ has no such concept, so short labels are drawn glyph by
-/// glyph at the requested pitch).
+/// glyphs; GDI+ has no such concept, so labels are drawn glyph by glyph at
+/// the requested pitch). Advances come from prefix-width differences, never
+/// from single-character MeasureString: a one-character measure carries
+/// GDI+'s right-side bearing, and summing that per glyph opened a visible
+/// gap between every letter. Prefix differences telescope to the whole
+/// string's width, so the drawn pitch equals DrawString's own layout plus
+/// the requested spacing.
 /// </summary>
 internal static class DrawUtil
 {
@@ -32,10 +37,7 @@ internal static class DrawUtil
     public static float SpacedWidth(Graphics g, string text, Font font, float spacing)
     {
         if (string.IsNullOrEmpty(text)) return 0f;
-        var width = 0f;
-        foreach (var c in text)
-            width += g.MeasureString(c.ToString(), font).Width;
-        return width + spacing * (text.Length - 1);
+        return g.MeasureString(text, font).Width + spacing * (text.Length - 1);
     }
 
     /// <summary>Ellipsize <paramref name="text"/> to <paramref name="maxWidth"/> px when drawn with pitch spacing.</summary>
@@ -57,11 +59,15 @@ internal static class DrawUtil
         Graphics g, string text, Font font, Brush brush,
         float x, float y, float maxWidth, float spacing)
     {
-        foreach (var c in Ellipsize(g, text, font, spacing, maxWidth))
+        var line = Ellipsize(g, text, font, spacing, maxWidth);
+        if (line.Length == 0) return;
+        var prev = 0f;
+        for (var i = 0; i < line.Length; i++)
         {
-            var cs = c.ToString();
-            g.DrawString(cs, font, brush, x, y);
-            x += g.MeasureString(cs, font).Width + spacing;
+            var upTo = g.MeasureString(line[..(i + 1)], font).Width;
+            g.DrawString(line[i].ToString(), font, brush, x, y);
+            x += upTo - prev + spacing;
+            prev = upTo;
         }
     }
 
