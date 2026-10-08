@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using System.Globalization;
 
 namespace DeltaTor.App.Controls;
 
@@ -16,6 +17,11 @@ namespace DeltaTor.App.Controls;
 /// advance and opened a visible gap after the first letter ("A dvance").
 /// GDI advances telescope exactly: prefix i lands at the sum of the
 /// advances before it, which is where DrawString's own layout would put it.
+///
+/// Stepping happens by text element, not UTF-16 unit: a flag emoji is one
+/// element of four units, and slicing a surrogate pair mid-way makes the
+/// measure return nonsense, so every glyph after it lands at a wrong x and
+/// the line draws on top of itself.
 /// </summary>
 internal static class DrawUtil
 {
@@ -45,11 +51,32 @@ internal static class DrawUtil
             : TextRenderer.MeasureText(text, font, Size.Empty,
                 TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
 
+    /// <summary>Text elements in <paramref name="text"/> (a flag emoji counts as one).</summary>
+    private static int ElementCount(string text)
+    {
+        var count = 0;
+        for (var i = 0; i < text.Length; i += StringInfo.GetNextTextElementLength(text.AsSpan(i)))
+            count++;
+        return count;
+    }
+
+    /// <summary>Start index of the last text element in <paramref name="line"/>.</summary>
+    private static int StartOfLastElement(string line)
+    {
+        var last = 0;
+        for (var i = 0; i < line.Length;)
+        {
+            last = i;
+            i += StringInfo.GetNextTextElementLength(line.AsSpan(i));
+        }
+        return last;
+    }
+
     /// <summary>Total width of <paramref name="text"/> when drawn with pitch spacing.</summary>
     public static float SpacedWidth(string text, Font font, float spacing)
     {
         if (string.IsNullOrEmpty(text)) return 0f;
-        return AdvanceWidth(text, font) + spacing * (text.Length - 1);
+        return AdvanceWidth(text, font) + spacing * Math.Max(0, ElementCount(text) - 1);
     }
 
     /// <summary>Ellipsize <paramref name="text"/> to <paramref name="maxWidth"/> px when drawn with pitch spacing.</summary>
@@ -58,8 +85,13 @@ internal static class DrawUtil
         if (string.IsNullOrEmpty(text) || SpacedWidth(text, font, spacing) <= maxWidth)
             return text ?? "";
         var line = text;
-        while (line.Length > 1 && SpacedWidth(line + "…", font, spacing) > maxWidth)
-            line = line[..^1];
+        while (line.Length > 1)
+        {
+            if (SpacedWidth(line + "…", font, spacing) <= maxWidth) break;
+            var last = StartOfLastElement(line);
+            if (last == 0) break; // one element only: nothing whole left to drop
+            line = line[..last];
+        }
         return line + "…";
     }
 
@@ -81,12 +113,14 @@ internal static class DrawUtil
             return;
         }
         var prev = 0f;
-        for (var i = 0; i < line.Length; i++)
+        for (var i = 0; i < line.Length;)
         {
-            var upTo = AdvanceWidth(line[..(i + 1)], font);
-            g.DrawString(line[i].ToString(), font, brush, x, y);
+            var len = StringInfo.GetNextTextElementLength(line.AsSpan(i));
+            var upTo = AdvanceWidth(line[..(i + len)], font);
+            g.DrawString(line.AsSpan(i, len).ToString(), font, brush, x, y);
             x += upTo - prev + spacing;
             prev = upTo;
+            i += len;
         }
     }
 

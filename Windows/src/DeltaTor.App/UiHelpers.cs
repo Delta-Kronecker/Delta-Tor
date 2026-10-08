@@ -124,10 +124,13 @@ public static class UiHelpers
         return $"{secs / 86_400}d ago";
     }
 
-    /// <summary>Two-letter country code → flag emoji; anything else → 🌐.</summary>
+    /// <summary>Two-letter country code → flag emoji; anything else → 🌐.
+    /// Non-letters (a "--" placeholder) must not reach the arithmetic below:
+    /// it would build a non-flag codepoint instead of falling back.</summary>
     public static string FlagEmoji(string code)
     {
-        if (code.Length != 2) return "\U0001F310";
+        if (code.Length != 2 || !char.IsAsciiLetter(code[0]) || !char.IsAsciiLetter(code[1]))
+            return "\U0001F310";
         var sb = new System.Text.StringBuilder();
         foreach (var c in code.ToUpperInvariant())
             sb.Append(char.ConvertFromUtf32(0x1F1E6 + (c - 'A')));
