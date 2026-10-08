@@ -15,9 +15,6 @@ namespace DeltaTor.App.Controls;
 public sealed partial class DrawerPanel
 {
     // AdvancedForm (MainActivity 2924): hoisted editable state.
-    private string _templateText = TorrcSettings.Template();
-    private bool _savedFlash;
-    private long _savedAt;
     private string _transportMode = Config.TransportMode;
     private HashSet<string> _autoTransports = new(Config.AutoTransports, StringComparer.Ordinal);
     private bool _autoRecovery = Config.AutoRecovery;
@@ -28,7 +25,6 @@ public sealed partial class DrawerPanel
     private bool _showAdvanced;
 
     private DrawerEdit? _customBox;
-    private DrawerEdit? _torrcBox;
     private ToggleSwitch? _proxySwitch;
     private ToggleSwitch? _logSwitch;
     private Spinner? _storeSpinner;
@@ -78,7 +74,7 @@ public sealed partial class DrawerPanel
         if (_transportMode == ParallelTorManager.TransportCustom)
             AddCustomBridgesCard(flow);
         AddProxyCard(flow);
-        AddTorrcCard(flow);
+        AddEditTorrcCard(flow);
         AddBridgeStoreCard(flow);
         AddLogCard(flow);
     }
@@ -705,13 +701,13 @@ public sealed partial class DrawerPanel
         Controls.Add(_proxySwitch);
     }
 
-    // ---- TORRC TEMPLATE -----------------------------------------------------
+    // ---- EDIT TORRC --------------------------------------------------------
 
-    private void AddTorrcCard(Flow flow)
+    /// <summary>Plain card with one action: the torrc template is edited in
+    /// Notepad, not in a five-line box inside the drawer. The saved file is
+    /// what TorrcSettings.Template() serves, so the next connect writes it.</summary>
+    private void AddEditTorrcCard(Flow flow)
     {
-        if (_savedFlash && Environment.TickCount64 - _savedAt > 1500)
-            _savedFlash = false;
-
         var w = flow.W;
         var x = CardMargin + CardPadX;
         var iw = w - CardMargin * 2f - CardPadX * 2f;
@@ -722,41 +718,29 @@ public sealed partial class DrawerPanel
         cy += 2f + _cardTitleLineH + 4f;
 
         const string descText =
-            "A ready-made torrc template. Bridges and pluggable transports " +
-            "are appended automatically · applied on next connect.";
+            "Opens the torrc template in Notepad. Edit and save — bridges and " +
+            "pluggable transports are appended automatically, applied on next connect.";
         var descSize = Wrap(descText, _fBody, iw);
-        cy += 4f + descSize.Height + 4f;
+        cy += 4f + descSize.Height + 8f;
 
-        var boxRel = cy;
-        EnsureTorrcBox();
-        var lineCount = Math.Clamp(_templateText.Split('\n').Length, 10, 18);
-        var boxH = _monoLineH * lineCount + 8f;
-        cy += boxH + 6f;
+        var pillW = 16f + DrawUtil.SpacedWidth("OPEN IN NOTEPAD", _fLabel, 1.2f) + 16f;
+        var pillH = 10f + _labelLineH + 10f;
+        var pillRel = cy;
+        cy += pillH + 6f;
 
-        const string statusText = "One directive per line · lines starting with # are ignored";
-        var saveW = 18f + DrawUtil.SpacedWidth("SAVE", _fLabel, 1.2f) + 18f;
-        var saveH = 8f + _labelLineH + 8f;
-        var statusW = iw - saveW - 12f;
-        var saved = _savedFlash;
-        var statusSize = saved ? Size.Empty : Wrap(statusText, _fBody, statusW);
-        var rowRel = cy;
-        var blockH = Math.Max(Math.Max(statusSize.Height, _bodyLineH), saveH);
-        var saveRel = rowRel + (blockH - saveH) / 2f;
-        var statusRel = rowRel + (blockH - (saved ? _bodyLineH : statusSize.Height)) / 2f;
-        cy += blockH;
+        var pathRel = cy;
+        cy += _tinyLineH;
 
         var cardH = cy + CardPadY;
 
         flow.Add(cardH + CardGap, (g, sy) =>
         {
             CardBg(g, CardMargin, sy, w - CardMargin * 2f, cardH);
-            DrawCardTitle(g, sy + titleTop, x, iw, "TORRC TEMPLATE",
+            DrawCardTitle(g, sy + titleTop, x, iw, "EDIT TORRC",
                 "RESET", DeltaTorTheme.AccentLight,
                 () =>
                 {
                     TorrcSettings.ResetTemplate();
-                    _templateText = TorrcSettings.Template();
-                    if (_torrcBox != null) _torrcBox.Text = _templateText;
                     MarkDirty();
                     Invalidate();
                 }, top + titleTop);
@@ -764,66 +748,42 @@ public sealed partial class DrawerPanel
             DrawWrap(g, descText, _fBody, DeltaTorTheme.Muted,
                 x, sy + titleTop + 2f + _cardTitleLineH + 4f + 4f, descSize);
 
-            EnsureTorrcBox();
-            PlaceChild(_torrcBox!,
-                new RectangleF(x, sy + boxRel, iw, boxH));
-
-            if (saved)
-            {
-                using var b = new SolidBrush(DeltaTorTheme.GreenLight);
-                DrawUtil.DrawSpaced(g, "SAVED ✓", _fBody, b, x, sy + statusRel, statusW, 0.2f);
-            }
-            else
-            {
-                DrawWrap(g, statusText, _fBody, DeltaTorTheme.Muted,
-                    x, sy + statusRel, statusSize);
-            }
-
-            var saveRect = new RectangleF(x + iw - saveW, sy + saveRel, saveW, saveH);
-            using (var path = DrawUtil.RoundedRect(saveRect, 12f))
+            var pillRect = new RectangleF(x, sy + pillRel, pillW, pillH);
+            using (var path = DrawUtil.RoundedRect(pillRect, 12f))
             using (var b = new System.Drawing.Drawing2D.LinearGradientBrush(
-                saveRect, DeltaTorTheme.AccentDark, DeltaTorTheme.Accent, 0f))
+                pillRect, DeltaTorTheme.AccentDark, DeltaTorTheme.Accent, 0f))
                 g.FillPath(b, path);
             using (var b = new SolidBrush(Color.White))
-                DrawUtil.DrawSpacedCentered(g, "SAVE", _fLabel, b, saveRect, 1.2f);
-
+                DrawUtil.DrawSpacedCentered(g, "OPEN IN NOTEPAD", _fLabel, b, pillRect, 1.2f);
             _scrollHits.Add((
-                new RectangleF(x + iw - saveW, top + saveRel, saveW, saveH),
-                () =>
-                {
-                    TorrcSettings.SetTemplate(_templateText);
-                    _savedFlash = true;
-                    _savedAt = Environment.TickCount64;
-                    MarkDirty();
-                    Invalidate();
-                }));
+                new RectangleF(x, top + pillRel, pillW, pillH),
+                OpenTorrcInNotepad));
+
+            using (var b = new SolidBrush(Color.FromArgb(120, DeltaTorTheme.Muted)))
+                DrawUtil.DrawSpaced(g, TorrcSettings.TemplateFile, _fTiny, b,
+                    x, sy + pathRel, iw, 0.4f);
         });
     }
 
-    private void EnsureTorrcBox()
+    /// <summary>Seed the template file if it is not there yet, then hand it
+    /// to Notepad; the saved file is what the next connect writes.</summary>
+    private static void OpenTorrcInNotepad()
     {
-        if (_torrcBox != null) return;
-        _torrcBox = new DrawerEdit
+        try
         {
-            Multiline = true,
-            ScrollBars = ScrollBars.Vertical,
-            Font = _fMono,
-            BackColor = Color.FromArgb(0xFF, 0x1A, 0x1E, 0x28),
-            ForeColor = DeltaTorTheme.Text,
-            BorderStyle = BorderStyle.FixedSingle,
-            Visible = false,
-            Text = _templateText
-        };
-        _torrcBox.WheelToDrawer = OnMouseWheel;
-        _torrcBox.TextChanged += (_, _) =>
+            TorrcSettings.EnsureTemplateFile();
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "notepad.exe",
+                Arguments = $"\"{TorrcSettings.TemplateFile}\"",
+                UseShellExecute = false
+            });
+            AppLog.I("UI", $"Opened {TorrcSettings.TemplateFile} in Notepad");
+        }
+        catch (Exception ex)
         {
-            _templateText = _torrcBox.Text;
-            // Height follows the line count (clamped), so a typed newline
-            // or a long paste must reflow the card.
-            MarkDirty();
-            Invalidate();
-        };
-        Controls.Add(_torrcBox);
+            AppLog.I("UI", $"Could not open the torrc template: {ex.Message}");
+        }
     }
 
     // ---- BRIDGE STORE -------------------------------------------------------

@@ -18,8 +18,9 @@ namespace DeltaTor.Core;
 /// install the new default template instead of leaving it on the values it was
 /// shipped with.
 ///
-/// The shipped template carries no comments, because it is shown verbatim in
-/// an editable text field. The reasoning lives here instead:
+/// The shipped template carries no comments, because it is edited as plain
+/// text (the EDIT TORRC card opens it in Notepad). The reasoning lives here
+/// instead:
 ///
 ///  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort`,
 ///    ever. Three Tor processes run in parallel and the app owns the only
@@ -119,15 +120,85 @@ NumPrimaryGuards 15
 Schedulers Vanilla
 MaxClientCircuitsPending 128";
 
-    /// <summary>Current torrc template (falls back to the bundled default).</summary>
-    public static string Template() =>
-        Config.GetRaw(KeyTemplate) ?? DefaultTemplate;
+    /// <summary>The editable torrc template as a plain file: EDIT TORRC opens
+    /// it in Notepad, and while it exists it wins over the prefs copy — what
+    /// was saved there is what the next connect writes to the real torrc.</summary>
+    public static readonly string TemplateFile = Path.Combine(AppPaths.Root, "torrc.template");
 
-    public static void SetTemplate(string text) =>
-        Config.SetRaw(KeyTemplate, text.Trim());
+    private static string? _fileCache;
+    private static string _fileStamp = "";
 
-    public static void ResetTemplate() =>
+    /// <summary>Current torrc template (file first, then prefs, then the bundled default).</summary>
+    public static string Template()
+    {
+        try
+        {
+            if (File.Exists(TemplateFile))
+            {
+                var stamp = File.GetLastWriteTimeUtc(TemplateFile).Ticks.ToString();
+                if (_fileCache != null && stamp == _fileStamp) return _fileCache;
+                _fileCache = File.ReadAllText(TemplateFile);
+                _fileStamp = stamp;
+                return _fileCache;
+            }
+        }
+        catch
+        {
+            // Notepad can hold the file open mid-save; prefs are the fallback.
+        }
+        return Config.GetRaw(KeyTemplate) ?? DefaultTemplate;
+    }
+
+    /// <summary>Create the template file from the current template, so
+    /// Notepad always has something real to open.</summary>
+    public static void EnsureTemplateFile()
+    {
+        if (File.Exists(TemplateFile)) return;
+        try
+        {
+            Directory.CreateDirectory(AppPaths.Root);
+            var text = Config.GetRaw(KeyTemplate) ?? DefaultTemplate;
+            File.WriteAllText(TemplateFile, text);
+            _fileCache = text;
+            _fileStamp = File.GetLastWriteTimeUtc(TemplateFile).Ticks.ToString();
+        }
+        catch
+        {
+            // Seeding failed: Notepad offers to create the file itself.
+        }
+    }
+
+    public static void SetTemplate(string text)
+    {
+        var trimmed = text.Trim();
+        Config.SetRaw(KeyTemplate, trimmed);
+        try
+        {
+            Directory.CreateDirectory(AppPaths.Root);
+            File.WriteAllText(TemplateFile, trimmed);
+            _fileCache = trimmed;
+            _fileStamp = File.GetLastWriteTimeUtc(TemplateFile).Ticks.ToString();
+        }
+        catch
+        {
+            // Prefs still hold the value for a connect without the file.
+        }
+    }
+
+    public static void ResetTemplate()
+    {
         Config.RemoveRaw(KeyTemplate);
+        try
+        {
+            if (File.Exists(TemplateFile)) File.Delete(TemplateFile);
+        }
+        catch
+        {
+            // Open in Notepad: the user's editor wins; next seed re-reads prefs.
+        }
+        _fileCache = null;
+        _fileStamp = "";
+    }
 
     /// <summary>Non-blank, non-comment lines from the template, written to torrc on connect.</summary>
     public static IReadOnlyList<string> TemplateLines() =>
