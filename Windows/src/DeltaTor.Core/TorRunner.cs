@@ -473,6 +473,10 @@ public sealed partial class TorRunner
             {
                 FileName = torBinary,
                 UseShellExecute = false,
+                // tor.exe is a console binary: without this Windows opens a
+                // black window per racing runner — up to four of them, plus
+                // lyrebird's. Redirected output above must never mean visible.
+                CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 WorkingDirectory = _dataDir
@@ -564,6 +568,7 @@ public sealed partial class TorRunner
         {
             FileName = ptBinaryPath,
             UseShellExecute = false,
+            CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             RedirectStandardInput = true
