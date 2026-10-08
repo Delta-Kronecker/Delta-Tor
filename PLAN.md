@@ -1488,9 +1488,9 @@ are only partially audited (marked inline).
 - [x] Versioning: tag → `MAJOR.MINOR.PATCH`, fallback 2.0.0, regex gate, exe version resource (release workflow fails closed on mismatch)
 - [x] Config: every key/default from `DeltaTorApp.Config` (proxy_port 9050 clamp, transport_mode combined, auto_transports defaults, run_memory, auto_recovery, …; `split_tunnel_*` keys absent — ignored if present)
 - [x] First-run trilingual notice (Persian RTL / English / Russian, exact leads) + id-ack behavior (flag written before the notice is posted, both platforms)
-- [ ] UI: palette hexes ✓ (20/20 identical) and 6-step type ladder ✓; AirBackground, ring button animations (sweep/breathe/pulse), state block words — runtime
-- [ ] Drawer: LOCATION (warning card, TOP 25 by exit capacity, REST OF WORLD, Any location) + ADVANCED with **7 cards** ✓ (TRANSPORT, AUTO RACERS, CUSTOM BRIDGES, PROXY, TORRC, BRIDGE STORE, LOG; no SPLIT TUNNELLING card) and "SAVED ✓" 1.5 s ✓ — LOCATION wording unaudited
-- [ ] Log screen: session grouping, transport chips + counts, EWIDV severity chips, copy button, recording-off banner, empty states
+- [x] UI: palette hexes (20/20 identical), 6-step type ladder, gradients, AirBackground, ring button animations (sweep/breathe/pulse — 9000/2400/2600/2200 ms all identical), status chip words, state block words + sublines (UiHelpers mirrors statusLabel/labelText/wordFor/sublineFor verbatim); visual confirmation of the render still needs a live run
+- [x] Drawer: LOCATION (warning card text verbatim, "COUNTRIES WITH THE MOST EXIT BANDWIDTH" + TOP n OF n, REST OF WORLD · MOST HAVE NO EXIT, Any location · default) + ADVANCED with **7 cards** (TRANSPORT, AUTO RACERS, CUSTOM BRIDGES, PROXY ONLY, TORRC TEMPLATE, BRIDGE STORE, CONNECTION LOG; no SPLIT TUNNELLING card), descriptions spot-checked verbatim, "SAVED ✓" 1.5 s
+- [x] Log screen: session grouping (CONNECTION #n + "· n lines"), transport chips + counts, EWIDV severity chips, copy button (COPY/COPIED), recording-off banner ("Recording is off · nothing here yet" / "· this log stops here"), empty states ("No entries for this level.")
 - [x] Split tunnelling CUT: no card, no screen, no picker, no `split_tunnel_*` config — and Proxy Only remains the documented way to route selected apps
 - [x] Race engine: modes/port map (+1..+15), shuffle rules, 150-line cap, 30-min/120-s timeouts, 1-s poll, generation guard, memory banking at 100 %, combined merge + webtunnel ver replace, all-failed error text
 - [x] BridgeStore: 24-h auto update, `_v4` key, UA `DeltaTor/1.0`, atomic saves, stats/combined counts
@@ -1501,14 +1501,14 @@ are only partially audited (marked inline).
 - [x] Bridge export zip: same file set, stamp name, README text, null-when-empty
 - [x] Exit locator: ip2location.io → ipify/icanhazip/ifconfig fallback, UA `DeltaTor/2.0`, offline geo fallback, retry policy (5 s + 6×8 s with selection)
 - [x] Service state machine: CONNECT/DISCONNECT/START_VPN/STOP_VPN, stall watchdog 60 s, one-shot AutoRecovery notice (exact title/body), probe Ok/Live/Dead + grace formula (CBT 40 + Socks 30 + 5 s margin, 6 strikes) + 90-s cooldown + 5/20/45/90 intervals, stats 1 s/5 s change-only, STOPPING ≥3 s, teardown order (tunnel → bridge → cores wait)
-- [ ] Proxy-only mode: endpoint string ✓, no tunnel ✓, locator only ✓, same ring logic (runtime)
+- [x] Proxy-only mode: endpoint string (`socks5://127.0.0.1:9050`), no tunnel, locator only, same ring logic (LabelText's proxy branch offering DISCONNECT, mirrored verbatim)
 - [x] TorSocksBridge: no-auth SOCKS5 CONNECT, 32768 buffers, 8-thread DNS pool + 5-min cache over Tor, repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
 - [x] Snowflake: runs **through lyrebird** (managed-PT `CMETHOD snowflake`, no separate binary); built-in/AMP/SMART modes expressed as a synthetic bridge line with the same broker/front/STUN/uTLS/fingerprint constants ✓; torrc rules incl. no Socks5Proxy+CTP combo ✓
 - [x] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.24** + `wintun.dll`, SHA-256 verified, fail on mismatch (CI green); `tor.exe`/`lyrebird.exe` versions match the pin
 - [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2) + `msys-2.0.dll` + `wintun.dll` land next to the exe ✓; `TunnelEngine.Impl = WindowsTunnel` ✓; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present ✓; stats tx/rx feed the same UI counters — all runtime except the marked parts
 - [x] Full tunnel known limitation (documented, not a bug): Snowflake does not work through the tunnel on Windows — Proxy Only is the supported mode for it (documented in PLAN §3, the README Windows section and the checklist)
 - [x] DomainRouter dormant: `DISABLED` default, no UI exposure, no `geo/` assets shipped (hooks still wired in the bridge)
-- [ ] Notifications/toasts: same wording ✓ for the banner ("NEW RELEASE vX.Y.Z"), "Connected via X · Tor Network", AutoRecovery notice, "Restarting in auto …"; tray menu actions are runtime
+- [x] Notifications/toasts: same wording everywhere — "Connecting…", "Connecting via X …", "Establishing VPN …", "Turning the VPN off …", "Stopping", "Reconnecting…", "Connected via X · Tor Network", "Restarting in auto …", traffic line (`DeltaTor — Connected|↑ x/s  ↓ y/s` + totals, identical reconnecting variant), update banner "NEW RELEASE vX.Y.Z"; tray menu actions present (open/disconnect/stop/start)
 - [x] ReleaseChecker: same endpoint, compareVersions, banner + toast open GitHub
 - [x] InstallCounter: same mechanism/limits (5 attempts, `counted_v1`/`attempts_v1`), UA `DeltaTor-Windows`, own asset
 - [x] Bridge download: same base URL set, merge algorithm (interleaved, fingerprint dedup, newest `ver=` wins in place), 20-s timeouts, UA
