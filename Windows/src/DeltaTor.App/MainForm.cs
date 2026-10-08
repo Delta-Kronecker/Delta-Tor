@@ -70,8 +70,10 @@ public sealed class MainForm : Form
         Text = "DeltaTor";
         BackColor = DeltaTorTheme.Bg;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(1024, 680);
-        MinimumSize = new Size(900, 600);
+        // 9:19.5, the Android phone aspect ratio: 420x910 at launch, resizable
+        // down to 360x780 (the 360dp-wide floor keeps the ratio exact).
+        ClientSize = new Size(420, 910);
+        MinimumSize = new Size(360, 780);
         KeyPreview = true;
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Dpi;
@@ -623,7 +625,7 @@ public sealed class MainForm : Form
         var cy = ClientSize.Height / 2f;
         var top = cy - 112f - blockH / 2f;
 
-        DrawSpacedShadow(g, word, wordFont, _scCurrent, top,
+        DrawSpacedShadow(g, word, wordFont, _scCurrent, ClientSize.Width, top,
             Color.FromArgb(115, Color.Black)); // black 0.45, offset (0, 4)
         if (sub.Length > 0)
         {
@@ -635,12 +637,16 @@ public sealed class MainForm : Form
 
     /// <summary>Centered letter-spaced text with the big word's soft shadow
     /// (Compose Shadow(black 0.45, offset (0,4), blur 10) approximated by a
-    /// jittered low-alpha pass under the glyphs).</summary>
+    /// jittered low-alpha pass under the glyphs). Centering uses the client
+    /// width, never g.ClipBounds: a partial repaint (the strips a closing
+    /// drawer or a dialog uncovers) has a narrow clip, and centering on that
+    /// clip would draw the word shifted in each strip.</summary>
     private static void DrawSpacedShadow(
-        Graphics g, string text, Font font, Color color, float top, Color shadow)
+        Graphics g, string text, Font font, Color color, float clientW, float top,
+        Color shadow)
     {
         var w = DrawUtil.SpacedWidth(g, text, font, 2.5f);
-        var x0 = (g.ClipBounds.Width - w) / 2f;
+        var x0 = (clientW - w) / 2f;
         var y = top;
 
         using var shadowBrush = new SolidBrush(shadow);

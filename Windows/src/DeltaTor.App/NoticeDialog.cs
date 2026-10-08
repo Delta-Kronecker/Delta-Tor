@@ -32,6 +32,10 @@ public sealed class NoticeDialog : Form
     private const int IconBox = 34;
     private const int IconBoxRadius = 11;
 
+    // Actual width: the parent minus 24px margins per side (Android's
+    // fillMaxWidth inside the dialog window), capped at the material max.
+    private int _dialogW = DialogWidth;
+
     public NoticeDialog(Notice notice)
     {
         _notice = notice;
@@ -59,7 +63,7 @@ public sealed class NoticeDialog : Form
             Label = "OK"
         };
 
-        var w = DialogWidth - Pad * 2;
+        var w = _dialogW - Pad * 2;
         for (var i = 0; i < notice.Blocks.Count; i++)
         {
             var block = notice.Blocks[i];
@@ -70,15 +74,14 @@ public sealed class NoticeDialog : Form
                 _hasLead[i] = true;
                 var lead = MakeLabel(block.Lead, _leadFont, rtl);
                 _leadLabels.Add(lead);
-                _leadSizes.Add(Measure(block.Lead, _leadFont, w));
                 _blocks.Controls.Add(lead);
             }
 
             var text = MakeLabel(block.Text, DeltaTorTheme.Body, rtl);
             _textLabels.Add(text);
-            _textSizes.Add(Measure(block.Text, DeltaTorTheme.Body, w));
             _blocks.Controls.Add(text);
         }
+        MeasureBlocks(w);
 
         Controls.Add(_card);
         Controls.Add(_blocks);
@@ -90,7 +93,32 @@ public sealed class NoticeDialog : Form
             if (e.KeyCode == Keys.Escape) Close();
         };
 
-        Width = DialogWidth;
+        Width = _dialogW;
+        LayoutDialog();
+    }
+
+    /// <summary>Re-measure the blocks at the current content width.</summary>
+    private void MeasureBlocks(int w)
+    {
+        _leadSizes.Clear();
+        _textSizes.Clear();
+        for (var i = 0; i < _notice.Blocks.Count; i++)
+        {
+            if (_hasLead[i])
+                _leadSizes.Add(Measure(_notice.Blocks[i].Lead, _leadFont, w));
+            _textSizes.Add(Measure(_notice.Blocks[i].Text, DeltaTorTheme.Body, w));
+        }
+    }
+
+    protected override void OnLoad(EventArgs e)
+    {
+        base.OnLoad(e);
+        if (Owner is not { } owner) return;
+        var w = Math.Clamp(owner.ClientSize.Width - Pad * 2 - 8, 320, DialogWidth);
+        if (w == _dialogW) return;
+        _dialogW = w;
+        Width = w;
+        MeasureBlocks(w - Pad * 2);
         LayoutDialog();
     }
 
@@ -111,7 +139,7 @@ public sealed class NoticeDialog : Form
 
     private void LayoutDialog()
     {
-        var w = DialogWidth - Pad * 2;
+        var w = _dialogW - Pad * 2;
 
         // Header row: 34px icon box; the title is drawn by the card next to
         // it (skipped entirely when blank — a blank heading leaves a
@@ -146,7 +174,7 @@ public sealed class NoticeDialog : Form
         _ok.SetBounds(Pad, Pad + headerH + 14 + blocksH + 20, w, ButtonHeight);
 
         var height = Pad + headerH + 14 + blocksH + 20 + ButtonHeight + Pad;
-        _card.SetBounds(0, 0, DialogWidth, height);
+        _card.SetBounds(0, 0, _dialogW, height);
         Height = height;
     }
 

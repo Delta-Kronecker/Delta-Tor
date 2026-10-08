@@ -7,7 +7,9 @@ namespace DeltaTor.App;
 /// The connection log screen (MainActivity LogScreen, line 3866): a borderless
 /// push-over form with the ScreenTopBar and COPY action, the recording-off
 /// notice, the transport and severity filter chips, and the grouped, filtered
-/// list painted newest-last with auto-follow at the bottom.
+/// list painted newest-last with auto-follow at the bottom. The window is a
+/// fixed 420x910 (9:19.5, the Android phone ratio) and the chip rows scroll
+/// sideways under the wheel, matching Android's horizontalScroll.
 /// </summary>
 public sealed class LogForm : Form
 {
@@ -32,12 +34,19 @@ public sealed class LogForm : Form
     private float _viewH;
     private bool _follow = true;
 
+    // Chip-row horizontal scroll (horizontalScroll on each Row) and the
+    // bands the wheel hijack applies to.
+    private float _tScroll;
+    private float _fScroll;
+    private RectangleF _tBand;
+    private RectangleF _fBand;
+
     public LogForm()
     {
         Text = "DeltaTor — Connection Log";
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.CenterParent;
-        ClientSize = new Size(960, 640);
+        ClientSize = new Size(420, 910);
         BackColor = DeltaTorTheme.Bg;
         KeyPreview = true;
         DoubleBuffered = true;
@@ -83,6 +92,21 @@ public sealed class LogForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        // Over a chip row the wheel scrolls that row sideways, the way Android
+        // scrolls it under a horizontal drag; anywhere else it is list scroll.
+        var side = e.Delta / 120 * 40;
+        if (_tBand.Contains(e.Location))
+        {
+            _tScroll = Math.Max(0f, _tScroll - side);
+            Invalidate();
+            return;
+        }
+        if (_fBand.Contains(e.Location))
+        {
+            _fScroll = Math.Max(0f, _fScroll - side);
+            Invalidate();
+            return;
+        }
         _scroll = Math.Max(0, _scroll - e.Delta / 120 * 60);
         // Follow the tail again once the user scrolls back to the bottom.
         _follow = _scroll >= Math.Max(0f, _contentH - _viewH) - 2f;
@@ -187,35 +211,45 @@ public sealed class LogForm : Form
             y += 6f + DeltaTorTheme.Small.Height + 6f;
         }
 
-        // ---- Transport chips (Spacer6 + Row pad h20, gap 8).
+        // ---- Transport chips (Spacer6 + Row pad h20, gap 8; horizontalScroll).
         y += 6f;
         var counts = TransportCounts(lines);
         var chipY = y + 6f;
-        var cx = 20f;
-        DrawChip(g, cx, chipY, "ALL", _transport == null,
-            () => { _transport = null; Invalidate(); }, 14f, 7f, ref cx);
+        var tLabels = new List<string> { "ALL" };
         foreach (var t in AppLog.Transports)
-        {
-            var captured = t;
-            var label = counts.TryGetValue(t, out var n) && n > 0
+            tLabels.Add(counts.TryGetValue(t, out var n) && n > 0
                 ? t.ToUpperInvariant() + $" ({n})"
-                : t.ToUpperInvariant();
-            DrawChip(g, cx, chipY, label, _transport == t,
+                : t.ToUpperInvariant());
+        _tScroll = Math.Clamp(_tScroll, 0f,
+            Math.Max(0f, RowContentW(g, tLabels, 14f) - (w - 20f)));
+        _tBand = new RectangleF(0f, chipY - 4f, w, 14f + DeltaTorTheme.Caption.Height + 8f);
+        var cx = 20f - _tScroll;
+        DrawChip(g, cx, chipY, tLabels[0], _transport == null,
+            () => { _transport = null; Invalidate(); }, 14f, 7f, ref cx);
+        for (var i = 0; i < AppLog.Transports.Count; i++)
+        {
+            var captured = AppLog.Transports[i];
+            DrawChip(g, cx, chipY, tLabels[i + 1], _transport == captured,
                 () => { _transport = _transport == captured ? null : captured; Invalidate(); },
                 14f, 7f, ref cx);
         }
         y = chipY + 7f + DeltaTorTheme.Caption.Height + 7f;
 
-        // ---- Severity chips (Spacer6 + Row pad h20, gap 8).
+        // ---- Severity chips (Spacer6 + Row pad h20, gap 8; horizontalScroll).
         y += 6f;
         chipY = y + 6f;
-        cx = 20f;
-        DrawChip(g, cx, chipY, "ALL", _filter == null,
+        var fLabels = new List<string> { "ALL" };
+        foreach (var level in SeverityOrder) fLabels.Add(LevelLabel(level));
+        _fScroll = Math.Clamp(_fScroll, 0f,
+            Math.Max(0f, RowContentW(g, fLabels, 13f) - (w - 20f)));
+        _fBand = new RectangleF(0f, chipY - 4f, w, 12f + DeltaTorTheme.Caption.Height + 8f);
+        cx = 20f - _fScroll;
+        DrawChip(g, cx, chipY, fLabels[0], _filter == null,
             () => { _filter = null; Invalidate(); }, 13f, 6f, ref cx);
-        foreach (var level in SeverityOrder)
+        for (var i = 0; i < SeverityOrder.Length; i++)
         {
-            var captured = level;
-            DrawChip(g, cx, chipY, LevelLabel(level), _filter == level,
+            var captured = SeverityOrder[i];
+            DrawChip(g, cx, chipY, fLabels[i + 1], _filter == captured,
                 () => { _filter = captured; Invalidate(); },
                 13f, 6f, ref cx);
         }
@@ -302,6 +336,16 @@ public sealed class LogForm : Form
             DrawUtil.DrawSpacedCentered(g, label, DeltaTorTheme.Caption, br, rect, 1.1f);
         _hits.Add((rect, onClick));
         cursorX = rect.Right + 8f;
+    }
+
+    /// <summary>Right edge of a chip row laid out at scroll 0, for clamping
+    /// the horizontalScroll offset when the row is wider than the window.</summary>
+    private static float RowContentW(Graphics g, IReadOnlyList<string> labels, float padH)
+    {
+        var x = 20f;
+        foreach (var label in labels)
+            x += padH * 2f + DrawUtil.SpacedWidth(g, label, DeltaTorTheme.Caption, 1.1f) + 8f;
+        return x - 8f;
     }
 
     // ---- list nodes ---------------------------------------------------------
