@@ -5,7 +5,8 @@ namespace DeltaTor.Core;
 
 /// <summary>
 /// Persistent user configuration, backed by a JSON key/value file
-/// (%APPDATA%\DeltaTor\prefs.json) — the Windows counterpart of Android
+/// next to the exe (prefs.json in the portable app folder, see
+/// <see cref="AppPaths"/>) — the Windows counterpart of Android
 /// SharedPreferences ("deltator"). Keys and defaults are identical; values are
 /// written immediately on every setter, same as SharedPreferences.apply().
 ///
@@ -39,8 +40,7 @@ public static class Config
     private static readonly object Lock = new();
     private static Dictionary<string, string> _prefs = new(StringComparer.Ordinal);
 
-    private static string FilePath =>
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "DeltaTor", "prefs.json");
+    private static string FilePath => Path.Combine(AppPaths.Root, "prefs.json");
 
     /// <summary>Load the preference file (creates it on first run) and sync AppLog.</summary>
     public static void Init()

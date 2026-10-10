@@ -11,6 +11,10 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // Portable first: any data an earlier (AppData-based) build left
+        // behind is copied next to the exe before anything reads a path.
+        AppPaths.MigrateLegacy();
+
         // Startup sequence, 1:1 with Android DeltaTorApp.onCreate. Config.Init
         // also syncs AppLog.Enabled = Config.LoggingEnabled, which Android does
         // on the line right after Config.init.
