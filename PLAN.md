@@ -167,8 +167,8 @@ stopping/error/notice.
 **Windows plan — startup:** same startup sequence on app launch: init config,
 init log flag, init torrc template + exit-node module, "channels" = tray/notification
 primitives, `BridgeStore.refreshState` + background auto-update, release check,
-install counter. Store config in a single settings file (e.g.
-`%APPDATA%\DeltaTor\config.json` or Windows registry) with **the same keys and
+install counter. Store config in a single settings file next to the exe
+(portable `prefs.json`, nothing outside the app folder) with **the same keys and
 defaults** (proxy_port 9050 clamp, logging false, transport_mode "combined",
 run_memory true, auto_recovery false, proxy_only false,
 auto_transports default vanilla,obfs4,webtunnel). The `split_tunnel_*`
@@ -683,7 +683,7 @@ guard/port-free waits. Differences only at the process boundary:
 - Tor binary = official `tor.exe` (Tor Expert Bundle) instead of libtor.so;
 - lyrebird = official `lyrebird.exe` (obfs4proxy build) with the same
   managed-PT env vars and CMETHOD protocol (identical on Windows);
-- data dirs under `%LOCALAPPDATA%\DeltaTor\tor_data_<name>` (or app dir),
+- data dirs under `<app folder>\tor\<name>` (portable, next to the exe),
   `HOME` env set likewise;
 - `nativeLibraryDir/lib*.so` paths → `bin\tor.exe`, `bin\lyrebird.exe`;
 - control-port exit steering, torrc template composition, geoip
@@ -818,7 +818,7 @@ managed-lyrebird launch, torrc rules) ports unchanged.
   error message in `AppState`; `autoUpdateIfStale()`: best-effort wrapper.
 
 **Windows plan:** port 1:1 — same cache folder
-(`%LOCALAPPDATA%\DeltaTor\bridges\<name>.txt`), same `_v4` timestamp key
+(`<app folder>\bridges\<name>.txt`), same `_v4` timestamp key
 and 24 h rule, same atomic tmp+rename, same UA/timeouts, same merge via
 the shared `mergeBridgeLists`, same `refreshState`/`refreshMemory` split,
 same single-flight background update wired to the identical `BridgeState`
@@ -850,8 +850,8 @@ fields (so the BRIDGE STORE card shows the same numbers/labels).
 **Windows plan:** port 1:1 — same pool names, 300 cap, proof-order
 front-insert, prefix sweep clear, mixed-transport rules, fingerprint
 extraction (40-hex, index 1/2), `bridgeLinesFor` ordering; store in the
-same local state file (e.g.
-`%LOCALAPPDATA%\DeltaTor\bridge_memory.json`, key-per-transport lists).
+same local state file (`<app folder>\bridge-memory.json`,
+key-per-transport lists).
 
 
 
@@ -1346,7 +1346,7 @@ proxy_port), same QUIC/UDP rejection toggles.
   with `requireAdministrator` (`app.manifest`) — the standard shape for
   Windows VPN clients.
 - **Crash safety:** installed prefixes are persisted to
-  `%LOCALAPPDATA%\DeltaTor\tun-routes.txt` before the routes go in and
+  `<app folder>\tun-routes.txt` before the routes go in and
   deleted only on clean removal; startup `CleanupLeftovers` reclaims
   leftovers so a killed run can never leave a black-holing `0.0.0.0/1`
   behind until reboot.
@@ -1394,7 +1394,7 @@ proxy_port), same QUIC/UDP rejection toggles.
 killed, memory banking, control-port exit steering, official bundle geoip
 referenced from torrc,
 template-appended torrc — all ported logic is byte-for-byte equivalent;
-only process spawn paths (`tor.exe`, `%LOCALAPPDATA%\DeltaTor\tor_data_<name>`,
+only process spawn paths (`tor.exe`, `<app folder>\tor\<name>`,
 `HOME` env) differ.
 
 **Not ported / adapted:** notification channels (→ tray/toast),
@@ -1444,10 +1444,13 @@ Windows/
 ```
 
 Config/data at runtime (parity with Android's `filesDir` / SharedPreferences):
-`%APPDATA%\DeltaTor\prefs.json` holds the config (same keys as Android's
-SharedPreferences); the machine-local `%LOCALAPPDATA%\DeltaTor\` holds the caches:
+fully portable — everything lives in the folder the exe runs from, nothing
+is written to AppData. `prefs.json` holds the config (same keys as Android's
+SharedPreferences); beside it `torrc.template`, and the caches:
 `bridges/`, `bridge-memory.json`, `install-state.json`, `tor/<runner>/`,
-`cache/exports/`.
+`cache/exports/`. An earlier AppData-based layout (`%APPDATA%\DeltaTor`,
+`%LOCALAPPDATA%\DeltaTor`) is merged in once by `AppPaths.MigrateLegacy`
+(never overwriting what the portable folder already has).
 
 ---
 
