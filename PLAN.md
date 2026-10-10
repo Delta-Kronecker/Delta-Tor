@@ -1353,11 +1353,14 @@ proxy_port), same QUIC/UDP rejection toggles.
 - **Native build:** `Windows/native/build-hev.sh` compiles the vendored tree
   (`make static` + one `gcc -shared` link) in the CI MSYS2 step — the only
   Windows toolchain upstream supports (POSIX sources + `__MSYS__`-gated
-  backend/IOCP reactor) — producing `hev-socks5-tunnel.dll` plus its
-  `msys-2.0.dll` runtime, both shipped next to the exe; `wintun.dll` comes
-  pinned from `fetch-binaries.ps1`. Adapter name comes from a Windows-only
-  `name:` line in the YAML config (Android omits it; the Windows backend
-  cannot take a null name).
+  backend/IOCP reactor) — producing `hev-socks5-tunnel.dll` plus the
+  **pinned** `msys-2.0.dll` runtime upstream itself ships for foreign hosts
+  (heiher/msys2 release, NOT the CI image's copy — the image's newest
+  runtime can fail DllMain on older Windows, 0x8007045A), both next to the
+  exe; CI smoke-tests that the DLL loads in a plain Win32 host;
+  `wintun.dll` comes pinned from `fetch-binaries.ps1`. Adapter name comes
+  from a Windows-only `name:` line in the YAML config (Android omits it;
+  the Windows backend cannot take a null name).
 
 **Binaries (official, pre-built, pinned)**
 

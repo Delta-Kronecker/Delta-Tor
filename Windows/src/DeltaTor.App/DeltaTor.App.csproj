@@ -48,8 +48,9 @@
 
   <!-- Stage-4 native pieces, all required next to DeltaTor.exe (a missing
        file here fails the build on purpose — CI builds/fetches them before
-       dotnet build): hev-socks5-tunnel.dll + its msys runtime from
-       Windows/native/build-hev.sh, wintun.dll (pinned) from
+       dotnet build): hev-socks5-tunnel.dll from Windows/native/build-hev.sh
+       + the pinned msys-2.0.dll runtime that script fetches (heiher/msys2,
+       upstream's own — not the CI image's copy), wintun.dll (pinned) from
        fetch-binaries.ps1. hev's Windows backend LoadLibraryExW()s
        wintun.dll by bare name, so it must live in the app directory. -->
   <ItemGroup>
