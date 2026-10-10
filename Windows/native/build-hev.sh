@@ -7,7 +7,8 @@
 # the tunnel sources are POSIX (daemon, setrlimit, pthreads) and both the
 # Windows backend (hev-tunnel-windows.c) and the IOCP reactor are gated on
 # __MSYS__. The resulting DLL therefore links the msys-2.0.dll runtime,
-# which is copied alongside it and shipped next to DeltaTor.exe.
+# which is fetched alongside it (a pinned build, see below) and shipped
+# next to DeltaTor.exe.
 #
 # Output (gitignored, produced by CI before dotnet build):
 #   Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll
@@ -42,7 +43,18 @@ gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
     -Wl,--end-group \
     -lmsys-2.0 -lws2_32 -lIphlpapi -lpthread
 
-cp /usr/bin/msys-2.0.dll "$OUT/"
+# The shipped msys runtime is NOT the image's /usr/bin/msys-2.0.dll.
+# Upstream hev-socks5-tunnel ships a pinned msys2-runtime build for hosts
+# that load the DLL from a foreign process (its own Windows CI downloads
+# the same file from heiher/msys2); the CI image's runtime tracks the
+# newest MSYS2 and its DllMain can refuse to initialize on older Windows
+# (Win32 0x8007045A, ERROR_DLL_INIT_FAILED — the user-visible failure is
+# DllNotFoundException at the first P/Invoke). Bump the tag deliberately;
+# CI's smoke test loads the DLL in a plain Win32 host and fails the build
+# if this pairing ever stops initializing.
+MSYS_RUNTIME_TAG=20251011
+curl -fsSL -o "$OUT/msys-2.0.dll" \
+    "https://github.com/heiher/msys2/releases/download/$MSYS_RUNTIME_TAG/msys-2.0.dll"
 
 echo "[build-hev] OK:"
 ls -l "$OUT"

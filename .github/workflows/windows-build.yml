@@ -29,7 +29,7 @@ jobs:
         with:
           msystem: MSYS
           update: false
-          install: gcc make
+          install: gcc make curl
 
       - name: Build hev-socks5-tunnel.dll
         shell: msys2 {0}
@@ -40,6 +40,33 @@ jobs:
 
       - name: Build
         run: dotnet build Windows/DeltaTor.sln -c Release --nologo
+
+      # The failure class CI must not ship: hev-socks5-tunnel.dll refusing
+      # to load in a foreign (non-MSYS) process — users see a
+      # DllNotFoundException / 0x8007045A (ERROR_DLL_INIT_FAILED) at the
+      # first P/Invoke. Load it here the way DeltaTor.exe does, so a bad
+      # msys runtime pairing fails the build instead of the user.
+      - name: Smoke-test the tunnel DLL loads in a plain Win32 host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -Namespace DeltaTorCI -Name Loader -MemberDefinition @'
+          [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+          public static extern IntPtr LoadLibraryExW(string path, System.IntPtr reserved, uint flags);
+          [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+          public static extern bool FreeLibrary(System.IntPtr handle);
+          '@
+          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
+          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies (msys-2.0.dll)
+          # resolve next to the DLL, exactly like DeltaTor.exe's own directory.
+          $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
+          if ($handle -eq [IntPtr]::Zero) {
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Host "::error::hev-socks5-tunnel.dll cannot load in a plain Win32 host (Win32 error $err, 1114=ERROR_DLL_INIT_FAILED)"
+            exit 1
+          }
+          Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
+          [void][DeltaTorCI.Loader]::FreeLibrary($handle)
 
       - name: Package the three artifacts
         shell: pwsh
