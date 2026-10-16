@@ -282,7 +282,14 @@ void *hev_calloc (size_t nmemb, size_t size);
  */
 #define LWIP_IPV6                       1
 
-#ifdef __LP64__
+/*
+ * struct ip6_reass_helper holds a pointer plus two u16_t fields, so on a
+ * 64-bit target it is 12 bytes and can no longer be overlaid on the 8-byte
+ * IPv6 fragment header (IP6_FRAG_HLEN). In that case lwip must copy the
+ * header out instead. Key off pointer width, not __LP64__: MinGW-w64 is
+ * LLP64, so __LP64__ is undefined there even though pointers are 64-bit.
+ */
+#if __SIZEOF_POINTER__ == 8
 #define IPV6_FRAG_COPYHEADER            1
 #endif
 
