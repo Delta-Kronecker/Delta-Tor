@@ -52,14 +52,20 @@ mkdir -p "$OUT"
 # Linking: -static-libgcc and the static winpthreads keep libgcc/libwinpthread
 # inside the DLL, so the only remaining dependencies are Windows system DLLs
 # (ws2_32, iphlpapi, kernel32, ...). No msys-2.0.dll is fetched or shipped.
+#
+# hev-socks5-tunnel.def lists the exact public entry points. Passing the .def
+# to the linker forces those symbols to be pulled out of the static archives
+# and exported by name (x64 C names, undecorated), which is what the .NET
+# P/Invoke lookups resolve against -- --export-all-symbols alone would miss
+# them, since the API functions live in archive members nothing else calls.
 gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
-    -Wl,--export-all-symbols \
     -Wl,--start-group \
     "$SRC/bin/libhev-socks5-tunnel.a" \
     "$SRC/third-part/yaml/bin/libyaml.a" \
     "$SRC/third-part/lwip/bin/liblwip.a" \
     "$SRC/third-part/hev-task-system/bin/libhev-task-system.a" \
     -Wl,--end-group \
+    "$ROOT/Windows/native/hev-socks5-tunnel.def" \
     -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic \
     -lws2_32 -lIphlpapi -ladvapi32
 
