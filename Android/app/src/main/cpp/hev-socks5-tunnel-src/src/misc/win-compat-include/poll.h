@@ -68,7 +68,13 @@ hev_mw_poll (struct pollfd *fds, unsigned long nfds, int timeout)
     return res;
 }
 
-/* Function-like: an identifier `poll' not followed by `(' never expands. */
+/* Function-like: an identifier `poll' not followed by `(' never expands.
+ * But lwip's tcp_pcb declares a member literally named `poll' and calls it
+ * as `(pcb)->poll (arg)`, which this macro would rewrite; lwip is compiled
+ * with -UHEV_MW_SOCKET_API (see its Makefile), so the macro is skipped
+ * there. hev and hev-task-system translate units keep it enabled. */
+#ifdef HEV_MW_SOCKET_API
 #define poll(...) hev_mw_poll (__VA_ARGS__)
+#endif
 
 #endif /* _HEV_MW_POLL_H_ */

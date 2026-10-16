@@ -508,7 +508,15 @@ hev_mw_dup2 (int oldfd, int newfd)
     return _dup2 (oldfd, newfd);
 }
 
-/* --- redirections (function-like: bare identifiers never expand) --- */
+/* --- redirections (function-like: bare identifiers never expand) ---
+ *
+ * Only for the hev translation units (HEV_MW_SOCKET_API, defined by
+ * build-hev.sh). lwip's tcp/udp/raw pcb structs declare callback members
+ * literally named recv/poll/send and call them as `(pcb)->recv (arg)`,
+ * which a function-like macro would rewrite into a nonexistent member.
+ * lwip's own Makefile compiles with -UHEV_MW_SOCKET_API so it never sees
+ * these macros; the winsock functions and my struct/type shims remain. */
+#ifdef HEV_MW_SOCKET_API
 
 #define recv(fd, buf, len, flags) hev_mw_recv ((fd), (buf), (len), (flags))
 #define send(fd, buf, len, flags) hev_mw_send ((fd), (buf), (len), (flags))
@@ -539,6 +547,9 @@ hev_mw_dup2 (int oldfd, int newfd)
 #define usleep(usec) hev_mw_usleep ((usec))
 #define dup(fd) hev_mw_dup ((fd))
 #define dup2(oldfd, newfd) hev_mw_dup2 ((oldfd), (newfd))
+
+#endif /* HEV_MW_SOCKET_API */
+
 /* The task scheduler's context switch is written against the BSD-style
  * _setjmp/_longjmp (one/two args); the MS CRT only offers setjmp/longjmp.
  * setjmp.h is pre-included above, so its own setjmp/longjmp macros (if any)
