@@ -141,6 +141,11 @@ $(BUILDDIR)/%.o : $(SRCDIR)/%.c
 	$(ECHO_PREFIX) $(CC) $(CCFLAGS) -c -o $@ $<
 	@printf $(BUILDMSG) $<
 
+$(BUILDDIR)/%.o : $(SRCDIR)/%.S
+	$(ECHO_PREFIX) mkdir -p $(dir $@)
+	$(ECHO_PREFIX) $(CC) $(CCFLAGS) -c -o $@ $<
+	@printf $(BUILDMSG) $<
+
 ifneq ($(MAKECMDGOALS),clean)
 -include $(DEPEND)
 endif
