@@ -98,7 +98,7 @@ internal static class Program
         sb.AppendLine("  connect-timeout: 8000");
         sb.AppendLine("  tcp-read-write-timeout: 120000");
         sb.AppendLine("  udp-read-write-timeout: 60000");
-        sb.AppendLine("  log-level: warning");
+        sb.AppendLine("  log-level: debug");
         return sb.ToString();
     }
 }
