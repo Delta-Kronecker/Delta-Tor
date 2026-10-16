@@ -24,13 +24,13 @@ internal static class Program
 
     private static int VexHandlerImpl(IntPtr exceptionInfo)
     {
-        // EXCEPTION_RECORD: ExceptionCode @ +0, ExceptionAddress @ +8*? On
-        // x64 EXCEPTION_RECORD has ExceptionCode (uint) at 0, flags at 4,
-        // ExceptionAddress (void*) at 8.
-        var code = Marshal.ReadInt32(exceptionInfo, 0);
-        var addr = Marshal.ReadIntPtr(exceptionInfo, 8);
+        // exceptionInfo is PEXCEPTION_POINTERS: ExceptionRecord (ptr) at +0,
+        // ContextRecord (ptr) at +8. The EXCEPTION_RECORD itself has
+        // ExceptionCode (uint) at +0 and ExceptionAddress (void*) at +8.
+        var record = Marshal.ReadIntPtr(exceptionInfo, 0);
+        var code = Marshal.ReadInt32(record, 0);
+        var addr = Marshal.ReadIntPtr(record, 8);
         Console.Error.WriteLine($"NATIVE FAULT: code=0x{code:X8} address=0x{addr.ToInt64():X}");
-        // Print module (DLL) containing the fault, if resolvable.
         if (GetModuleHandleExW(0x3 /* GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS */, addr, out var mod))
         {
             var sb = new StringBuilder(260);
