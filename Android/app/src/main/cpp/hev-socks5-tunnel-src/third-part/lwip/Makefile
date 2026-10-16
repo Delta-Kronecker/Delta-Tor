@@ -7,7 +7,10 @@ PP=$(CROSS_PREFIX)cpp
 CC=$(CROSS_PREFIX)gcc
 LD=$(CROSS_PREFIX)ld
 AR=$(CROSS_PREFIX)ar
-CCFLAGS=-O3 -pipe $(CFLAGS)
+# MinGW port: the hev compat layer's POSIX->winsock redirection macros
+# (recv/send/poll/...) would rewrite lwip's pcb callback member calls like
+# `(pcb)->recv (arg)` into nonexistent members; lwip compiles without them.
+CCFLAGS=-O3 -pipe $(CFLAGS) -UHEV_MW_SOCKET_API
 LDFLAGS=$(LFLAGS)
 
 SRCDIR=src

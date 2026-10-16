@@ -34,7 +34,10 @@ fi
 # and newer MinGW-w64 releases flag things upstream has not seen yet.
 # -fcommon keeps legacy tentative definitions linking. -include loads the
 # compatibility layer into every translation unit before any system header.
-export CFLAGS="-Wno-error -fcommon -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -I$COMPAT_INC -include $MINGW_COMPAT"
+# -DHEV_MW_SOCKET_API switches on the POSIX->winsock redirection macros in
+# hev-mingw.h / poll.h; lwip's Makefile cancels it again because its pcb
+# structs have callback members literally named recv/poll/send.
+export CFLAGS="-Wno-error -fcommon -D_WIN32_WINNT=0x0A00 -DWIN32_LEAN_AND_MEAN -DNOMINMAX -DHEV_MW_SOCKET_API -I$COMPAT_INC -include $MINGW_COMPAT"
 
 echo "[build-hev] building static libraries in $SRC"
 make -C "$SRC" static
