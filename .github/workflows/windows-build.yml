@@ -35,7 +35,7 @@ jobs:
         shell: msys2 {0}
         run: ./Windows/native/build-hev.sh
 
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.24)
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25)
         run: ./Windows/fetch-binaries.ps1 -CI
 
       - name: Build

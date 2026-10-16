@@ -174,7 +174,7 @@ ported to .NET 8 / WinForms and shipped as a portable zip (`Windows/` in this re
 
 - **Official binaries, fetched not committed.** `tor.exe`, `lyrebird.exe` (all five
   transports, including snowflake) and the official `data/geoip` come from the pinned
-  Tor Expert Bundle x86_64-15.0.24; `wintun.dll` comes from wintun.net. Both are
+  Tor Expert Bundle x86_64-15.0.25; `wintun.dll` comes from wintun.net. Both are
   downloaded and SHA-256 verified by `Windows/fetch-binaries.ps1`.
 - **Full tunnel** runs `hev-socks5-tunnel.dll` (built in CI with MSYS2 from the vendored
   upstream sources) over a Wintun adapter named `DeltaTor`, with a catch-all default route
