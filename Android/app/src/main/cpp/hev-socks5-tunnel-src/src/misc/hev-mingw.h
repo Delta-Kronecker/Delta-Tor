@@ -174,6 +174,97 @@ hev_mw_sendto (int fd, const void *buf, size_t len, int flags,
     return res == SOCKET_ERROR ? hev_mw_sockerr (WSAGetLastError ()) : res;
 }
 
+/* Winsock has no recvmsg/sendmsg (only WSAMSG-flavoured WSARecv*), and this
+ * tree's callers only ever use iovec + optional name, never cmsg. */
+static inline ssize_t
+hev_mw_recvmsg (int fd, struct msghdr *msg, int flags)
+{
+    WSABUF *wsa;
+    DWORD recvd = 0;
+    DWORD wflags;
+    size_t i;
+    int res;
+
+    msg->msg_flags = 0;
+    if (msg->msg_iovlen == 0)
+        return 0;
+
+    wsa = (WSABUF *)malloc (msg->msg_iovlen * sizeof (WSABUF));
+    if (!wsa) {
+        errno = ENOMEM;
+        return -1;
+    }
+    for (i = 0; i < msg->msg_iovlen; i++) {
+        wsa[i].buf = (CHAR *)msg->msg_iov[i].iov_base;
+        wsa[i].len = (ULONG)msg->msg_iov[i].iov_len;
+    }
+
+    wflags = (DWORD)flags;
+    if (msg->msg_name) {
+        int fromlen = (int)msg->msg_namelen;
+
+        res = WSARecvFrom ((SOCKET)(intptr_t)fd, wsa, (DWORD)msg->msg_iovlen,
+                           &recvd, &wflags, (struct sockaddr *)msg->msg_name,
+                           &fromlen, NULL, NULL);
+        if (res == SOCKET_ERROR) {
+            free (wsa);
+            return hev_mw_sockerr (WSAGetLastError ());
+        }
+        msg->msg_namelen = fromlen;
+    }
+    else {
+        res = WSARecv ((SOCKET)(intptr_t)fd, wsa, (DWORD)msg->msg_iovlen,
+                       &recvd, &wflags, NULL, NULL);
+        if (res == SOCKET_ERROR) {
+            free (wsa);
+            return hev_mw_sockerr (WSAGetLastError ());
+        }
+    }
+
+    free (wsa);
+    return (ssize_t)recvd;
+}
+
+static inline ssize_t
+hev_mw_sendmsg (int fd, const struct msghdr *msg, int flags)
+{
+    WSABUF *wsa;
+    DWORD sent = 0;
+    size_t i;
+    int res;
+
+    if (msg->msg_iovlen == 0)
+        return 0;
+
+    wsa = (WSABUF *)malloc (msg->msg_iovlen * sizeof (WSABUF));
+    if (!wsa) {
+        errno = ENOMEM;
+        return -1;
+    }
+    for (i = 0; i < msg->msg_iovlen; i++) {
+        wsa[i].buf = (CHAR *)msg->msg_iov[i].iov_base;
+        wsa[i].len = (ULONG)msg->msg_iov[i].iov_len;
+    }
+
+    if (msg->msg_name) {
+        res = WSASendTo ((SOCKET)(intptr_t)fd, wsa, (DWORD)msg->msg_iovlen,
+                         &sent, (DWORD)flags,
+                         (const struct sockaddr *)msg->msg_name,
+                         (int)msg->msg_namelen, NULL, NULL);
+    }
+    else {
+        res = WSASend ((SOCKET)(intptr_t)fd, wsa, (DWORD)msg->msg_iovlen,
+                       &sent, (DWORD)flags, NULL, NULL);
+    }
+    if (res == SOCKET_ERROR) {
+        free (wsa);
+        return hev_mw_sockerr (WSAGetLastError ());
+    }
+
+    free (wsa);
+    return (ssize_t)sent;
+}
+
 static inline int
 hev_mw_connect (int fd, const struct sockaddr *addr, socklen_t addr_len)
 {
@@ -380,6 +471,8 @@ hev_mw_daemon (int nochld, int noclose)
     hev_mw_recvfrom ((fd), (buf), (len), (flags), (addr), (addr_len))
 #define sendto(fd, buf, len, flags, addr, addr_len) \
     hev_mw_sendto ((fd), (buf), (len), (flags), (addr), (addr_len))
+#define recvmsg(fd, msg, flags) hev_mw_recvmsg ((fd), (msg), (flags))
+#define sendmsg(fd, msg, flags) hev_mw_sendmsg ((fd), (msg), (flags))
 #define connect(fd, addr, addr_len) \
     hev_mw_connect ((fd), (addr), (addr_len))
 #define accept(fd, addr, addr_len) \
