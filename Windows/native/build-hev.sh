@@ -61,7 +61,7 @@ gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
     "$SRC/third-part/hev-task-system/bin/libhev-task-system.a" \
     -Wl,--end-group \
     -static-libgcc -Wl,-Bstatic -lpthread -Wl,-Bdynamic \
-    -lws2_32 -lIphlpapi
+    -lws2_32 -lIphlpapi -ladvapi32
 
 test -f "$OUT/hev-socks5-tunnel.dll"
 echo "[build-hev] OK:"
