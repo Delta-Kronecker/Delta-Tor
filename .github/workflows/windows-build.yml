@@ -68,52 +68,98 @@ jobs:
           Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
           [void][DeltaTorCI.Loader]::FreeLibrary($handle)
 
+      # The same load again from a GUI-subsystem .NET host: DeltaTor.exe is
+      # a WinExe, and a failure that only shows up there (loader behaviour
+      # differs between console and GUI hosts) would slip past the pwsh test.
+      - name: Smoke-test the tunnel DLL from a GUI-subsystem host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'hev-gui-host'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          @'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>WinExe</OutputType>
+              <TargetFramework>net8.0-windows</TargetFramework>
+              <Nullable>disable</Nullable>
+            </PropertyGroup>
+          </Project>
+          '@ | Set-Content (Join-Path $dir 'host.csproj')
+          @'
+          using System;
+          using System.Runtime.InteropServices;
+          internal static class Host
+          {
+              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr LoadLibraryExW(string path, IntPtr reserved, uint flags);
+
+              private static int Main(string[] args)
+              {
+                  var handle = LoadLibraryExW(args[0], IntPtr.Zero, 0x8);
+                  return handle == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+              }
+          }
+          '@ | Set-Content (Join-Path $dir 'Program.cs')
+          dotnet build $dir -c Release --nologo -v q
+          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
+          $exe = Join-Path $dir 'bin/Release/net8.0-windows/host.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList "`"$dll`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::error::GUI-subsystem host failed to load hev-socks5-tunnel.dll (Win32 error $($p.ExitCode), 1114=ERROR_DLL_INIT_FAILED)"
+            exit 1
+          }
+          Write-Host "hev-socks5-tunnel.dll loaded from a GUI-subsystem .NET host"
+
       - name: Package the three artifacts
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
 
           # 1. The portable app itself (exe + managed/native DLLs + the
           #    fetched vendor bundle), the same shape a user unpacks.
-          $stage = "dist/stage/app"
+          #    Staged as a plain folder, NOT a zip: upload-artifact wraps
+          #    everything in its own zip, so zipping here too would make
+          #    users extract twice (zip inside zip inside folder).
+          $stage = "dist/stage/deltator-debug-windows"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
           Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
-          Compress-Archive -Path "$stage/*" -DestinationPath "dist/deltator-debug-windows.zip" -Force
 
           # 2. The sources of the commit that was built, so the zip and the
           #    app cannot disagree about what "this build" was.
-          git archive --format=zip --output="dist/deltator-sources.zip" HEAD
+          git archive --format=zip --output="dist/src.zip" HEAD
+          Expand-Archive "dist/src.zip" -DestinationPath "dist/stage/deltator-sources"
+          Remove-Item "dist/src.zip"
 
           # 3. Unstripped native pieces + PDBs: hev-socks5-tunnel.dll is C,
           #    and a stack trace from a crash is unreadable without these.
-          $sym = "dist/stage/symbols"
+          $sym = "dist/stage/deltator-native-symbols"
           New-Item -ItemType Directory -Force -Path $sym | Out-Null
           Copy-Item "Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll" $sym
           Get-ChildItem -Recurse "Windows/src" -Filter *.pdb -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName $sym }
-          Compress-Archive -Path "$sym/*" -DestinationPath "dist/deltator-native-symbols.zip" -Force
 
-          Get-ChildItem dist/*.zip
+          Get-ChildItem -Recurse dist/stage | Select-Object -First 20
 
       - name: Upload the portable app
         uses: actions/upload-artifact@v4
         with:
           name: deltator-debug-windows
-          path: dist/deltator-debug-windows.zip
+          path: dist/stage/deltator-debug-windows
           if-no-files-found: error
 
       - name: Upload the sources
         uses: actions/upload-artifact@v4
         with:
           name: deltator-sources
-          path: dist/deltator-sources.zip
+          path: dist/stage/deltator-sources
           if-no-files-found: error
 
       - name: Upload the native debug symbols
         uses: actions/upload-artifact@v4
         with:
           name: deltator-native-symbols
-          path: dist/deltator-native-symbols.zip
+          path: dist/stage/deltator-native-symbols
           if-no-files-found: error
