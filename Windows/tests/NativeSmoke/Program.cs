@@ -35,6 +35,18 @@ internal static class Program
             var addr = Marshal.ReadIntPtr(record, 8);
             Console.Error.WriteLine($"NATIVE FAULT: code=0x{code:X8} address=0x{addr.ToInt64():X}");
 
+            // For EXCEPTION_ACCESS_VIOLATION the authoritative bad address is
+            // ExceptionInformation[1] (record+32); [0] (record+24) is 0=read
+            // 1=write, NumberParameters (record+16) is 2 for an AV. This is
+            // what actually faulted, independent of the CONTEXT registers.
+            var numParams = Marshal.ReadInt32(record, 16);
+            if (numParams >= 2)
+            {
+                var access = Marshal.ReadInt64(record, 24);
+                var badAddr = Marshal.ReadInt64(record, 32);
+                Console.Error.WriteLine($"NATIVE AV: access={(access == 1 ? "write" : "read")} bad=0x{badAddr:X} nparams={numParams}");
+            }
+
             // x64 CONTEXT field offsets (Windows SDK winnt.h):
             //   Rax 0x78 Rcx 0x80 Rdx 0x88 Rbx 0x90 Rsp 0x98 Rbp 0xA0
             //   Rsi 0xA8 Rdi 0xB0 R8  0xB8 R9  0xC0 R10 0xC8 R11 0xD0
