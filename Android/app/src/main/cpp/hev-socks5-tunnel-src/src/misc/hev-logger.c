@@ -21,16 +21,39 @@
 static int fd = -1;
 static HevLoggerLevel req_level;
 
+#if defined(__MINGW32__) && !defined(__MSYS__)
+/* Under MinGW the fd-based path cannot work: close()/writev() are socket
+ * redirects (hev-mingw.h). Instead honour "stderr"/"stdout" by writing
+ * straight to the console via Win32, so tunnel init failures (LOG_E) are
+ * visible in the CI smoke test. Any other path still disables logging. */
+#include <windows.h>
+
+static HANDLE hev_logger_win_handle;
+
+static void
+hev_logger_win_write (const char *buf, int len)
+{
+    DWORD written;
+    WriteFile (hev_logger_win_handle, buf, (DWORD)len, &written, NULL);
+}
+#endif
+
 int
 hev_logger_init (HevLoggerLevel level, const char *path)
 {
     req_level = level;
 
 #if defined(__MINGW32__) && !defined(__MSYS__)
-    /* No fd-based file logging under MinGW: close()/writev() are socket
-     * redirects (hev-mingw.h), so leave fd at -1. Init still succeeds and
-     * every LOG_* call stays inert, which is also what happens whenever no
-     * log file is configured. */
+    if (0 == strcmp (path, "stderr")) {
+        hev_logger_win_handle = GetStdHandle (STD_ERROR_HANDLE);
+        fd = -2;
+        return 0;
+    }
+    if (0 == strcmp (path, "stdout")) {
+        hev_logger_win_handle = GetStdHandle (STD_OUTPUT_HANDLE);
+        fd = -2;
+        return 0;
+    }
     (void)path;
     return 0;
 #else
