@@ -19,6 +19,7 @@
 #include "hev-logger.h"
 
 static int fd = -1;
+static int active;
 static HevLoggerLevel req_level;
 
 #if defined(__MINGW32__) && !defined(__MSYS__)
@@ -47,11 +48,13 @@ hev_logger_init (HevLoggerLevel level, const char *path)
     if (0 == strcmp (path, "stderr")) {
         hev_logger_win_handle = GetStdHandle (STD_ERROR_HANDLE);
         fd = -2;
+        active = 1;
         return 0;
     }
     if (0 == strcmp (path, "stdout")) {
         hev_logger_win_handle = GetStdHandle (STD_OUTPUT_HANDLE);
         fd = -2;
+        active = 1;
         return 0;
     }
     (void)path;
@@ -67,6 +70,7 @@ hev_logger_init (HevLoggerLevel level, const char *path)
     if (fd < 0)
         return -1;
 
+    active = 1;
     return 0;
 #endif
 }
@@ -80,7 +84,7 @@ hev_logger_fini (void)
 int
 hev_logger_enabled (HevLoggerLevel level)
 {
-    if (level >= req_level && fd >= 0)
+    if (level >= req_level && active)
         return 1;
 
     return 0;
@@ -98,7 +102,7 @@ hev_logger_log (HevLoggerLevel level, const char *fmt, ...)
     va_list ap;
     int len;
 
-    if (level < req_level || fd < 0)
+    if (level < req_level || !active)
         return;
 
     time (&now);
@@ -137,6 +141,25 @@ hev_logger_log (HevLoggerLevel level, const char *fmt, ...)
 
     iov[3].iov_base = "\n";
     iov[3].iov_len = 1;
+
+#if defined(__MINGW32__) && !defined(__MSYS__)
+    if (fd == -2) {
+        /* fd-based writev() is a socket redirect under MinGW; write the
+         * already-formatted pieces straight to the console handle instead. */
+        char line[1200];
+        int n;
+
+        n = snprintf (line, sizeof (line), "%.*s%.*s%.*s%.*s",
+                      (int)iov[0].iov_len, (const char *)iov[0].iov_base,
+                      (int)iov[1].iov_len, (const char *)iov[1].iov_base,
+                      (int)iov[2].iov_len, (const char *)iov[2].iov_base,
+                      (int)iov[3].iov_len, (const char *)iov[3].iov_base);
+        if (n > 0)
+            hev_logger_win_write (line, n < (int)sizeof (line) ? n
+                                                               : (int)sizeof (line) - 1);
+        return;
+    }
+#endif
 
     if (writev (fd, iov, 4)) {
         /* ignore return value */
