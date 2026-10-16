@@ -12,6 +12,13 @@ ENABLE_IO_SPLICE_SYSCALL := 1
 # }
 CONFIG_STACK_BACKEND := STACK_MMAP
 
+# MinGW-w64 (plain Windows): no mmap for task stacks, so use the heap
+# backend. MSYSTEM is MINGW64 exactly in the environment this port builds in
+# (MSYS/Cygwin keeps STACK_MMAP; Android/Linux never set MSYSTEM).
+ifneq (,$(filter MINGW%,$(MSYSTEM)))
+CONFIG_STACK_BACKEND := STACK_HEAP
+endif
+
 # Stack overflow detection
 # {
 #   1, 1 tag

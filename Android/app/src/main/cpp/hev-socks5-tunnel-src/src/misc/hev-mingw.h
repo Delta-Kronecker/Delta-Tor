@@ -95,6 +95,12 @@
 #ifndef WNOHANG
 #define WNOHANG 1
 #endif
+/* POSIX shutdown() how-values; winsock uses SD_*. */
+#ifndef SHUT_RD
+#define SHUT_RD SD_RECEIVE
+#define SHUT_WR SD_SEND
+#define SHUT_RDWR SD_BOTH
+#endif
 
 /* --- shims: defined before the macros that redirect to them --- */
 
@@ -473,6 +479,25 @@ hev_mw_daemon (int nochld, int noclose)
     return 0;
 }
 
+static inline int
+hev_mw_usleep (unsigned int usec)
+{
+    Sleep (usec / 1000u + (usec % 1000u ? 1u : 0u));
+    return 0;
+}
+
+static inline int
+hev_mw_dup (int fd)
+{
+    return _dup (fd);
+}
+
+static inline int
+hev_mw_dup2 (int oldfd, int newfd)
+{
+    return _dup2 (oldfd, newfd);
+}
+
 /* --- redirections (function-like: bare identifiers never expand) --- */
 
 #define recv(fd, buf, len, flags) hev_mw_recv ((fd), (buf), (len), (flags))
@@ -501,6 +526,9 @@ hev_mw_daemon (int nochld, int noclose)
 #define socketpair(domain, type, protocol, socket_vector) \
     hev_mw_socketpair ((domain), (type), (protocol), (socket_vector))
 #define daemon(nochld, noclose) hev_mw_daemon ((nochld), (noclose))
+#define usleep(usec) hev_mw_usleep ((usec))
+#define dup(fd) hev_mw_dup ((fd))
+#define dup2(oldfd, newfd) hev_mw_dup2 ((oldfd), (newfd))
 
 #endif /* defined(__MINGW32__) && !defined(__MSYS__) */
 
