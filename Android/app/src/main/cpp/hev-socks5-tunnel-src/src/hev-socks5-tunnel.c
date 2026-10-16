@@ -626,7 +626,7 @@ event_task_init (void)
 
     res = socketpair (PF_LOCAL, SOCK_STREAM, 0, event_fds);
     if (res < 0) {
-        LOG_E ("socks5 tunnel event");
+        LOG_E ("socks5 tunnel event (errno=%d %s)", errno, strerror (errno));
         return -1;
     }
 
