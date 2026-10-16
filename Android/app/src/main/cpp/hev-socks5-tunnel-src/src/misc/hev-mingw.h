@@ -101,6 +101,15 @@
 #define SHUT_WR SD_SEND
 #define SHUT_RDWR SD_BOTH
 #endif
+/* Signals the MS CRT's signal() does not name; winsock never raises SIGPIPE,
+ * and the only uses here are signal(SIGPIPE, SIG_IGN) / signal(SIGCHLD, ..)
+ * which compile and stay inert. */
+#ifndef SIGPIPE
+#define SIGPIPE 13
+#endif
+#ifndef SIGCHLD
+#define SIGCHLD 17
+#endif
 
 /* --- shims: defined before the macros that redirect to them --- */
 
