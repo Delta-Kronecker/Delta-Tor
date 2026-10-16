@@ -33,7 +33,12 @@
 #ifndef HEV_MINGW_H
 #define HEV_MINGW_H
 
-#if defined(__MINGW32__) && !defined(__MSYS__)
+/* gcc defines __ASSEMBLER__ while preprocessing .S files; the whole layer is
+ * C, and the Makefiles compile .S with CCFLAGS (which force-includes this
+ * header), so skip everything to keep the assembly clean. */
+#if defined(__ASSEMBLER__)
+/* nothing */
+#elif defined(__MINGW32__) && !defined(__MSYS__)
 
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0A00
