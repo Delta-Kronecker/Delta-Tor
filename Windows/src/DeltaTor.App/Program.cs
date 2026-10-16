@@ -6,8 +6,16 @@ namespace DeltaTor.App;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
+        // diagnose.ps1 launches this; runs the real DllImport path in this
+        // exact process context and writes native-probe.txt next to the exe.
+        if (args.Contains("--native-probe"))
+        {
+            Environment.ExitCode = NativeProbe.Run();
+            return;
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
