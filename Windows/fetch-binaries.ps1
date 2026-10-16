@@ -107,7 +107,7 @@ $Se7enArchive = "Se7enTun-$Se7enVersion-win-x64.zip"
 $Se7enUrl     = "https://github.com/Delta-Kronecker/tun/releases/download/v$Se7enVersion/$Se7enArchive"
 # SHA-256 of the release asset above, recorded when it was first pinned.
 $Se7enSha256  = 'cc6a23e5481ec3ac0f123870941e7146dba53595f464bc133edc39e8c6c23f06'
-$Se7enLibDir  = Join-Path (Split-Path -Parent $PSScriptRoot) 'libs/se7entun'
+$Se7enLibDir  = Join-Path $PSScriptRoot 'libs/se7entun'
 $Se7enDll     = Join-Path $Se7enLibDir 'Se7enTun.dll'
 $Se7enPlane   = Join-Path $Se7enLibDir 'Resources/tun2socks/tun2socks.exe'
 
