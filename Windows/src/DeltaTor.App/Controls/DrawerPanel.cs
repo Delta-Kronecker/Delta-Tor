@@ -167,6 +167,9 @@ public sealed partial class DrawerPanel : Panel
 
     public bool IsOpen => _open;
 
+    /// <summary>Raised once a close slide finishes and the sheet hides.</summary>
+    public event Action? Closed;
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -258,6 +261,7 @@ public sealed partial class DrawerPanel : Panel
         {
             Visible = false;
             _sync.Stop();
+            Closed?.Invoke();
         }
     }
 
@@ -419,6 +423,9 @@ public sealed partial class DrawerPanel : Panel
 
         PaintScrollbar(g);
         PaintDropdown(g);
+        // Opaque band under the footer pill, same reason as the header band.
+        using (var b = new SolidBrush(BackColor))
+            g.FillRectangle(b, 0f, _viewBottom, w, Height - _viewBottom);
         _github.SetBounds(20, Height - 56, w - 40, 40);
     }
 
@@ -446,16 +453,22 @@ public sealed partial class DrawerPanel : Panel
     private void PaintHeader(Graphics g)
     {
         var w = Width;
-        var colH = _titleLineH + 3f + _titleSubLineH;
+        var colH = _titleLineH + 4f + _titleSubLineH;
         var rowH = Math.Max(36f, colH);
         const float rowY = 18f;
         var colY = rowY + (rowH - colH) / 2f;
+        var dividerY = rowY + rowH + 16f;
+
+        // Opaque band under the title: scrolled cards can never land on it,
+        // even when a partial repaint reaches into the header strip.
+        using (var b = new SolidBrush(BackColor))
+            g.FillRectangle(b, 0f, 0f, w, dividerY + 1f);
 
         using (var b = new SolidBrush(DeltaTorTheme.Text))
             DrawUtil.DrawSpaced(g, "CONTROLS", _fTitle, b, 20f, colY, w - 70f, 2.4f);
         using (var b = new SolidBrush(DeltaTorTheme.Muted))
             g.DrawString("Everything here applies on the next connect",
-                _fTitleSub, b, 20f, colY + _titleLineH + 3f);
+                _fTitleSub, b, 20f, colY + _titleLineH + 4f);
 
         var close = new RectangleF(w - 16f - 36f, rowY + (rowH - 36f) / 2f, 36f, 36f);
         using (var path = DrawUtil.RoundedRect(close, 12f))
@@ -470,7 +483,6 @@ public sealed partial class DrawerPanel : Panel
             DeltaTorTheme.Text);
         _fixedHits.Add((close, Close));
 
-        var dividerY = rowY + rowH + 16f;
         PaintGradientLine(g, dividerY, w);
         _viewTop = dividerY + 1f;
         _viewBottom = Height - 60f; // footer: 16 bottom + 40 pill + 4 above
@@ -519,16 +531,36 @@ public sealed partial class DrawerPanel : Panel
             new Rectangle((int)x, (int)y, size.Width + 2, size.Height), color,
             TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
 
-    /// <summary>Position a child control inside the viewport. Children draw
-    /// above the painted sheet, so one is shown only when it lies fully
-    /// inside the viewport — never over the header, the footer pill or the
-    /// dropdown.</summary>
+    /// <summary>Position a child control for the node that owns it. Children
+    /// draw above the painted sheet, so one used to be shown only when it lay
+    /// fully inside the viewport — which made a switch blink out of existence
+    /// while its row scrolled through an edge. Now a meaningful slice is
+    /// enough: the control keeps its full size and is cropped by its region,
+    /// so it can never spill over the header, the footer pill or the dropdown.</summary>
     private void PlaceChild(Control c, RectangleF screenRect)
     {
+        var view = new RectangleF(0f, _viewTop, Width, _viewBottom - _viewTop);
+        var vis = RectangleF.Intersect(screenRect, view);
+        if (_drop != null || vis.Height < 8f)
+        {
+            c.Visible = false;
+            return;
+        }
         c.SetBounds((int)screenRect.X, (int)screenRect.Y,
             (int)screenRect.Width, (int)screenRect.Height);
-        c.Visible = _drop == null &&
-            screenRect.Top >= _viewTop && screenRect.Bottom <= _viewBottom;
+        if (vis.Height < screenRect.Height - 0.5f)
+        {
+            c.Region?.Dispose();
+            c.Region = new Region(new Rectangle(0,
+                Math.Max(0, (int)(vis.Top - screenRect.Top)),
+                c.Width, Math.Max(1, (int)vis.Height)));
+        }
+        else if (c.Region != null)
+        {
+            c.Region.Dispose();
+            c.Region = null;
+        }
+        c.Visible = true;
     }
 
     /// <summary>DrawerSection (MainActivity 1038): letter-spaced title,

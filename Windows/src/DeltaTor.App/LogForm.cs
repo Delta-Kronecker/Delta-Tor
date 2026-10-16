@@ -7,9 +7,18 @@ namespace DeltaTor.App;
 /// The connection log screen (MainActivity LogScreen, line 3866): a borderless
 /// push-over form with the ScreenTopBar and COPY action, the recording-off
 /// notice, the transport and severity filter chips, and the grouped, filtered
-/// list painted newest-last with auto-follow at the bottom. The window is a
-/// fixed 450x700 (matching the main window) and the chip rows scroll
-/// sideways under the wheel, matching Android's horizontalScroll.
+/// list painted newest-last with auto-follow at the bottom.
+///
+/// Engine notes (this is a from-scratch rewrite of the first port):
+/// every node is measured exactly once when the log snapshot, a filter or
+/// the width changes, into a flat array of content-coordinate rows; a paint
+/// walks only the rows that intersect the viewport and draws them, so a
+/// 4500-line log scrolls and repaints at the cost of the visible slice.
+/// A per-unique-line measure cache absorbs the repetition of bootstrap
+/// output. The timer flushes the producer and repaints only when the
+/// snapshot reference actually moved — an idle screen paints nothing. Chip
+/// rows wrap instead of scrolling sideways, so every chip is reachable under
+/// the wheel and the wheel always scrolls the list.
 /// </summary>
 public sealed class LogForm : Form
 {
@@ -20,26 +29,31 @@ public sealed class LogForm : Form
     private sealed record LevelHeader(char Level, int Count) : LogNode;
     private sealed record EntryNode(LogEntry Entry) : LogNode;
 
+    /// <summary>A node pinned at content Y with its measured height.</summary>
+    private readonly record struct Placed(LogNode Node, float Y, float H);
+
     private readonly Font _fMono = new("Consolas", 7.5f);
-    private readonly System.Windows.Forms.Timer _flush = new() { Interval = 250 };
+    private readonly System.Windows.Forms.Timer _tick = new() { Interval = 200 };
 
     private readonly List<(RectangleF Rect, Action Act)> _hits = new();
+    private readonly Dictionary<string, float> _measure = new(StringComparer.Ordinal);
 
     private string? _transport;
     private char? _filter;
     private bool _copied;
     private long _copiedAt;
-    private int _scroll;
-    private float _contentH;
-    private float _viewH;
-    private bool _follow = true;
 
-    // Chip-row horizontal scroll (horizontalScroll on each Row) and the
-    // bands the wheel hijack applies to.
-    private float _tScroll;
-    private float _fScroll;
-    private RectangleF _tBand;
-    private RectangleF _fBand;
+    private Placed[] _placed = Array.Empty<Placed>();
+    private IReadOnlyList<LogEntry> _lastLines = Array.Empty<LogEntry>();
+    private IReadOnlyList<LogSession> _lastSessions = Array.Empty<LogSession>();
+    private Dictionary<string, int> _tCounts = new(StringComparer.Ordinal);
+    private bool _lastEnabled;
+    private int _lastWidth;
+    private float _contentH;
+    private float _viewTop;
+    private float _viewBottom;
+    private float _scroll;
+    private bool _follow = true;
 
     public LogForm()
     {
@@ -54,17 +68,14 @@ public sealed class LogForm : Form
                  ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
         AppLog.AddObserver();
-        _flush.Tick += (_, _) =>
-        {
-            AppLog.FlushIfDirty();
-            Invalidate();
-        };
-        _flush.Start();
+        _tick.Tick += (_, _) => Pump();
+        _tick.Start();
+        Rebuild();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        _flush.Stop();
+        _tick.Stop();
         AppLog.RemoveObserver();
         base.OnFormClosed(e);
     }
@@ -73,43 +84,146 @@ public sealed class LogForm : Form
     {
         if (disposing)
         {
-            _flush.Dispose();
+            _tick.Dispose();
             _fMono.Dispose();
         }
         base.Dispose(disposing);
     }
 
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (!IsHandleCreated || Width == _lastWidth) return;
+        // Wrapped heights depend on the content width: one resize re-measures.
+        _measure.Clear();
+        Rebuild();
+        Invalidate();
+    }
+
+    // ---- data plumbing ------------------------------------------------------
+
+    /// <summary>Flush the producer, then repaint only when the snapshot,
+    /// the enabled flag or the width actually moved.</summary>
+    private void Pump()
+    {
+        AppLog.FlushIfDirty();
+        var lines = AppLog.Lines;
+        var sessions = AppLog.Sessions;
+        var widthChanged = Width != _lastWidth;
+        if (widthChanged || AppLog.Enabled != _lastEnabled ||
+            !ReferenceEquals(lines, _lastLines) ||
+            !ReferenceEquals(sessions, _lastSessions))
+        {
+            if (widthChanged) _measure.Clear();
+            Rebuild();
+            Invalidate();
+            return;
+        }
+        if (_copied && Environment.TickCount64 - _copiedAt > 1500)
+        {
+            _copied = false;
+            Invalidate();
+        }
+    }
+
+    /// <summary>Group the snapshot and measure every node once into content
+    /// coordinates; called only when something structural changed, never on
+    /// a scroll or hover frame.</summary>
+    private void Rebuild()
+    {
+        var lines = AppLog.Lines;
+        var sessions = AppLog.Sessions;
+        var nodes = GroupLog(lines, sessions, _filter, _transport);
+        var contentW = Math.Max(1f, Width - 40f);
+
+        var placed = new List<Placed>(nodes.Count);
+        var y = 0f;
+        foreach (var node in nodes)
+        {
+            var h = node switch
+            {
+                SessionNode => 12f + (6f + DeltaTorTheme.Caption.Height + 6f) + 4f,
+                LevelHeader => 10f + (5f + DeltaTorTheme.Caption.Height + 5f) + 4f,
+                EntryNode e => Measure(e.Entry.Raw, contentW) + 3f,
+                _ => 0f
+            };
+            placed.Add(new Placed(node, y, h));
+            y += h;
+        }
+        _placed = placed.ToArray();
+        _contentH = y + 18f; // trailing spacer
+        _lastLines = lines;
+        _lastSessions = sessions;
+        _lastEnabled = AppLog.Enabled;
+        _lastWidth = Width;
+        _tCounts = TransportCounts(lines);
+        _scroll = _follow ? MaxScroll : Math.Clamp(_scroll, 0f, MaxScroll);
+    }
+
+    /// <summary>Wrapped height of one raw line, cached: bootstrap output
+    /// repeats the same shapes thousands of times.</summary>
+    private float Measure(string raw, float w)
+    {
+        if (_measure.TryGetValue(raw, out var h)) return h;
+        h = TextRenderer.MeasureText(raw, _fMono,
+            new Size(Math.Max(1, (int)w), int.MaxValue),
+            TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
+        // Bound the cache so pathological churn cannot grow it forever.
+        if (_measure.Count > 8000) _measure.Clear();
+        _measure[raw] = h;
+        return h;
+    }
+
+    // ---- input --------------------------------------------------------------
+
     protected override void OnKeyDown(KeyEventArgs e)
     {
         base.OnKeyDown(e);
-        if (e.KeyCode == Keys.Escape)
+        var viewH = _viewBottom - _viewTop;
+        switch (e.KeyCode)
         {
-            Close();
-            e.Handled = true;
+            case Keys.Escape:
+                Close();
+                e.Handled = true;
+                break;
+            case Keys.Down:
+                ScrollBy(36f);
+                e.Handled = true;
+                break;
+            case Keys.Up:
+                ScrollBy(-36f);
+                e.Handled = true;
+                break;
+            case Keys.PageDown:
+                ScrollBy(viewH * 0.9f);
+                e.Handled = true;
+                break;
+            case Keys.PageUp:
+                ScrollBy(-viewH * 0.9f);
+                e.Handled = true;
+                break;
+            case Keys.Home:
+                _follow = false;
+                ScrollTo(0f);
+                e.Handled = true;
+                break;
+            case Keys.End:
+                _follow = true;
+                ScrollTo(MaxScroll);
+                e.Handled = true;
+                break;
         }
+        if (e.Handled) e.SuppressKeyPress = true;
     }
 
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
-        // Over a chip row the wheel scrolls that row sideways, the way Android
-        // scrolls it under a horizontal drag; anywhere else it is list scroll.
-        var side = e.Delta / 120 * 40;
-        if (_tBand.Contains(e.Location))
-        {
-            _tScroll = Math.Max(0f, _tScroll - side);
-            Invalidate();
-            return;
-        }
-        if (_fBand.Contains(e.Location))
-        {
-            _fScroll = Math.Max(0f, _fScroll - side);
-            Invalidate();
-            return;
-        }
-        _scroll = Math.Max(0, _scroll - e.Delta / 120 * 60);
-        // Follow the tail again once the user scrolls back to the bottom.
-        _follow = _scroll >= Math.Max(0f, _contentH - _viewH) - 2f;
+        var next = Math.Clamp(_scroll - e.Delta / 120f * 54f, 0f, MaxScroll);
+        // At the bottom again the tail is followed once more.
+        _follow = next >= MaxScroll - 2f;
+        if (next == _scroll) return;
+        _scroll = next;
         Invalidate();
     }
 
@@ -125,6 +239,22 @@ public sealed class LogForm : Form
         }
     }
 
+    private float MaxScroll => Math.Max(0f, _contentH - (_viewBottom - _viewTop));
+
+    private void ScrollBy(float delta)
+    {
+        if (delta < 0f) _follow = false;
+        ScrollTo(_scroll + delta);
+    }
+
+    private void ScrollTo(float target)
+    {
+        var next = Math.Clamp(target, 0f, MaxScroll);
+        if (next == _scroll) return;
+        _scroll = next;
+        Invalidate();
+    }
+
     // ---- painting -----------------------------------------------------------
 
     protected override void OnPaint(PaintEventArgs e)
@@ -132,7 +262,6 @@ public sealed class LogForm : Form
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
         _hits.Clear();
-        if (_copied && Environment.TickCount64 - _copiedAt > 1500) _copied = false;
 
         // Screen background: vertical #1B2030 → Bg → #0C0E15.
         using (var bg = new System.Drawing.Drawing2D.LinearGradientBrush(
@@ -152,8 +281,6 @@ public sealed class LogForm : Form
         }
 
         var w = Width;
-        var lines = AppLog.Lines;
-        var sessions = AppLog.Sessions;
 
         // ---- ScreenTopBar (MainActivity 2607): back box, title, COPY pill.
         var back = new RectangleF(20f, 16f, 38f, 38f);
@@ -197,7 +324,7 @@ public sealed class LogForm : Form
         y += 4f;
         if (!AppLog.Enabled)
         {
-            var notice = lines.Count == 0
+            var notice = _lastLines.Count == 0
                 ? "Recording is off · nothing here yet"
                 : "Recording is off · this log stops here";
             var rowY = y + 6f;
@@ -211,96 +338,76 @@ public sealed class LogForm : Form
             y += 6f + DeltaTorTheme.Small.Height + 6f;
         }
 
-        // ---- Transport chips (Spacer6 + Row pad h20, gap 8; horizontalScroll).
+        // ---- Transport chips (wrapped rows; no sideways scroll to hunt).
         y += 6f;
-        var counts = TransportCounts(lines);
-        var chipY = y + 6f;
-        var tLabels = new List<string> { "ALL" };
+        var tChips = new List<(string Label, string Key)> { ("ALL", "") };
         foreach (var t in AppLog.Transports)
-            tLabels.Add(counts.TryGetValue(t, out var n) && n > 0
-                ? t.ToUpperInvariant() + $" ({n})"
-                : t.ToUpperInvariant());
-        _tScroll = Math.Clamp(_tScroll, 0f,
-            Math.Max(0f, RowContentW(g, tLabels, 14f) - (w - 20f)));
-        _tBand = new RectangleF(0f, chipY - 4f, w, 14f + DeltaTorTheme.Caption.Height + 8f);
-        var cx = 20f - _tScroll;
-        DrawChip(g, cx, chipY, tLabels[0], _transport == null,
-            () => { _transport = null; Invalidate(); }, 14f, 7f, ref cx);
-        for (var i = 0; i < AppLog.Transports.Count; i++)
         {
-            var captured = AppLog.Transports[i];
-            DrawChip(g, cx, chipY, tLabels[i + 1], _transport == captured,
-                () => { _transport = _transport == captured ? null : captured; Invalidate(); },
-                14f, 7f, ref cx);
+            var n = _tCounts.TryGetValue(t, out var c) ? c : 0;
+            tChips.Add((n > 0 ? t.ToUpperInvariant() + $" ({n})" : t.ToUpperInvariant(), t));
         }
-        y = chipY + 7f + DeltaTorTheme.Caption.Height + 7f;
-
-        // ---- Severity chips (Spacer6 + Row pad h20, gap 8; horizontalScroll).
-        y += 6f;
-        chipY = y + 6f;
-        var fLabels = new List<string> { "ALL" };
-        foreach (var level in SeverityOrder) fLabels.Add(LevelLabel(level));
-        _fScroll = Math.Clamp(_fScroll, 0f,
-            Math.Max(0f, RowContentW(g, fLabels, 13f) - (w - 20f)));
-        _fBand = new RectangleF(0f, chipY - 4f, w, 12f + DeltaTorTheme.Caption.Height + 8f);
-        cx = 20f - _fScroll;
-        DrawChip(g, cx, chipY, fLabels[0], _filter == null,
-            () => { _filter = null; Invalidate(); }, 13f, 6f, ref cx);
-        for (var i = 0; i < SeverityOrder.Length; i++)
+        y = DrawChipRow(g, y, tChips, key =>
         {
-            var captured = SeverityOrder[i];
-            DrawChip(g, cx, chipY, fLabels[i + 1], _filter == captured,
-                () => { _filter = captured; Invalidate(); },
-                13f, 6f, ref cx);
-        }
-        y = chipY + 6f + DeltaTorTheme.Caption.Height + 6f;
+            _transport = key.Length == 0 || _transport == key ? null : key;
+            _follow = true;
+            Rebuild();
+            Invalidate();
+        }, _transport ?? "", 14f, 7f);
 
-        // ---- The list (weight(1), pad h20, trailing spacer 18).
+        // ---- Severity chips (wrapped rows).
         y += 6f;
-        var viewTop = y;
-        var viewBottom = Height - 20f;
-        _viewH = Math.Max(0f, viewBottom - viewTop);
+        var fChips = new List<(string Label, string Key)> { ("ALL", "") };
+        foreach (var level in SeverityOrder) fChips.Add((LevelLabel(level), level.ToString()));
+        y = DrawChipRow(g, y, fChips, key =>
+        {
+            _filter = key.Length == 0 || _filter?.ToString() == key ? null : key[0];
+            _follow = true;
+            Rebuild();
+            Invalidate();
+        }, _filter?.ToString() ?? "", 13f, 6f);
 
-        var nodes = GroupLog(lines, sessions, _filter, _transport);
+        // ---- The list.
+        y += 6f;
+        _viewTop = y;
+        _viewBottom = Height - 20f;
 
-        if (nodes.Count == 0)
+        if (_placed.Length == 0)
         {
             var msg = !AppLog.Enabled
                 ? "Logging is off. Turn it on under ADVANCED · CONNECTION LOG."
-                : lines.Count == 0
+                : _lastLines.Count == 0
                     ? "No log lines captured yet. Start a connection."
                     : _transport != null
                         ? $"No {_transport.ToUpperInvariant()} lines captured yet."
                         : "No entries for this level.";
             using (var br = new SolidBrush(DeltaTorTheme.Muted))
                 DrawUtil.DrawSpacedCentered(g, msg, DeltaTorTheme.Body, br,
-                    new RectangleF(20f, viewTop, w - 40f, _viewH), 0.4f);
-            _contentH = 0f;
+                    new RectangleF(20f, _viewTop, w - 40f, _viewBottom - _viewTop), 0.4f);
             return;
         }
 
-        // Follow the tail: content grows downward, so pin to the bottom while
-        // the user has not scrolled away from it.
-        var maxScroll = Math.Max(0f, ExpectedContentH(g, nodes, w - 40f) - _viewH);
-        if (_follow) _scroll = (int)maxScroll;
-        else if (_scroll > maxScroll) _scroll = (int)maxScroll;
+        if (_follow) _scroll = MaxScroll;
+        else _scroll = Math.Clamp(_scroll, 0f, MaxScroll);
 
-        var state = g.Save();
-        g.SetClip(new RectangleF(0f, viewTop, w, _viewH));
-        var ly = viewTop - _scroll;
-        foreach (var node in nodes)
-            ly = PaintNode(g, node, ly, w - 40f, viewTop);
-        ly += 18f; // trailing spacer
-        _contentH = ly - (viewTop - _scroll);
-        g.Restore(state);
+        var clip = g.Save();
+        g.SetClip(new RectangleF(0f, _viewTop, w, _viewBottom - _viewTop));
+        var contentW = w - 40f;
+        foreach (var p in _placed)
+        {
+            var sy = p.Y - _scroll + _viewTop;
+            if (sy + p.H < _viewTop) continue;
+            if (sy > _viewBottom) break; // the array is ordered by Y
+            PaintPlaced(g, p, sy, contentW);
+        }
+        g.Restore(clip);
+
+        PaintScrollbar(g);
     }
 
     private void CopyLog()
     {
         var text = string.Join("\n",
-            GroupLog(AppLog.Lines, AppLog.Sessions, _filter, _transport)
-                .OfType<EntryNode>()
-                .Select(r => r.Entry.Raw));
+            _placed.Select(p => p.Node).OfType<EntryNode>().Select(r => r.Entry.Raw));
         if (string.IsNullOrWhiteSpace(text)) return;
         try
         {
@@ -315,50 +422,71 @@ public sealed class LogForm : Form
         Invalidate();
     }
 
-    /// <summary>TransportChip / SeverityChip (MainActivity 3720): pill,
-    /// selected = SurfaceLight + Text.</summary>
-    private void DrawChip(Graphics g, float x, float y, string label, bool selected,
-        Action onClick, float padH, float padV, ref float cursorX)
+    /// <summary>TransportChip / SeverityChip (MainActivity 3720): pills laid
+    /// out left to right, wrapping onto the next line when the row fills, so
+    /// every chip is reachable under the wheel with no sideways scroll.</summary>
+    private float DrawChipRow(
+        Graphics g, float y, IReadOnlyList<(string Label, string Key)> chips,
+        Action<string> pick, string selectedKey, float padH, float padV)
     {
-        var textW = DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f);
+        var w = Width;
         var h = padV * 2f + DeltaTorTheme.Caption.Height;
-        var rect = new RectangleF(x, y, padH * 2f + textW, h);
-        using (var path = DrawUtil.RoundedRect(rect, h / 2f))
+        var x = 20f;
+        var rowY = y + 6f;
+        foreach (var (label, key) in chips)
         {
-            using var fill = new SolidBrush(
-                selected ? DeltaTorTheme.SurfaceLight : DeltaTorTheme.Surface);
-            g.FillPath(fill, path);
-            using var pen = new Pen(
-                selected ? DeltaTorTheme.BorderLight : DeltaTorTheme.Border);
-            g.DrawPath(pen, path);
+            var cw = padH * 2f + DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f);
+            if (x > 20f && x + cw > w - 20f)
+            {
+                x = 20f;
+                rowY += h + 6f;
+            }
+            var rect = new RectangleF(x, rowY, cw, h);
+            var selected = key == selectedKey;
+            using (var path = DrawUtil.RoundedRect(rect, h / 2f))
+            {
+                using var fill = new SolidBrush(
+                    selected ? DeltaTorTheme.SurfaceLight : DeltaTorTheme.Surface);
+                g.FillPath(fill, path);
+                using var pen = new Pen(
+                    selected ? DeltaTorTheme.BorderLight : DeltaTorTheme.Border);
+                g.DrawPath(pen, path);
+            }
+            using (var br = new SolidBrush(selected ? DeltaTorTheme.Text : DeltaTorTheme.Muted))
+                DrawUtil.DrawSpacedCentered(g, label, DeltaTorTheme.Caption, br, rect, 1.1f);
+            var captured = key;
+            _hits.Add((rect, () => pick(captured)));
+            x += cw + 8f;
         }
-        using (var br = new SolidBrush(selected ? DeltaTorTheme.Text : DeltaTorTheme.Muted))
-            DrawUtil.DrawSpacedCentered(g, label, DeltaTorTheme.Caption, br, rect, 1.1f);
-        _hits.Add((rect, onClick));
-        cursorX = rect.Right + 8f;
+        return rowY + h + 6f;
     }
 
-    /// <summary>Right edge of a chip row laid out at scroll 0, for clamping
-    /// the horizontalScroll offset when the row is wider than the window.</summary>
-    private static float RowContentW(Graphics g, IReadOnlyList<string> labels, float padH)
+    /// <summary>Thin rounded thumb on the right edge while the list overflows.</summary>
+    private void PaintScrollbar(Graphics g)
     {
-        var x = 20f;
-        foreach (var label in labels)
-            x += padH * 2f + DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f) + 8f;
-        return x - 8f;
+        var max = MaxScroll;
+        if (max <= 1f) return;
+        var viewH = _viewBottom - _viewTop;
+        if (viewH <= 0f || _contentH <= 0f) return;
+        var thumbH = Math.Max(28f, viewH * viewH / _contentH);
+        var t = Math.Clamp(_scroll / max, 0f, 1f);
+        var y = _viewTop + 3f + t * (viewH - 6f - thumbH);
+        var rect = new RectangleF(Width - 7f, y, 3f, thumbH);
+        using var path = DrawUtil.RoundedRect(rect, 1.5f);
+        using var fill = new SolidBrush(Color.FromArgb(120, DeltaTorTheme.BorderLight));
+        g.FillPath(fill, path);
     }
 
-    // ---- list nodes ---------------------------------------------------------
-
-    private float PaintNode(Graphics g, LogNode node, float y, float w, float viewTop)
+    /// <summary>One already-measured node at screen Y; nothing here measures.</summary>
+    private void PaintPlaced(Graphics g, Placed p, float sy, float w)
     {
         var x = 20f;
-        switch (node)
+        switch (p.Node)
         {
             case SessionNode s:
             {
                 // Outer pad top12 bottom4 + inner row pad h10 v6.
-                y += 12f;
+                var y = sy + 12f;
                 var h = 6f + DeltaTorTheme.Caption.Height + 6f;
                 var rect = new RectangleF(x, y, w, h);
                 using (var path = DrawUtil.RoundedRect(rect, 10f))
@@ -374,7 +502,8 @@ public sealed class LogForm : Form
                 var idText = $"CONNECTION #{s.Id}";
                 var idW = DrawUtil.SpacedWidth(idText, DeltaTorTheme.Caption, 1.6f);
                 using (var br = new SolidBrush(DeltaTorTheme.AccentLight))
-                    DrawUtil.DrawSpaced(g, idText, DeltaTorTheme.Caption, br, tx, y + 6f, idW + 2f, 1.6f);
+                    DrawUtil.DrawSpaced(g, idText, DeltaTorTheme.Caption, br,
+                        tx, y + 6f, idW + 2f, 1.6f);
                 tx += idW + 8f;
 
                 var countText = $"· {s.Count} lines";
@@ -389,12 +518,12 @@ public sealed class LogForm : Form
                 using (var br = new SolidBrush(DeltaTorTheme.Muted))
                     DrawUtil.DrawSpaced(g, countText, DeltaTorTheme.Caption, br,
                         x + w - 10f - countW, y + 6f, countW + 2f, 0.4f);
-                return y + h + 4f;
+                break;
             }
             case LevelHeader lh:
             {
                 // Outer pad top10 bottom4 + inner row pad h10 v5.
-                y += 10f;
+                var y = sy + 10f;
                 var h = 5f + DeltaTorTheme.Caption.Height + 5f;
                 var rect = new RectangleF(x, y, w, h);
                 using (var path = DrawUtil.RoundedRect(rect, 10f))
@@ -416,37 +545,15 @@ public sealed class LogForm : Form
                 using (var br = new SolidBrush(DeltaTorTheme.Muted))
                     DrawUtil.DrawSpaced(g, $"· {lh.Count}", DeltaTorTheme.Caption, br,
                         tx, y + 5f, 60f, 0.4f);
-                return y + h + 4f;
+                break;
             }
             case EntryNode en:
-            {
-                var size = g.MeasureString(en.Entry.Raw, _fMono, (int)w);
-                using (var br = new SolidBrush(DeltaTorTheme.Muted))
-                    g.DrawString(en.Entry.Raw, _fMono, br,
-                        new RectangleF(x, y, w, size.Height + 4f));
-                return y + size.Height + 3f;
-            }
-            default:
-                return y;
+                TextRenderer.DrawText(g, en.Entry.Raw, _fMono,
+                    new Rectangle((int)x, (int)sy, (int)w, (int)p.H + 6),
+                    DeltaTorTheme.Muted,
+                    TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+                break;
         }
-    }
-
-    /// <summary>Layout height of every node without drawing (auto-follow needs
-    /// the content height before the paint pass runs).</summary>
-    private float ExpectedContentH(Graphics g, IReadOnlyList<LogNode> nodes, float contentW)
-    {
-        var h = 0f;
-        foreach (var node in nodes)
-        {
-            h += node switch
-            {
-                SessionNode => 12f + (6f + DeltaTorTheme.Caption.Height + 6f) + 4f,
-                LevelHeader => 10f + (5f + DeltaTorTheme.Caption.Height + 5f) + 4f,
-                EntryNode e => g.MeasureString(e.Entry.Raw, _fMono, (int)contentW).Height + 3f,
-                _ => 0f
-            };
-        }
-        return h + 18f;
     }
 
     // ---- grouping (groupLog, MainActivity 3597) -----------------------------
