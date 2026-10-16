@@ -9,11 +9,12 @@
 
 #include <stdlib.h>
 
-#if defined(_WIN32) || defined(_WIN64)
-#define WEAK
-#else
+/* These are weak fallbacks so the real allocator (hev-task-system) can
+ * override them. MinGW GCC supports __attribute__((weak)) on PE/COFF too;
+ * the old MSVC-oriented "#ifdef _WIN32 -> no weak" made them strong, which
+ * collides with hev-task-system's definitions once both objects are linked
+ * (the Windows DLL link uses --whole-archive to pull the API objects in). */
 #define WEAK __attribute__((weak))
-#endif
 
 WEAK void
 hev_free (void *ptr)
