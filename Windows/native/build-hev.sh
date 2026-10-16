@@ -53,14 +53,18 @@ mkdir -p "$OUT"
 # inside the DLL, so the only remaining dependencies are Windows system DLLs
 # (ws2_32, iphlpapi, kernel32, ...). No msys-2.0.dll is fetched or shipped.
 #
-# hev-socks5-tunnel.def lists the exact public entry points. Passing the .def
-# to the linker forces those symbols to be pulled out of the static archives
-# and exported by name (x64 C names, undecorated), which is what the .NET
-# P/Invoke lookups resolve against -- --export-all-symbols alone would miss
-# them, since the API functions live in archive members nothing else calls.
+# hev-socks5-tunnel.def lists the exact public entry points. The main hev
+# archive is wrapped in --whole-archive: the API functions (main_from_str,
+# quit, stats, set_reject_quic, set_reject_non_dns_udp) live in objects that
+# nothing else in the DLL references, so a normal archive link would drop
+# them and the .def could not export them (P/Invoke then hits
+# EntryPointNotFoundException). The other archives stay lazy. x64 C names are
+# undecorated, which is what .NET resolves against.
 gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
-    -Wl,--start-group \
+    -Wl,--whole-archive \
     "$SRC/bin/libhev-socks5-tunnel.a" \
+    -Wl,--no-whole-archive \
+    -Wl,--start-group \
     "$SRC/third-part/yaml/bin/libyaml.a" \
     "$SRC/third-part/lwip/bin/liblwip.a" \
     "$SRC/third-part/hev-task-system/bin/libhev-task-system.a" \
