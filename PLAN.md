@@ -1354,13 +1354,14 @@ proxy_port), same QUIC/UDP rejection toggles.
   (`make static` + one `gcc -shared` link) in the CI MSYS2 step — the only
   Windows toolchain upstream supports (POSIX sources + `__MSYS__`-gated
   backend/IOCP reactor) — producing `hev-socks5-tunnel.dll` plus the
-  **pinned** `msys-2.0.dll` runtime upstream itself ships for foreign hosts
-  (heiher/msys2 release, NOT the CI image's copy — the image's newest
-  runtime can fail DllMain on older Windows, 0x8007045A), both next to the
-  exe; CI smoke-tests that the DLL loads in a plain Win32 host;
-  `wintun.dll` comes pinned from `fetch-binaries.ps1`. Adapter name comes
-  from a Windows-only `name:` line in the YAML config (Android omits it;
-  the Windows backend cannot take a null name).
+  **pinned** `msys-2.0.dll` runtime from the official msys2-base
+  2024-07-27 snapshot (msys2-runtime 3.5.x, Git-for-Windows era, Win7+
+  compatible — NOT the CI image's newest runtime, whose DllMain fails on
+  older client Windows with 0x8007045A), both next to the exe; CI
+  smoke-tests that the DLL loads in a plain Win32 host; `wintun.dll`
+  comes pinned from `fetch-binaries.ps1`. Adapter name comes from a
+  Windows-only `name:` line in the YAML config (Android omits it; the
+  Windows backend cannot take a null name).
 
 **Binaries (official, pre-built, pinned)**
 

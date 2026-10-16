@@ -43,18 +43,25 @@ gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
     -Wl,--end-group \
     -lmsys-2.0 -lws2_32 -lIphlpapi -lpthread
 
-# The shipped msys runtime is NOT the image's /usr/bin/msys-2.0.dll.
-# Upstream hev-socks5-tunnel ships a pinned msys2-runtime build for hosts
-# that load the DLL from a foreign process (its own Windows CI downloads
-# the same file from heiher/msys2); the CI image's runtime tracks the
-# newest MSYS2 and its DllMain can refuse to initialize on older Windows
-# (Win32 0x8007045A, ERROR_DLL_INIT_FAILED — the user-visible failure is
-# DllNotFoundException at the first P/Invoke). Bump the tag deliberately;
-# CI's smoke test loads the DLL in a plain Win32 host and fails the build
-# if this pairing ever stops initializing.
-MSYS_RUNTIME_TAG=20251011
-curl -fsSL -o "$OUT/msys-2.0.dll" \
-    "https://github.com/heiher/msys2/releases/download/$MSYS_RUNTIME_TAG/msys-2.0.dll"
+# The shipped msys runtime is NOT the image's /usr/bin/msys-2.0.dll and
+# NOT the newest MSYS2 runtime either. The CI image's runtime tracks
+# latest-MSYS2: its DllMain needs recent Windows 10 APIs and can refuse
+# to initialize on older client installs (Win32 0x8007045A,
+# ERROR_DLL_INIT_FAILED — the user-visible failure is DllNotFoundException
+# at the first P/Invoke), and fresh runtimes trip AV heuristics that have
+# never seen them. The DLL shipped here comes from the official
+# msys2-base 2024-07-27 snapshot (msys2-runtime 3.5.x — the
+# Git-for-Windows era, Win7+ compatible, present on hundreds of millions
+# of machines). msys-2.0's ABI is stable across these releases; CI's
+# smoke test loads the tunnel DLL against this pairing on every build and
+# fails the build if the two ever stop matching.
+MSYS_RELEASE=20240727
+curl -fsSL -o /tmp/msys2-base.tar.xz \
+    "https://github.com/msys2/msys2-installer/releases/download/2024-07-27/msys2-base-x86_64-$MSYS_RELEASE.tar.xz"
+tar -xJf /tmp/msys2-base.tar.xz -C /tmp
+find /tmp/msys64/usr/bin -name msys-2.0.dll -exec cp {} "$OUT/msys-2.0.dll" \;
+rm -rf /tmp/msys2-base.tar.xz /tmp/msys64
+test -f "$OUT/msys-2.0.dll"
 
 echo "[build-hev] OK:"
 ls -l "$OUT"
