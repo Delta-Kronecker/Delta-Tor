@@ -6,15 +6,14 @@ public sealed record TunnelStats(long TxBytes, long RxBytes);
 /// <summary>
 /// The tun2socks data path behind the local SOCKS listener — the Windows
 /// counterpart of Android's HevSocks5Tunnel JNI surface. On Windows this is
-/// hev-socks5-tunnel.dll (Windows backend creates the Wintun adapter itself,
-/// so there is no file descriptor to pass). Wired in stage 4; until then
-/// <see cref="TunnelEngine.Start"/> fails soft and proxy-only mode, which
-/// never needs a tunnel, works unchanged.
+/// Se7enTun (a Wintun adapter plus a separate tun2socks.exe), which creates
+/// the adapter and manages its routes, DNS and split rules itself, so there is
+/// no file descriptor or route bookkeeping on this side of the boundary.
 /// </summary>
 public interface ISocksTunnel
 {
     /// <summary>Start the tunnel toward the SOCKS listener. Null on success.</summary>
-    Exception? Start(string socksAddress, int socksPort, bool enableUdpTunneling, int mtu, string ipv4Address);
+    Exception? Start(string socksAddress, int socksPort);
 
     /// <summary>Tear the tunnel and its adapter down.</summary>
     void Stop();
@@ -29,16 +28,11 @@ public interface ISocksTunnel
 /// </summary>
 public static class TunnelEngine
 {
-    /// <summary>The real implementation; stage 4 sets it. Null = tunnel unavailable.</summary>
+    /// <summary>The real implementation; the app sets it at startup. Null = tunnel unavailable.</summary>
     public static ISocksTunnel? Impl { get; set; }
 
-    public static Exception? Start(
-        string socksAddress,
-        int socksPort,
-        bool enableUdpTunneling,
-        int mtu,
-        string ipv4Address) =>
-        Impl?.Start(socksAddress, socksPort, enableUdpTunneling, mtu, ipv4Address)
+    public static Exception? Start(string socksAddress, int socksPort) =>
+        Impl?.Start(socksAddress, socksPort)
         ?? new InvalidOperationException("Tunnel engine is not available");
 
     public static void Stop() => Impl?.Stop();

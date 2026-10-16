@@ -20,137 +20,31 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # Stage 4: hev-socks5-tunnel.dll (tun2socks with the Wintun backend)
-      # is built from the vendored source with the MinGW-w64 toolchain in the
-      # MINGW64 environment — plain Windows DLLs, no msys-2.0.dll runtime
-      # (the cygwin runtime's DllMain is what AV refused in user processes,
-      # 0x8007045A). Must run before dotnet build, which copies the DLL next
-      # to DeltaTor.exe.
-      - name: Set up MSYS2 (MinGW-w64 native tunnel toolchain)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads make curl
-
-      - name: Build hev-socks5-tunnel.dll
-        shell: msys2 {0}
-        run: ./Windows/native/build-hev.sh
-
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25)
+      # Tor Expert Bundle (tor/lyrebird/geoip) plus Se7enTun (the WinTUN +
+      # tun2socks engine). Both are pinned and SHA-256 verified by the script;
+      # it must run before dotnet build, which copies them into the app output.
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
         run: ./Windows/fetch-binaries.ps1 -CI
 
       - name: Build
         run: dotnet build Windows/DeltaTor.sln -c Release --nologo
 
-      # The failure class CI must not ship: hev-socks5-tunnel.dll refusing
-      # to load in a plain Win32 process — users see a DllNotFoundException /
-      # 0x8007045A (ERROR_DLL_INIT_FAILED) at the first P/Invoke. Load it
-      # here the way DeltaTor.exe does so a bad pairing fails the build
-      # instead of the user.
-      - name: Smoke-test the tunnel DLL loads in a plain Win32 host
+      # Se7enTun resolves its data plane from <exe folder>\Resources\tun2socks\,
+      # never from its own folder. A missing copy there only surfaces at the
+      # first tunnel start on a user's machine, so gate it here instead.
+      - name: Verify the Se7enTun data plane shipped next to the exe
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Add-Type -Namespace DeltaTorCI -Name Loader -MemberDefinition @'
-          [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-          public static extern IntPtr LoadLibraryExW(string path, System.IntPtr reserved, uint flags);
-          [System.Runtime.InteropServices.DllImport("kernel32.dll")]
-          public static extern bool FreeLibrary(System.IntPtr handle);
-          '@
-          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies resolve next to
-          # the DLL, exactly like DeltaTor.exe's own directory.
-          $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
-          if ($handle -eq [IntPtr]::Zero) {
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Host "::error::hev-socks5-tunnel.dll cannot load in a plain Win32 host (Win32 error $err, 1114=ERROR_DLL_INIT_FAILED)"
-            exit 1
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          foreach ($f in @(
+            "$out/DeltaTor.exe",
+            "$out/Se7enTun.dll",
+            "$out/Resources/tun2socks/tun2socks.exe",
+            "$out/Resources/tun2socks/wintun.dll")) {
+            if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
+            Write-Host "ok $f"
           }
-          Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
-          [void][DeltaTorCI.Loader]::FreeLibrary($handle)
-
-      # The same load again from a GUI-subsystem .NET host: DeltaTor.exe is
-      # a WinExe, and a failure that only shows up there (loader behaviour
-      # differs between console and GUI hosts) would slip past the pwsh test.
-      - name: Smoke-test the tunnel DLL from a GUI-subsystem host
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $dir = Join-Path $env:RUNNER_TEMP 'hev-gui-host'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          @'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <OutputType>WinExe</OutputType>
-              <TargetFramework>net8.0-windows</TargetFramework>
-              <Nullable>disable</Nullable>
-            </PropertyGroup>
-          </Project>
-          '@ | Set-Content (Join-Path $dir 'host.csproj')
-          @'
-          using System;
-          using System.Runtime.InteropServices;
-          internal static class Host
-          {
-              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-              private static extern IntPtr LoadLibraryExW(string path, IntPtr reserved, uint flags);
-
-              private static int Main(string[] args)
-              {
-                  var handle = LoadLibraryExW(args[0], IntPtr.Zero, 0x8);
-                  return handle == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
-              }
-          }
-          '@ | Set-Content (Join-Path $dir 'Program.cs')
-          dotnet build $dir -c Release --nologo -v q
-          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          $exe = Join-Path $dir 'bin/Release/net8.0-windows/host.exe'
-          $p = Start-Process -FilePath $exe -ArgumentList "`"$dll`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Write-Host "::error::GUI-subsystem host failed to load hev-socks5-tunnel.dll (Win32 error $($p.ExitCode), 1114=ERROR_DLL_INIT_FAILED)"
-            exit 1
-          }
-          Write-Host "hev-socks5-tunnel.dll loaded from a GUI-subsystem .NET host"
-
-      # Runtime gate for the MinGW port: actually start the tunnel in a
-      # console host (config parse, task system, IOCP reactor, lwip, Wintun
-      # adapter), check stats, quit, and require a clean rc. No routes are
-      # installed, so the runner's own connectivity is never touched.
-      - name: Native tunnel start/stop smoke test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $out = Join-Path $env:RUNNER_TEMP 'native-smoke'
-          dotnet build Windows/tests/NativeSmoke -c Release -o $out --nologo
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::NativeSmoke failed to build"
-            exit 1
-          }
-          Copy-Item Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll $out -Force
-          Copy-Item Windows/vendor/wintun/bin/amd64/wintun.dll $out -Force
-          & (Join-Path $out 'NativeSmoke.exe')
-          $code = $LASTEXITCODE
-          Write-Host "NativeSmoke exit code: $code"
-          if ($code -ne 0) {
-            Write-Host "::error::hev-socks5-tunnel.dll failed to start or stop in-process (exit $code)"
-            exit 1
-          }
-
-      # When the smoke test crashes, name the faulting function: the test
-      # prints "rip_rva=0x..." for the instruction that faulted, so dump the
-      # symbol table and a disassembly window around it. Runs on failure only,
-      # so a green build does not pay for it.
-      - name: Identify the faulting native function
-        if: failure()
-        shell: msys2 {0}
-        run: |
-          DLL=Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll
-          if [ ! -f "$DLL" ]; then echo "no DLL to inspect"; exit 0; fi
-          echo "=== symbols by address (first 60) ==="
-          nm -n "$DLL" | head -60
-          echo "=== disassembly around fault RVA 0x1530 ==="
-          objdump -d --start-address=0x1480 --stop-address=0x1640 "$DLL"
 
       - name: Package the three artifacts
         shell: pwsh
@@ -158,14 +52,14 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
 
-          # 1. The portable app itself (exe + managed/native DLLs + the
-          #    fetched vendor bundle), the same shape a user unpacks.
-          #    Staged as a plain folder, NOT a zip: upload-artifact wraps
-          #    everything in its own zip, so zipping here too would make
-          #    users extract twice (zip inside zip inside folder).
+          # 1. The portable app itself (exe + managed DLLs + the fetched vendor
+          #    bundle), the same shape a user unpacks. Staged as a plain folder,
+          #    NOT a zip: upload-artifact wraps everything in its own zip, so
+          #    zipping here too would make users extract twice (zip inside zip
+          #    inside folder).
           $stage = "dist/stage/deltator-debug-windows"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
+          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
           Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
 
           # 2. The sources of the commit that was built, so the zip and the
@@ -174,11 +68,10 @@ jobs:
           Expand-Archive "dist/src.zip" -DestinationPath "dist/stage/deltator-sources"
           Remove-Item "dist/src.zip"
 
-          # 3. Unstripped native pieces + PDBs: hev-socks5-tunnel.dll is C,
-          #    and a stack trace from a crash is unreadable without these.
+          # 3. Managed PDBs: a stack trace from a crash is unreadable without
+          #    them. (Se7enTun ships its own pdb in its release zip.)
           $sym = "dist/stage/deltator-native-symbols"
           New-Item -ItemType Directory -Force -Path $sym | Out-Null
-          Copy-Item "Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll" $sym
           Get-ChildItem -Recurse "Windows/src" -Filter *.pdb -ErrorAction SilentlyContinue |
             ForEach-Object { Copy-Item $_.FullName $sym }
 
