@@ -35,20 +35,6 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # The native tunnel DLL must exist before dotnet build copies it.
-      # MinGW-w64 in the MINGW64 environment: plain Windows DLLs, no
-      # msys-2.0.dll runtime (see Windows/native/build-hev.sh).
-      - name: Set up MSYS2 (MinGW-w64 native tunnel toolchain)
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads make curl
-
-      - name: Build hev-socks5-tunnel.dll
-        shell: msys2 {0}
-        run: ./Windows/native/build-hev.sh
-
       - name: Resolve the tag, and refuse to move one that already exists
         # Verbatim from release.yml (same guard, same reasoning): a tag is a
         # promise about what people downloaded; an existing tag is only reused
@@ -152,7 +138,7 @@ jobs:
             [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
           Write-Host "Certificate opens: subject=$($cert.Subject), thumbprint=$($cert.Thumbprint)"
 
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + wintun)
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
         run: ./Windows/fetch-binaries.ps1 -CI
 
       - name: Build signed release app
@@ -162,111 +148,41 @@ jobs:
           dotnet build Windows/DeltaTor.sln -c Release --nologo
           -p:Version=${{ steps.version.outputs.version }}
 
-      # Same gates as windows-build.yml, and they belong after dotnet build:
-      # the tunnel DLL must load in a plain Win32 host — console and
-      # GUI-subsystem alike — or users hit 0x8007045A (ERROR_DLL_INIT_FAILED)
-      # at the first P/Invoke.
-      - name: Smoke-test the tunnel DLL loads in a plain Win32 host
+      # Se7enTun resolves its data plane from the exe folder's Resources
+      # subfolder, never from its own folder. A missing copy there only
+      # surfaces at the first tunnel start on a user's machine, so gate it here.
+      - name: Verify the Se7enTun data plane shipped next to the exe
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Add-Type -Namespace DeltaTorCI -Name Loader -MemberDefinition @'
-          [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-          public static extern IntPtr LoadLibraryExW(string path, System.IntPtr reserved, uint flags);
-          [System.Runtime.InteropServices.DllImport("kernel32.dll")]
-          public static extern bool FreeLibrary(System.IntPtr handle);
-          '@
-          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies resolve next to
-          # the DLL, exactly like DeltaTor.exe's own directory.
-          $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
-          if ($handle -eq [IntPtr]::Zero) {
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Host "::error::hev-socks5-tunnel.dll cannot load in a plain Win32 host (Win32 error $err, 1114=ERROR_DLL_INIT_FAILED)"
-            exit 1
-          }
-          Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
-          [void][DeltaTorCI.Loader]::FreeLibrary($handle)
-
-      - name: Smoke-test the tunnel DLL from a GUI-subsystem host
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $dir = Join-Path $env:RUNNER_TEMP 'hev-gui-host'
-          New-Item -ItemType Directory -Force -Path $dir | Out-Null
-          @'
-          <Project Sdk="Microsoft.NET.Sdk">
-            <PropertyGroup>
-              <OutputType>WinExe</OutputType>
-              <TargetFramework>net8.0-windows</TargetFramework>
-              <Nullable>disable</Nullable>
-            </PropertyGroup>
-          </Project>
-          '@ | Set-Content (Join-Path $dir 'host.csproj')
-          @'
-          using System;
-          using System.Runtime.InteropServices;
-          internal static class Host
-          {
-              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-              private static extern IntPtr LoadLibraryExW(string path, IntPtr reserved, uint flags);
-
-              private static int Main(string[] args)
-              {
-                  var handle = LoadLibraryExW(args[0], IntPtr.Zero, 0x8);
-                  return handle == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
-              }
-          }
-          '@ | Set-Content (Join-Path $dir 'Program.cs')
-          dotnet build $dir -c Release --nologo -v q
-          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          $exe = Join-Path $dir 'bin/Release/net8.0-windows/host.exe'
-          $p = Start-Process -FilePath $exe -ArgumentList "`"$dll`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) {
-            Write-Host "::error::GUI-subsystem host failed to load hev-socks5-tunnel.dll (Win32 error $($p.ExitCode), 1114=ERROR_DLL_INIT_FAILED)"
-            exit 1
-          }
-          Write-Host "hev-socks5-tunnel.dll loaded from a GUI-subsystem .NET host"
-
-      # Runtime gate for the MinGW port: start the real tunnel, check stats,
-      # quit, require a clean rc (no routes installed, runner untouched).
-      - name: Native tunnel start/stop smoke test
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $out = Join-Path $env:RUNNER_TEMP 'native-smoke'
-          dotnet build Windows/tests/NativeSmoke -c Release -o $out --nologo
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "::error::NativeSmoke failed to build"
-            exit 1
-          }
-          Copy-Item Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll $out -Force
-          Copy-Item Windows/vendor/wintun/bin/amd64/wintun.dll $out -Force
-          & (Join-Path $out 'NativeSmoke.exe')
-          $code = $LASTEXITCODE
-          Write-Host "NativeSmoke exit code: $code"
-          if ($code -ne 0) {
-            Write-Host "::error::hev-socks5-tunnel.dll failed to start or stop in-process (exit $code)"
-            exit 1
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          foreach ($f in @(
+            "$out/DeltaTor.exe",
+            "$out/Se7enTun.dll",
+            "$out/Resources/tun2socks/tun2socks.exe",
+            "$out/Resources/tun2socks/wintun.dll")) {
+            if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
+            Write-Host "ok $f"
           }
 
       - name: Sign the binaries we build
-        # Only our own artifacts are signed: overwriting the signatures on
-        # tor.exe / lyrebird.exe / wintun.dll would erase the upstream
-        # authors' signatures, which users and mirrors verify.
+        # Only our own artifact is signed: overwriting the signatures on the
+        # bundled upstream binaries (tor.exe, lyrebird.exe, tun2socks.exe,
+        # wintun.dll) would erase their authors' signatures, which users and
+        # mirrors verify. We only sign DeltaTor.exe.
         shell: pwsh
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows"
+          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) {
             Write-Host "::error::no signtool.exe found; cannot sign"
             exit 1
           }
-          $files = @("$appDir\DeltaTor.exe", "$appDir\hev-socks5-tunnel.dll")
+          $files = @("$appDir\DeltaTor.exe")
           foreach ($f in $files) {
             if (-not (Test-Path $f)) { Write-Host "::error::cannot sign missing file $f"; exit 1 }
           }
@@ -288,7 +204,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
           $vi = (Get-Item $exe).VersionInfo
           $fv = "$($vi.FileVersion)"
           $tri = (($fv -split '\.') | Select-Object -First 3) -join '.'
@@ -310,7 +226,7 @@ jobs:
           PIN_FILE: Windows/release-signing-cert.sha256
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
           $sig = Get-AuthenticodeSignature -FilePath $exe
           if (-not $sig.SignerCertificate) {
             Write-Host "::error::$exe has no signer certificate"
@@ -360,7 +276,7 @@ jobs:
           # over whatever directory the user happened to be in.
           $stage = "dist/stage/DeltaTor"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
+          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
           Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
           Compress-Archive -Path "dist/stage/DeltaTor" -DestinationPath "dist/deltator-$($env:TAG_NAME)-windows-x64.zip" -Force
           Get-ChildItem dist/*.zip

@@ -1,20 +1,34 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <!-- Se7enTun targets net8.0-windows10.0.19041.0 and needs the Windows
+         Desktop framework (WPF) for its diagnostics/localisation types, so the
+         wrapper project matches both. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>DeltaTor.Native</RootNamespace>
     <AssemblyName>DeltaTor.Native</AssemblyName>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <!-- Stage-4 native layer: P/Invoke into hev-socks5-tunnel.dll (built by
-         Windows/native/build-hev.sh from the vendored source) plus the
-         Windows tunnel/routing implementation (WindowsTunnel, RouteManager). -->
+    <!-- Stage-5 native layer: wraps Se7enTun (WinTUN + tun2socks engine) in
+         the ISocksTunnel shape TunnelEngine expects. Se7enTun.dll is fetched
+         by Windows/fetch-binaries.ps1 into Windows/libs/se7entun/ (x64 release
+         build); the data plane it drives is copied into the app output by the
+         app csproj. -->
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\DeltaTor.Core\DeltaTor.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="Se7enTun">
+      <HintPath>..\..\libs\se7entun\Se7enTun.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- The engine logs through Microsoft.Extensions.Logging; needed at runtime. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
   </ItemGroup>
 
 </Project>

@@ -31,22 +31,18 @@ public sealed record EngineNotification(string Title, string Body, bool Progress
 ///  - Exit-locator retry policy, STOPPING ≥ 3 s hold, teardown ordering
 ///    (tunnel → bridge → cores → wait ports free).
 ///
-/// Not ported (plan decision 1 / §2.5 Windows): split tunnelling (the engine
-/// always establishes the full tunnel; proxy-only mode stays the selective
-/// escape hatch), Android TUN building (the Wintun adapter is created by the
-/// hev-socks5-tunnel Windows backend behind <see cref="TunnelEngine"/>), the
-/// wake lock (a no-op on desktop; the counted windows are kept as a hook) and
-/// Android notifications (replaced by <see cref="NotificationChanged"/>).
+/// Not ported (plan decision 1 / §2.5 Windows): user-facing split tunnelling
+/// (proxy-only mode stays the selective escape hatch; the exclude-mode rules
+/// Se7enTun applies are only loop prevention for tor/lyrebird, not a user
+/// feature), Android TUN building (the Wintun adapter is created by Se7enTun
+/// behind <see cref="TunnelEngine"/>), the wake lock (a no-op on desktop; the
+/// counted windows are kept as a hook) and Android notifications (replaced by
+/// <see cref="NotificationChanged"/>).
 /// </summary>
 public static class BridgeRace
 {
     // Android log tag kept verbatim so log lines match 1:1 across platforms.
     private const string TAG = "TorVpnService";
-
-    private const int VpnMtu = 1280;
-    private const string VpnAddress = "10.255.255.1";
-    private const string VpnRoute = "0.0.0.0";
-    private const string VpnDns = "8.8.8.8";
 
     /** How often the connected tunnel is asked whether Tor can still carry traffic. */
     private const long ProbeIntervalMs = 5_000L;
@@ -542,7 +538,7 @@ public static class BridgeRace
 
         await Task.Delay(200);
 
-        var tunnelError = TunnelEngine.Start(proxyHost, proxyPort, enableUdpTunneling: true, VpnMtu, VpnAddress);
+        var tunnelError = TunnelEngine.Start(proxyHost, proxyPort);
         if (tunnelError != null)
         {
             Fail(tunnelError.Message.Length > 0 ? tunnelError.Message : "Failed to start tunnel");

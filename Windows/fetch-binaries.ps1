@@ -19,10 +19,9 @@
 # https://dist.torproject.org/torbrowser/15.0.25/sha256sums-signed-build.txt).
 # -CI refuses to run unpinned; a mismatch always fails.
 #
-# wintun.dll: pinned official wintun.net build (stage 4, full tunnel). The
-# hev-socks5-tunnel Windows backend LoadLibraryExW()s it from the app
-# directory, so it lands in Windows/vendor/wintun/ and is copied next to
-# DeltaTor.exe by the app csproj.
+# Se7enTun (WinTUN + tun2socks engine): pinned GitHub release, verified by
+# SHA-256, extracted to Windows/libs/se7entun/. The app csproj copies
+# Se7enTun.dll and its data plane (Resources\tun2socks\*) into the output.
 
 [CmdletBinding()]
 param(
@@ -99,42 +98,45 @@ function Assert-Hash([string]$Path) {
 }
 
 # ---------------------------------------------------------------------------
-# wintun.dll — official wintun.net build, pinned by version + SHA-256.
-# Runs before the bundle short-circuit so it is fetched on every path.
+# Se7enTun (WinTUN + tun2socks engine) - pinned GitHub release, verified by
+# SHA-256. Runs before the bundle short-circuit so it is fetched on every path.
+# The zip extracts Se7enTun.dll and Resources\tun2socks\* at its root.
 # ---------------------------------------------------------------------------
-$WintunVersion = '0.14.1'
-$WintunArchive = "wintun-$WintunVersion.zip"
-$WintunUrl     = "https://www.wintun.net/builds/$WintunArchive"
-$WintunSha256  = '07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51'
-$WintunDir     = Join-Path $VendorDir 'wintun'
-$WintunDll     = Join-Path $WintunDir 'bin/amd64/wintun.dll'
+$Se7enVersion = '1.0.0'
+$Se7enArchive = "Se7enTun-$Se7enVersion-win-x64.zip"
+$Se7enUrl     = "https://github.com/Delta-Kronecker/tun/releases/download/v$Se7enVersion/$Se7enArchive"
+# SHA-256 of the release asset above, recorded when it was first pinned.
+$Se7enSha256  = 'cc6a23e5481ec3ac0f123870941e7146dba53595f464bc133edc39e8c6c23f06'
+$Se7enLibDir  = Join-Path (Split-Path -Parent $PSScriptRoot) 'libs/se7entun'
+$Se7enDll     = Join-Path $Se7enLibDir 'Se7enTun.dll'
+$Se7enPlane   = Join-Path $Se7enLibDir 'Resources/tun2socks/tun2socks.exe'
 
-if (Test-Path $WintunDll) {
-    Write-Step "wintun.dll already extracted: $WintunDll"
+if ((Test-Path $Se7enDll) -and (Test-Path $Se7enPlane)) {
+    Write-Step "Se7enTun already extracted: $Se7enLibDir"
 }
 else {
-    New-Item -ItemType Directory -Force -Path $WintunDir | Out-Null
-    $wintunArchivePath = $null
+    New-Item -ItemType Directory -Force -Path $Se7enLibDir | Out-Null
+    $se7enArchivePath = $null
     foreach ($dir in @($CacheRoot, $PSScriptRoot)) {
-        $candidate = Join-Path $dir $WintunArchive
-        if (Test-Path $candidate) { $wintunArchivePath = $candidate; break }
+        $candidate = Join-Path $dir $Se7enArchive
+        if (Test-Path $candidate) { $se7enArchivePath = $candidate; break }
     }
-    if (-not $wintunArchivePath) {
-        $wintunArchivePath = Join-Path $CacheRoot $WintunArchive
-        Write-Step "Downloading $WintunUrl"
-        curl.exe -fsSL --retry 3 --retry-delay 2 -o $wintunArchivePath $WintunUrl
-        if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE): $WintunUrl" }
+    if (-not $se7enArchivePath) {
+        $se7enArchivePath = Join-Path $CacheRoot $Se7enArchive
+        Write-Step "Downloading $Se7enUrl"
+        curl.exe -fsSL --retry 3 --retry-delay 2 -o $se7enArchivePath $Se7enUrl
+        if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE): $Se7enUrl" }
     }
-    $wintunActual = (Get-FileHash -Algorithm SHA256 -Path $wintunArchivePath).Hash.ToLowerInvariant()
-    if ($wintunActual -ne $WintunSha256) {
-        throw "SHA-256 mismatch for $wintunArchivePath. Expected $WintunSha256 but got $wintunActual"
+    $se7enActual = (Get-FileHash -Algorithm SHA256 -Path $se7enArchivePath).Hash.ToLowerInvariant()
+    if ($se7enActual -ne $Se7enSha256) {
+        throw "SHA-256 mismatch for $se7enArchivePath. Expected $Se7enSha256 but got $se7enActual"
     }
-    Write-Step "wintun SHA-256 verified: $wintunActual"
-    # The archive has a top-level wintun/ directory, so extract into vendor/.
-    tar -xf $wintunArchivePath -C $VendorDir
-    if ($LASTEXITCODE -ne 0) { throw "wintun extraction failed (tar exit $LASTEXITCODE)" }
-    if (-not (Test-Path $WintunDll)) { throw "wintun.dll missing after extraction: $WintunDll" }
-    Write-Step "wintun.dll -> $WintunDll"
+    Write-Step "Se7enTun SHA-256 verified: $se7enActual"
+    tar -xf $se7enArchivePath -C $Se7enLibDir
+    if ($LASTEXITCODE -ne 0) { throw "Se7enTun extraction failed (tar exit $LASTEXITCODE)" }
+    if (-not (Test-Path $Se7enDll)) { throw "Se7enTun.dll missing after extraction: $Se7enDll" }
+    if (-not (Test-Path $Se7enPlane)) { throw "tun2socks.exe missing after extraction: $Se7enPlane" }
+    Write-Step "Se7enTun -> $Se7enLibDir"
 }
 
 # 1) already extracted

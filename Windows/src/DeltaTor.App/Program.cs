@@ -8,14 +8,6 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        // diagnose.ps1 launches this; runs the real DllImport path in this
-        // exact process context and writes native-probe.txt next to the exe.
-        if (args.Contains("--native-probe"))
-        {
-            Environment.ExitCode = NativeProbe.Run();
-            return;
-        }
-
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
@@ -40,13 +32,13 @@ internal static class Program
         Task.Run(InstallCounter.CountInstall);
         MaybeShowFirstRunNotice();
 
-        // Stage 4: the tun2socks engine behind TunnelEngine, plus recovery
-        // from a previous run that died with its catch-all routes installed
-        // (those would black-hole system traffic until someone noticed).
-        TunnelEngine.Impl = new WindowsTunnel();
-        RouteManager.CleanupLeftovers();
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => RouteManager.RemoveTunnel();
-        AppDomain.CurrentDomain.UnhandledException += (_, _) => RouteManager.RemoveTunnel();
+        // The tun2socks engine behind TunnelEngine: Se7enTun owns the Wintun
+        // adapter, its catch-all routes, adapter DNS and split rules, and tears
+        // them down on a clean exit. A hard kill is recovered by Se7enTun's own
+        // reconcile on the next start (it caches and restarts its data plane).
+        TunnelEngine.Impl = new Se7enTunnel();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => TunnelEngine.Stop();
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => TunnelEngine.Stop();
 
         Application.Run(new MainForm());
     }
