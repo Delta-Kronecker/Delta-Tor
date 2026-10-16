@@ -125,9 +125,15 @@
 
 /* --- shims: defined before the macros that redirect to them --- */
 
+/* Last raw WSAGetLastError() seen by a shim, for diagnostics (the LOG_E
+ * call sites log this alongside errno, since hev_mw_sockerr collapses most
+ * WSA codes onto EIO). */
+static int hev_mw_last_wsa;
+
 static inline int
 hev_mw_sockerr (int wsaerr)
 {
+    hev_mw_last_wsa = wsaerr;
     switch (wsaerr) {
     case WSAEWOULDBLOCK:
         errno = EAGAIN;
