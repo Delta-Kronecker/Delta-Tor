@@ -3,12 +3,12 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <!-- Windows 10/11 build 19041+: Se7enTun's Wintun adapter plus its
-         netsh/iphlpapi calls, and its TFM itself. -->
+         netsh/iphlpapi calls, and its TFM itself. The WPF framework Se7enTun
+         needs at runtime flows here transitively from DeltaTor.Native (which
+         sets UseWPF); this project stays pure WinForms so its implicit usings
+         and the WinForms/WPF type sets never collide. -->
     <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
-    <!-- Required by Se7enTun: its diagnostics (Loc) and connection-method code
-         use WPF types, so the Windows Desktop framework must be present. -->
-    <UseWPF>true</UseWPF>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
