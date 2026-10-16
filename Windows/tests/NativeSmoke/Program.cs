@@ -12,6 +12,40 @@ namespace NativeSmoke;
 /// </summary>
 internal static class Program
 {
+    // Print raw native fault info before the process dies, so a crash inside
+    // the DLL (coroutine switch, IOCP reactor, ...) is attributable to an
+    // offset rather than just "exit code -1073741819".
+    private delegate int VexHandler(IntPtr exceptionInfo);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr AddVectoredExceptionHandler(uint firstHandler, VexHandler handler);
+
+    private static readonly VexHandler Vex = VexHandlerImpl;
+
+    private static int VexHandlerImpl(IntPtr exceptionInfo)
+    {
+        // EXCEPTION_RECORD: ExceptionCode @ +0, ExceptionAddress @ +8*? On
+        // x64 EXCEPTION_RECORD has ExceptionCode (uint) at 0, flags at 4,
+        // ExceptionAddress (void*) at 8.
+        var code = Marshal.ReadInt32(exceptionInfo, 0);
+        var addr = Marshal.ReadIntPtr(exceptionInfo, 8);
+        Console.Error.WriteLine($"NATIVE FAULT: code=0x{code:X8} address=0x{addr.ToInt64():X}");
+        // Print module (DLL) containing the fault, if resolvable.
+        if (GetModuleHandleExW(0x3 /* GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS */, addr, out var mod))
+        {
+            var sb = new StringBuilder(260);
+            GetModuleFileNameW(mod, sb, sb.Capacity);
+            Console.Error.WriteLine($"NATIVE FAULT module: {sb}");
+        }
+        return 0; // EXCEPTION_CONTINUE_SEARCH
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool GetModuleHandleExW(uint flags, IntPtr lpModuleName, out IntPtr phModule);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint GetModuleFileNameW(IntPtr hModule, StringBuilder lpFilename, int nSize);
+
     [DllImport("hev-socks5-tunnel.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void hev_socks5_tunnel_set_reject_quic(int enabled);
 
@@ -29,6 +63,7 @@ internal static class Program
 
     private static int Main()
     {
+        AddVectoredExceptionHandler(1, Vex);
         Console.WriteLine($"BaseDirectory: {AppContext.BaseDirectory}");
 
         try
