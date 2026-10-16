@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -60,17 +61,21 @@ internal static class Program
             Marshal.Copy((IntPtr)rip, bytes, 0, bytes.Length);
             Console.Error.WriteLine("NATIVE BYTES: " + string.Concat(bytes.Select(b => b.ToString("x2"))));
 
-            // Which module owns RIP (module base = hModule with FROM_ADDRESS).
-            if (GetModuleHandleExW(0x3 /* FROM_ADDRESS */, (IntPtr)rip, out var mod))
+            // Which module owns RIP. GetModuleHandleExW(FROM_ADDRESS) proved
+            // unreliable here (err=87), so resolve against the module list
+            // captured at startup via System.Diagnostics.
+            long ripRva = -1;
+            string ripMod = "?";
+            foreach (var m in s_modules)
             {
-                var fn = new System.Text.StringBuilder(260);
-                GetModuleFileNameW(mod, fn, fn.Capacity);
-                Console.Error.WriteLine($"NATIVE MOD: {System.IO.Path.GetFileName(fn.ToString())} base=0x{mod.ToInt64():X} rip_rva=0x{rip - mod.ToInt64():X}");
+                if (rip >= m.Base && rip < m.Base + m.Size)
+                {
+                    ripMod = m.Name;
+                    ripRva = rip - m.Base;
+                    break;
+                }
             }
-            else
-            {
-                Console.Error.WriteLine($"NATIVE MOD: GetModuleHandleExW failed err={Marshal.GetLastWin32Error()}");
-            }
+            Console.Error.WriteLine($"NATIVE MOD: {ripMod} rip_rva=0x{ripRva:X}");
         }
         catch (Exception ex)
         {
@@ -79,11 +84,29 @@ internal static class Program
         return 0; // EXCEPTION_CONTINUE_SEARCH
     }
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool GetModuleHandleExW(uint flags, IntPtr lpModuleName, out IntPtr phModule);
+    private sealed record LoadedModule(long Base, long Size, string Name);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-    private static extern uint GetModuleFileNameW(IntPtr hModule, StringBuilder lpFilename, int nSize);
+    private static LoadedModule[] s_modules = Array.Empty<LoadedModule>();
+
+    /// <summary>
+    /// Snapshot every loaded module once, at startup. The crash handler runs
+    /// on a faulting thread inside a dying process, so it must not call into
+    /// the loader or allocate; comparing against this plain array is safe.
+    /// </summary>
+    private static void CaptureModules()
+    {
+        var list = new List<LoadedModule>();
+        try
+        {
+            foreach (ProcessModule pm in Process.GetCurrentProcess().Modules)
+                list.Add(new LoadedModule(pm.BaseAddress.ToInt64(), pm.ModuleMemorySize, pm.ModuleName ?? "?"));
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"CaptureModules failed: {ex.Message}");
+        }
+        s_modules = list.ToArray();
+    }
 
     [DllImport("hev-socks5-tunnel.dll", CallingConvention = CallingConvention.Cdecl)]
     private static extern void hev_socks5_tunnel_set_reject_quic(int enabled);
@@ -116,6 +139,12 @@ internal static class Program
             Console.Error.WriteLine($"initial P/Invoke failed: {e}");
             return 1;
         }
+
+        // After the first P/Invoke, hev-socks5-tunnel.dll (and wintun.dll,
+        // loaded later by the tunnel) are mapped; snapshot the module list
+        // now so the crash handler can resolve faulting addresses without
+        // touching the loader.
+        CaptureModules();
 
         var bytes = Encoding.UTF8.GetBytes(BuildConfig());
         var rc = -1;
