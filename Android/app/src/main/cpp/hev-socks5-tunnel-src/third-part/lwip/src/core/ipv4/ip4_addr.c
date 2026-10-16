@@ -284,7 +284,10 @@ ip4addr_ntoa(const ip4_addr_t *addr)
 char *
 ip4addr_ntoa_r(const ip4_addr_t *addr, char *buf, int buflen)
 {
-  u32_t s_addr;
+  /* MinGW port: the name s_addr is a winsock macro (s_addr ->
+   * S_un.S_addr, force-included by hev-mingw.h), so the local must not
+   * use it. */
+  u32_t addr_val;
   char inv[3];
   char *rp;
   u8_t *ap;
@@ -293,10 +296,10 @@ ip4addr_ntoa_r(const ip4_addr_t *addr, char *buf, int buflen)
   u8_t i;
   int len = 0;
 
-  s_addr = ip4_addr_get_u32(addr);
+  addr_val = ip4_addr_get_u32(addr);
 
   rp = buf;
-  ap = (u8_t *)&s_addr;
+  ap = (u8_t *)&addr_val;
   for (n = 0; n < 4; n++) {
     i = 0;
     do {
