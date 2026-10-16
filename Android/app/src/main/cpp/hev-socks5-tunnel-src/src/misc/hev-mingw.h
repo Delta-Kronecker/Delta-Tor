@@ -297,6 +297,16 @@ hev_mw_accept (int fd, struct sockaddr *addr, socklen_t *addr_len)
                                  : (int)res;
 }
 
+/* Winsock takes `const char *optval', POSIX takes `const void *': a shim so
+ * callers keep passing `int *' without a pointer-type error. */
+static inline int
+hev_mw_setsockopt (int fd, int level, int optname, const void *optval,
+                   socklen_t optlen)
+{
+    return setsockopt ((SOCKET)(intptr_t)fd, level, optname,
+                       (const char *)optval, (int)optlen);
+}
+
 static inline ssize_t
 hev_mw_read (int fd, void *buf, size_t len)
 {
@@ -475,6 +485,8 @@ hev_mw_daemon (int nochld, int noclose)
 #define sendmsg(fd, msg, flags) hev_mw_sendmsg ((fd), (msg), (flags))
 #define connect(fd, addr, addr_len) \
     hev_mw_connect ((fd), (addr), (addr_len))
+#define setsockopt(fd, level, optname, optval, optlen) \
+    hev_mw_setsockopt ((fd), (level), (optname), (optval), (optlen))
 #define accept(fd, addr, addr_len) \
     hev_mw_accept ((fd), (addr), (addr_len))
 #define read(fd, buf, len) hev_mw_read ((fd), (buf), (len))
