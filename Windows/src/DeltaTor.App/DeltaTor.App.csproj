@@ -76,4 +76,18 @@
     </Content>
   </ItemGroup>
 
+  <!-- Tunnel-DLL diagnostic the user double-clicks when the tunnel fails to
+       start (0x8007045A class): loads each shipped native DLL the way the
+       app does and prints the exact Win32 error + Mark-of-the-Web state. -->
+  <ItemGroup>
+    <Content Include="diagnose.cmd">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="diagnose.ps1">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

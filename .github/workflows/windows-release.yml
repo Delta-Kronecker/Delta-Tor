@@ -47,31 +47,6 @@ jobs:
         shell: msys2 {0}
         run: ./Windows/native/build-hev.sh
 
-      # Same gate as windows-build.yml: the tunnel DLL must load in a
-      # foreign (non-MSYS) host process, or users hit 0x8007045A
-      # (ERROR_DLL_INIT_FAILED) at the first P/Invoke.
-      - name: Smoke-test the tunnel DLL loads in a plain Win32 host
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Add-Type -Namespace DeltaTorCI -Name Loader -MemberDefinition @'
-          [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-          public static extern IntPtr LoadLibraryExW(string path, System.IntPtr reserved, uint flags);
-          [System.Runtime.InteropServices.DllImport("kernel32.dll")]
-          public static extern bool FreeLibrary(System.IntPtr handle);
-          '@
-          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies (msys-2.0.dll)
-          # resolve next to the DLL, exactly like DeltaTor.exe's own directory.
-          $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
-          if ($handle -eq [IntPtr]::Zero) {
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Host "::error::hev-socks5-tunnel.dll cannot load in a plain Win32 host (Win32 error $err, 1114=ERROR_DLL_INIT_FAILED)"
-            exit 1
-          }
-          Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
-          [void][DeltaTorCI.Loader]::FreeLibrary($handle)
-
       - name: Resolve the tag, and refuse to move one that already exists
         # Verbatim from release.yml (same guard, same reasoning): a tag is a
         # promise about what people downloaded; an existing tag is only reused
@@ -184,6 +159,72 @@ jobs:
         run: >
           dotnet build Windows/DeltaTor.sln -c Release --nologo
           -p:Version=${{ steps.version.outputs.version }}
+
+      # Same gates as windows-build.yml, and they belong after dotnet build:
+      # the tunnel DLL must load in a foreign (non-MSYS) host — console and
+      # GUI-subsystem alike — or users hit 0x8007045A (ERROR_DLL_INIT_FAILED)
+      # at the first P/Invoke.
+      - name: Smoke-test the tunnel DLL loads in a plain Win32 host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -Namespace DeltaTorCI -Name Loader -MemberDefinition @'
+          [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+          public static extern IntPtr LoadLibraryExW(string path, System.IntPtr reserved, uint flags);
+          [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+          public static extern bool FreeLibrary(System.IntPtr handle);
+          '@
+          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
+          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies (msys-2.0.dll)
+          # resolve next to the DLL, exactly like DeltaTor.exe's own directory.
+          $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
+          if ($handle -eq [IntPtr]::Zero) {
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Host "::error::hev-socks5-tunnel.dll cannot load in a plain Win32 host (Win32 error $err, 1114=ERROR_DLL_INIT_FAILED)"
+            exit 1
+          }
+          Write-Host "hev-socks5-tunnel.dll loaded into a plain host: $handle"
+          [void][DeltaTorCI.Loader]::FreeLibrary($handle)
+
+      - name: Smoke-test the tunnel DLL from a GUI-subsystem host
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'hev-gui-host'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          @'
+          <Project Sdk="Microsoft.NET.Sdk">
+            <PropertyGroup>
+              <OutputType>WinExe</OutputType>
+              <TargetFramework>net8.0-windows</TargetFramework>
+              <Nullable>disable</Nullable>
+            </PropertyGroup>
+          </Project>
+          '@ | Set-Content (Join-Path $dir 'host.csproj')
+          @'
+          using System;
+          using System.Runtime.InteropServices;
+          internal static class Host
+          {
+              [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+              private static extern IntPtr LoadLibraryExW(string path, IntPtr reserved, uint flags);
+
+              private static int Main(string[] args)
+              {
+                  var handle = LoadLibraryExW(args[0], IntPtr.Zero, 0x8);
+                  return handle == IntPtr.Zero ? Marshal.GetLastWin32Error() : 0;
+              }
+          }
+          '@ | Set-Content (Join-Path $dir 'Program.cs')
+          dotnet build $dir -c Release --nologo -v q
+          $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
+          $exe = Join-Path $dir 'bin/Release/net8.0-windows/host.exe'
+          $p = Start-Process -FilePath $exe -ArgumentList "`"$dll`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Host "::error::GUI-subsystem host failed to load hev-socks5-tunnel.dll (Win32 error $($p.ExitCode), 1114=ERROR_DLL_INIT_FAILED)"
+            exit 1
+          }
+          Write-Host "hev-socks5-tunnel.dll loaded from a GUI-subsystem .NET host"
 
       - name: Sign the binaries we build
         # Only our own artifacts are signed: overwriting the signatures on
