@@ -175,7 +175,7 @@ jobs:
             [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
           Write-Host "Certificate opens: subject=$($cert.Subject), thumbprint=$($cert.Thumbprint)"
 
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.24 + wintun)
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + wintun)
         run: ./Windows/fetch-binaries.ps1 -CI
 
       - name: Build signed release app

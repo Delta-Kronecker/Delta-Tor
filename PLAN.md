@@ -17,11 +17,11 @@
 1. **Split tunnelling is CUT in v1** — no per-app routing (WFP dropped), no
    SplitTunnelScreen/card, no `split_tunnel_*` config; Proxy Only mode is the
    selective-routing escape hatch. `DomainRouter` stays as dormant bridge code.
-2. **Core = Tor Expert Bundle for Windows x86_64-15.0.24**, fetched by
+2. **Core = Tor Expert Bundle for Windows x86_64-15.0.25**, fetched by
    `fetch-binaries.ps1` (pinned version + SHA-256), NOT committed to the repo
-   (local copy `tor-expert-bundle-windows-x86_64-15.0.24/` = gitignored cache).
+   (local copy `tor-expert-bundle-windows-x86_64-15.0.25/` = gitignored cache).
    Official URL:
-   `https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz`
+   `https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz`
 3. **snowflake runs through `lyrebird.exe`** — the bundle's `torrc-defaults`/
    `pt_config.json` prove `ClientTransportPlugin snowflake exec lyrebird.exe`;
    no separate snowflake binary, no gomobile lib.
@@ -781,7 +781,7 @@ port SnowflakeBridge too for parity (proxy/manual starts): same constants
 same mode-string dispatch and transport auto-detect, same managed-lyrebird
 launch, same torrc generation incl. the Socks5Proxy-without-PT rule, same
 bootstrap parsing. **Snowflake on Windows = lyrebird** (verified: the Tor
-Expert Bundle 15.0.24 ships
+Expert Bundle 15.0.25 ships
 `ClientTransportPlugin snowflake exec lyrebird.exe` in `data/torrc-defaults`
 and the same mapping in `tor/pluggable_transports/pt_config.json`, and
 `lyrebird.exe` contains the snowflake code): no `snowflake-client.exe`,
@@ -1272,7 +1272,7 @@ proxy_port), same QUIC/UDP rejection toggles.
    Android APKs, so the existing single `ReleaseChecker` endpoint keeps
    serving both platforms).
    Download/verify assets must include the official pre-built binaries —
-   the **Tor Expert Bundle for Windows x86_64-15.0.24** (contains
+   the **Tor Expert Bundle for Windows x86_64-15.0.25** (contains
    `tor.exe`, `lyrebird.exe` = all 5 transports incl. snowflake, and the
    official `data/geoip`+`geoip6`) and `wintun.dll` — pinned by
    version+SHA-256 in the workflow, checksum
@@ -1364,12 +1364,12 @@ proxy_port), same QUIC/UDP rejection toggles.
 
 **Binaries (official, pre-built, pinned)**
 
-- **Tor Expert Bundle for Windows x86_64-15.0.24** — the single core
+- **Tor Expert Bundle for Windows x86_64-15.0.25** — the single core
   source, fetched by `Windows/fetch-binaries.ps1` from the official URL
-  `https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz`
+  `https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz`
   (a `.tar.gz` — extract with `tar -xzf`, available on Windows 10+ and
   GitHub runners). NOT committed; the
-  local copy at repo root `tor-expert-bundle-windows-x86_64-15.0.24/` is
+  local copy at repo root `tor-expert-bundle-windows-x86_64-15.0.25/` is
   gitignored and serves as a cache. Contents used:
   - `tor/tor.exe` (10.2 MB) — Tor core, spawned per runner.
   - `tor/pluggable_transports/lyrebird.exe` (17.9 MB) — serves **obfs4,
@@ -1416,8 +1416,8 @@ Windows/
 ├── DeltaTor.sln
 ├── .gitignore                  # ignores local tor-expert-bundle cache + bin/ + obj/
 ├── fetch-binaries.ps1          # downloads pinned official binaries:
-│                               #   Tor Expert Bundle x86_64-15.0.24 (.tar.gz from
-│                               #   https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz)
+│                               #   Tor Expert Bundle x86_64-15.0.25 (.tar.gz from
+│                               #   https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz)
 │                               #   + wintun.dll — verifies SHA-256, uses ../tor-expert-bundle-* as cache
 ├── VERSION                     # fallback version (workflow overrides from tag)
 ├── src/
@@ -1464,7 +1464,7 @@ section 2.8):
 
 1. **`.github/workflows/windows-build.yml`** — push `main` + dispatch →
    `windows-latest` → toolchain setup → `fetch-binaries.ps1` (downloads
-   `https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz`
+   `https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz`
    + `wintun.dll`, SHA-256 verified) → build `Windows/DeltaTor.sln`
    (Release) → package `deltator-debug-windows.zip` (portable app dir),
    `deltator-sources.zip` (`git archive HEAD`), 
@@ -1513,7 +1513,7 @@ are only partially audited (marked inline).
 - [x] Proxy-only mode: endpoint string (`socks5://127.0.0.1:9050`), no tunnel, locator only, same ring logic (LabelText's proxy branch offering DISCONNECT, mirrored verbatim)
 - [x] TorSocksBridge: no-auth SOCKS5 CONNECT, 32768 buffers, 8-thread DNS pool + 5-min cache over Tor, repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
 - [x] Snowflake: runs **through lyrebird** (managed-PT `CMETHOD snowflake`, no separate binary); built-in/AMP/SMART modes expressed as a synthetic bridge line with the same broker/front/STUN/uTLS/fingerprint constants ✓; torrc rules incl. no Socks5Proxy+CTP combo ✓
-- [x] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.24** + `wintun.dll`, SHA-256 verified, fail on mismatch (CI green); `tor.exe`/`lyrebird.exe` versions match the pin
+- [x] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.25** + `wintun.dll`, SHA-256 verified, fail on mismatch (CI green); `tor.exe`/`lyrebird.exe` versions match the pin
 - [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2) + `msys-2.0.dll` + `wintun.dll` land next to the exe ✓; `TunnelEngine.Impl = WindowsTunnel` ✓; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present ✓; stats tx/rx feed the same UI counters — all runtime except the marked parts
 - [x] Full tunnel known limitation (documented, not a bug): Snowflake does not work through the tunnel on Windows — Proxy Only is the supported mode for it (documented in PLAN §3, the README Windows section and the checklist)
 - [x] DomainRouter dormant: `DISABLED` default, no UI exposure, no `geo/` assets shipped (hooks still wired in the bridge)

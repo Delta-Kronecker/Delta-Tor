@@ -1,22 +1,22 @@
 # fetch-binaries.ps1 — fetch the pinned official Tor Expert Bundle for Windows.
 #
 #   Source archive (official, pinned):
-#   https://dist.torproject.org/torbrowser/15.0.24/tor-expert-bundle-windows-x86_64-15.0.24.tar.gz
+#   https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz
 #
 #   The archive is FLAT (no top-level directory): tor/, data/, docs/ sit at
 #   the archive root. This script extracts it into
-#   Windows/vendor/tor-expert-bundle-windows-x86_64-15.0.24/ anyway, and
+#   Windows/vendor/tor-expert-bundle-windows-x86_64-15.0.25/ anyway, and
 #   Find-BundleRoot also tolerates any other layout by locating the directory
 #   that actually contains tor/tor.exe.
 #
 # Resolution order (first hit wins):
 #   1. already extracted -> Windows/vendor/**/ (bundle root with tor+lyrebird+geoip)
 #   2. local archive cache (repo root or Windows/) -> verify SHA-256 -> extract
-#   3. repo-root extracted cache (../tor-expert-bundle-windows-x86_64-15.0.24/) -> copy
+#   3. repo-root extracted cache (../tor-expert-bundle-windows-x86_64-15.0.25/) -> copy
 #   4. download from the pinned URL -> verify SHA-256 -> extract
 #
 # Hash policy: SHA-256 pinned below (from the official signed checksums at
-# https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt).
+# https://dist.torproject.org/torbrowser/15.0.25/sha256sums-signed-build.txt).
 # -CI refuses to run unpinned; a mismatch always fails.
 #
 # wintun.dll: pinned official wintun.net build (stage 4, full tunnel). The
@@ -32,7 +32,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Version   = '15.0.24'
+$Version   = '15.0.25'
 $BaseName  = "tor-expert-bundle-windows-x86_64-$Version"
 $Archive   = "$BaseName.tar.gz"
 $Url       = "https://dist.torproject.org/torbrowser/$Version/$Archive"
@@ -40,8 +40,8 @@ $VendorDir = Join-Path $PSScriptRoot 'vendor'
 $TargetDir = Join-Path $VendorDir $BaseName
 
 # SHA-256 from the official signed checksums:
-# https://dist.torproject.org/torbrowser/15.0.24/sha256sums-signed-build.txt
-$ExpectedSha256 = 'e9dc6ccc93cd6afa507193f4de284d6424233ff5102155cd2c94b259e8a22b65'
+# https://dist.torproject.org/torbrowser/15.0.25/sha256sums-signed-build.txt
+$ExpectedSha256 = 'c1988c701de2f24f7d098d1d6d7f507b58f27740d097f29c246e0524d639b252'
 
 function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
 
