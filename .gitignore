@@ -44,3 +44,7 @@ runs.json
 # Windows port: hev-socks5-tunnel build outputs (build-hev.sh runs in CI/MSYS2)
 Android/app/src/main/cpp/hev-socks5-tunnel-src/**/build/
 Android/app/src/main/cpp/hev-socks5-tunnel-src/**/bin/
+
+# Windows port: test projects (NativeSmoke etc.) build output
+Windows/tests/*/bin/
+Windows/tests/*/obj/

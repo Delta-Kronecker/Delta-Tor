@@ -7,6 +7,28 @@
  ============================================================================
  */
 
+#if defined(_WIN32)
+
+/* Windows has no sigaction()/sigaltstack(). The task system only requires
+ * a non-NULL detector instance, so hand out a static dummy and do nothing. */
+#include "hev-task-stack-detector.h"
+
+static int hev_mw_stack_detector_dummy;
+
+HevTaskStackDetector *
+hev_task_stack_detector_new (void)
+{
+    return (HevTaskStackDetector *)&hev_mw_stack_detector_dummy;
+}
+
+void
+hev_task_stack_detector_destroy (HevTaskStackDetector *self)
+{
+    (void)self;
+}
+
+#else
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
@@ -119,3 +141,5 @@ hev_task_stack_detector_destroy (HevTaskStackDetector *self)
     setaltstack (&self->oss, NULL);
     free (self);
 }
+
+#endif /* defined(_WIN32) */

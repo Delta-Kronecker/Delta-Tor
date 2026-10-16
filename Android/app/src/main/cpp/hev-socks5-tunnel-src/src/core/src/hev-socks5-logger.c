@@ -27,6 +27,11 @@ hev_socks5_logger_init (HevSocks5LoggerLevel level, const char *path)
 {
     req_level = level;
 
+#if defined(__MINGW32__) && !defined(__MSYS__)
+    /* See hev-logger.c: fd-based logging is a no-op under MinGW. */
+    (void)path;
+    return 0;
+#else
     if (0 == strcmp (path, "stdout"))
         fd = dup (1);
     else if (0 == strcmp (path, "stderr"))
@@ -38,6 +43,7 @@ hev_socks5_logger_init (HevSocks5LoggerLevel level, const char *path)
         return -1;
 
     return 0;
+#endif
 }
 
 void

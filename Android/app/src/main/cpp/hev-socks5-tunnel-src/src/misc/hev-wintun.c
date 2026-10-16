@@ -7,7 +7,7 @@
  ============================================================================
  */
 
-#if defined(__MSYS__)
+#if defined(__MSYS__) || defined(__MINGW32__)
 
 #include <wintun.h>
 #include <netioapi.h>

@@ -9,7 +9,7 @@
 
 #include "asm.h"
 
-#if defined(__MSYS__)
+#if defined(__MSYS__) || defined(__MINGW32__)
 #define REG_ARG0  %rcx
 #define REG_ARG1  %rdx
 #define STACK_PAD 0x28

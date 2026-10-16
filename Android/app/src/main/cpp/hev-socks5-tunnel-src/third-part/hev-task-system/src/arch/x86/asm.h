@@ -15,7 +15,7 @@ _##symbol:
 
 # define END(symbol)
 
-#elif defined(__MSYS__)
+#elif defined(__MSYS__) || defined(__MINGW32__)
 
 # define NESTED(symbol) \
     .globl symbol; \

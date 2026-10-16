@@ -10,6 +10,17 @@
 #ifndef __HEV_WINDOWS_API_H__
 #define __HEV_WINDOWS_API_H__
 
+#if defined(__MINGW32__) && !defined(__MSYS__)
+
+/* MinGW provides every API this header declares in its own headers, and
+ * hev-mingw.h has already loaded winsock2.h. The manual declarations the
+ * MSYS build needs would clash with them (WSANETWORKEVENTS, GetLastError),
+ * so this branch just pulls the real ones in instead. */
+#include <winsock2.h>
+#include <windows.h>
+
+#else
+
 #include <winerror.h>
 #include <handleapi.h>
 #include <minwinbase.h>
@@ -73,5 +84,7 @@ BOOL UnregisterWaitEx (HANDLE, HANDLE);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* !defined(__MINGW32__) || defined(__MSYS__) */
 
 #endif /* __HEV_WINDOWS_API_H__ */
