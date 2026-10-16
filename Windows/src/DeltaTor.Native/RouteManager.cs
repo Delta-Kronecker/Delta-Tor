@@ -306,7 +306,7 @@ public static class RouteManager
         sb.AppendLine("$ErrorActionPreference='Stop'");
         foreach (var ip in ips)
             sb.AppendLine(
-                $"Add-NetRoute -DestinationPrefix '{ip}/32' -NextHop '{_gateway}' " +
+                $"New-NetRoute -DestinationPrefix '{ip}/32' -NextHop '{_gateway}' " +
                 "-PolicyStore ActiveStore -ErrorAction Stop | Out-Null");
         sb.AppendLine("'BYPASS_OK'");
 
@@ -401,8 +401,8 @@ public static class RouteManager
         while((Get-Date) -lt $deadline){ $ad=Get-NetAdapter -Name '@ADAPTER@' -ErrorAction SilentlyContinue; if($ad){break}; Start-Sleep -Milliseconds 100 }
         if(-not $ad){ 'ADAPTER_TIMEOUT'; exit 1 }
         Set-NetIPInterface -InterfaceAlias '@ADAPTER@' -AutomaticMetric Disabled -InterfaceMetric 5 -ErrorAction Stop
-        if(-not (Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue)){ Add-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
-        if(-not (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){ Add-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
+        if(-not (Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue)){ New-NetRoute -DestinationPrefix '0.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
+        if(-not (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){ New-NetRoute -DestinationPrefix '128.0.0.0/1' -InterfaceAlias '@ADAPTER@' -PolicyStore ActiveStore -ErrorAction Stop | Out-Null }
         Set-DnsClientServerAddress -InterfaceAlias '@ADAPTER@' -ServerAddresses '@DNS@' -ErrorAction Stop
         if((Get-NetRoute -DestinationPrefix '0.0.0.0/1' -ErrorAction SilentlyContinue) -and (Get-NetRoute -DestinationPrefix '128.0.0.0/1' -ErrorAction SilentlyContinue)){ 'TUN_ROUTES_OK' } else { 'TUN_ROUTES_FAIL'; exit 1 }
         """
