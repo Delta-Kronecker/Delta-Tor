@@ -31,9 +31,13 @@ public static class TunnelEngine
     /// <summary>The real implementation; the app sets it at startup. Null = tunnel unavailable.</summary>
     public static ISocksTunnel? Impl { get; set; }
 
+    // Start returns null on SUCCESS, so the "engine unavailable" fallback must
+    // test Impl for null explicitly: `Impl?.Start(...) ?? new ...` would treat a
+    // successful (null) start as "no engine" and fail the connect.
     public static Exception? Start(string socksAddress, int socksPort) =>
-        Impl?.Start(socksAddress, socksPort)
-        ?? new InvalidOperationException("Tunnel engine is not available");
+        Impl is null
+            ? new InvalidOperationException("Tunnel engine is not available")
+            : Impl.Start(socksAddress, socksPort);
 
     public static void Stop() => Impl?.Stop();
 

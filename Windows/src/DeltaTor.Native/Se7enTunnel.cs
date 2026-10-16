@@ -50,6 +50,17 @@ public sealed class Se7enTunnel : ISocksTunnel
                 Log = line => AppLog.D(Tag, line),
             });
 
+            // The engine cannot create the Wintun adapter without elevation.
+            // app.manifest already requests requireAdministrator, so this only
+            // fires if that request was somehow bypassed; a clear message beats
+            // the engine's own late Error state.
+            if (!host.IsElevated)
+            {
+                DisposeQuietly(host);
+                return new InvalidOperationException(
+                    "Se7enTun needs Administrator privileges; relaunch DeltaTor elevated.");
+            }
+
             // Exclude-mode split rules so our own processes bypass the tunnel
             // (see the type docs). Save() publishes them to the engine at once.
             var settings = host.Settings;
