@@ -25,7 +25,7 @@ Write-Host "Elevated:  $isAdmin"
 Write-Host "Folder:    $PSScriptRoot"
 Write-Host ""
 
-foreach ($name in 'msys-2.0.dll', 'hev-socks5-tunnel.dll', 'wintun.dll') {
+foreach ($name in 'hev-socks5-tunnel.dll', 'wintun.dll') {
     $path = Join-Path $PSScriptRoot $name
     if (-not (Test-Path $path)) {
         Write-Host ("{0,-24} MISSING" -f $name)
@@ -40,8 +40,9 @@ foreach ($name in 'msys-2.0.dll', 'hev-socks5-tunnel.dll', 'wintun.dll') {
         Write-Host ("{0,-24} Mark-of-the-Web: YES. Right-click the file, Properties, tick Unblock, Apply." -f $name)
     }
     # hev-socks5-tunnel.dll gets LOAD_WITH_ALTERED_SEARCH_PATH (0x8) so its
-    # dependency (msys-2.0.dll) resolves from this folder, exactly like when
-    # DeltaTor.exe loads it. The others load by full path, no flags.
+    # dependencies resolve from this folder, exactly like when DeltaTor.exe
+    # loads it (MinGW build: system DLLs only, no msys runtime). The others
+    # load by full path, no flags.
     $flags = if ($name -eq 'hev-socks5-tunnel.dll') { 0x8 } else { 0 }
     $handle = [DeltaTorDiag.Loader]::LoadLibraryExW($path, [IntPtr]::Zero, $flags)
     if ($handle -eq [IntPtr]::Zero) {

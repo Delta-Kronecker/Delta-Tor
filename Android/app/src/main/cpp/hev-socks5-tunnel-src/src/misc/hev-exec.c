@@ -22,11 +22,15 @@
 
 #include "hev-exec.h"
 
-#if TARGET_OS_TV
+#if TARGET_OS_TV || defined(_WIN32)
 void
 hev_exec_run (const char *script_path, const char *tun_name,
               const char *tun_index, int wait)
 {
+    (void)script_path;
+    (void)tun_name;
+    (void)tun_index;
+    (void)wait;
 }
 #else
 static void

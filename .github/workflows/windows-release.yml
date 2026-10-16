@@ -36,12 +36,14 @@ jobs:
           dotnet-version: 8.0.x
 
       # The native tunnel DLL must exist before dotnet build copies it.
-      - name: Set up MSYS2 (native tunnel toolchain)
+      # MinGW-w64 in the MINGW64 environment: plain Windows DLLs, no
+      # msys-2.0.dll runtime (see Windows/native/build-hev.sh).
+      - name: Set up MSYS2 (MinGW-w64 native tunnel toolchain)
         uses: msys2/setup-msys2@v2
         with:
-          msystem: MSYS
+          msystem: MINGW64
           update: false
-          install: gcc make curl
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads make curl
 
       - name: Build hev-socks5-tunnel.dll
         shell: msys2 {0}
@@ -161,7 +163,7 @@ jobs:
           -p:Version=${{ steps.version.outputs.version }}
 
       # Same gates as windows-build.yml, and they belong after dotnet build:
-      # the tunnel DLL must load in a foreign (non-MSYS) host — console and
+      # the tunnel DLL must load in a plain Win32 host — console and
       # GUI-subsystem alike — or users hit 0x8007045A (ERROR_DLL_INIT_FAILED)
       # at the first P/Invoke.
       - name: Smoke-test the tunnel DLL loads in a plain Win32 host
@@ -175,8 +177,8 @@ jobs:
           public static extern bool FreeLibrary(System.IntPtr handle);
           '@
           $dll = (Resolve-Path "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/hev-socks5-tunnel.dll").Path
-          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies (msys-2.0.dll)
-          # resolve next to the DLL, exactly like DeltaTor.exe's own directory.
+          # 0x8 = LOAD_WITH_ALTERED_SEARCH_PATH: dependencies resolve next to
+          # the DLL, exactly like DeltaTor.exe's own directory.
           $handle = [DeltaTorCI.Loader]::LoadLibraryExW($dll, [IntPtr]::Zero, 0x8)
           if ($handle -eq [IntPtr]::Zero) {
             $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
@@ -226,10 +228,32 @@ jobs:
           }
           Write-Host "hev-socks5-tunnel.dll loaded from a GUI-subsystem .NET host"
 
+      # Runtime gate for the MinGW port: start the real tunnel, check stats,
+      # quit, require a clean rc (no routes installed, runner untouched).
+      - name: Native tunnel start/stop smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $env:RUNNER_TEMP 'native-smoke'
+          dotnet build Windows/tests/NativeSmoke -c Release -o $out --nologo
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::NativeSmoke failed to build"
+            exit 1
+          }
+          Copy-Item Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll $out -Force
+          Copy-Item Windows/vendor/wintun/bin/amd64/wintun.dll $out -Force
+          & (Join-Path $out 'NativeSmoke.exe')
+          $code = $LASTEXITCODE
+          Write-Host "NativeSmoke exit code: $code"
+          if ($code -ne 0) {
+            Write-Host "::error::hev-socks5-tunnel.dll failed to start or stop in-process (exit $code)"
+            exit 1
+          }
+
       - name: Sign the binaries we build
         # Only our own artifacts are signed: overwriting the signatures on
-        # tor.exe / lyrebird.exe / wintun.dll / msys-2.0.dll would erase the
-        # upstream authors' signatures, which users and mirrors verify.
+        # tor.exe / lyrebird.exe / wintun.dll would erase the upstream
+        # authors' signatures, which users and mirrors verify.
         shell: pwsh
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}

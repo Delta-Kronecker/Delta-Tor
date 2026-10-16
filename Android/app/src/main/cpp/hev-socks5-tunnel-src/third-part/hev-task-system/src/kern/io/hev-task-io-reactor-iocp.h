@@ -89,8 +89,16 @@ hev_task_io_reactor_setup_event_fd_gen (HevTaskIOReactorSetupEvent *events,
     if (poll_events & POLLERR)
         reactor_events |= HEV_TASK_IO_REACTOR_EV_ER;
 
+#ifdef __MSYS__
+    /* MSYS/Cygwin fds are CRT fds: translate to the kernel handle. */
     hev_task_io_reactor_setup_event_set (events, get_osfhandle (fd), op,
                                          reactor_events, data);
+#else
+    /* MinGW: the fd IS the winsock SOCKET already (hev-mingw.h), so the
+     * value is the handle the reactor must wait on. */
+    hev_task_io_reactor_setup_event_set (events, (long)(intptr_t)fd, op,
+                                         reactor_events, data);
+#endif
 
     return 1;
 }

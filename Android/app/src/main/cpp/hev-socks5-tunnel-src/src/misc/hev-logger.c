@@ -26,6 +26,14 @@ hev_logger_init (HevLoggerLevel level, const char *path)
 {
     req_level = level;
 
+#if defined(__MINGW32__) && !defined(__MSYS__)
+    /* No fd-based file logging under MinGW: close()/writev() are socket
+     * redirects (hev-mingw.h), so leave fd at -1. Init still succeeds and
+     * every LOG_* call stays inert, which is also what happens whenever no
+     * log file is configured. */
+    (void)path;
+    return 0;
+#else
     if (0 == strcmp (path, "stdout"))
         fd = dup (1);
     else if (0 == strcmp (path, "stderr"))
@@ -37,6 +45,7 @@ hev_logger_init (HevLoggerLevel level, const char *path)
         return -1;
 
     return 0;
+#endif
 }
 
 void

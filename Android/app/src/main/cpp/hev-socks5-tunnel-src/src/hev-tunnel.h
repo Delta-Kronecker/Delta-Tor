@@ -28,7 +28,7 @@
 #include "hev-tunnel-macos.h"
 #endif /* __APPLE__ || __MACH__ */
 
-#if defined(__MSYS__)
+#if defined(__MSYS__) || defined(__MINGW32__)
 #include "hev-tunnel-windows.h"
 #endif /* __MSYS__ */
 

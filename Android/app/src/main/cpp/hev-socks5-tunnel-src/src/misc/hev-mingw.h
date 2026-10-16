@@ -1,0 +1,402 @@
+/*
+ ============================================================================
+ Name        : hev-mingw.h
+ Description : MinGW-w64 compatibility layer for hev-socks5-tunnel.
+
+ The upstream tree targets MSYS2/Cygwin on Windows, where POSIX sockets,
+ pipes, signal.h and friends are emulated by msys-2.0.dll. That runtime is
+ also what trips antivirus products in third-party processes (its DllMain
+ fails with ERROR_DLL_INIT_FAILED / 0x8007045A), so this port builds the
+ same sources with the MinGW-w64 toolchain instead: the result is a plain
+ Windows DLL whose only dependencies are system DLLs.
+
+ Force-included by Windows/native/build-hev.sh (`-include`) into every
+ translation unit. Rules that make this work:
+
+   1. All system headers that declare the POSIX names we redirect
+      (winsock2, unistd, io, fcntl, sys/socket, sys/uio, ...) are included
+      HERE, at the top, before any macro below. Later per-file #includes of
+      those headers are guard-skipped, so no system declaration of read,
+      recv, close, ... can ever collide with the redirections.
+   2. Redirects are function-like macros: an identifier that is not
+      immediately followed by `(` (e.g. chan->read.used) never expands.
+   3. Every socket created anywhere in the tree is a raw Winsock SOCKET
+      stored in an `int`; the IOCP reactor treats the int as the handle
+      directly (no get_osfhandle). close()/read()/write() therefore map to
+      closesocket()/recv()/send(), and winsock errors are translated into
+      errno so the retry loops (`errno == EAGAIN`) behave as on POSIX.
+   4. File descriptors of any other kind (CRT fds from the two loggers)
+      never exist: file logging is compiled to a no-op under MinGW.
+ ============================================================================
+ */
+
+#ifndef HEV_MINGW_H
+#define HEV_MINGW_H
+
+#if defined(__MINGW32__) && !defined(__MSYS__)
+
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
+
+/* Winsock first: windows.h and the rest must not pull the old winsock.h. */
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
+#include <io.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <errno.h>
+#include <stdarg.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <signal.h>
+#include <pthread.h>
+#include <poll.h>
+#include <sys/time.h>
+
+/* POSIX headers this tree includes, provided by win-compat-include/ (their
+ * content is winsock2-based and identical whether or not MinGW ships its
+ * own copy: ours wins the include-path race either way). */
+#include <sys/socket.h>
+#include <sys/uio.h>
+#include <sys/ioctl.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <net/if.h>
+
+/* --- names MinGW does not provide --- */
+#ifndef PF_LOCAL
+#define PF_LOCAL AF_UNIX
+#endif
+/* Always take the ioctl(fd, FIONBIO) nonblocking path: MinGW has no
+ * accept4() and its SOCK_NONBLOCK (if any) is not honored by winsock. */
+#ifdef SOCK_NONBLOCK
+#undef SOCK_NONBLOCK
+#endif
+#ifdef SOCK_CLOEXEC
+#undef SOCK_CLOEXEC
+#endif
+#ifndef MSG_DONTWAIT
+#define MSG_DONTWAIT 0
+#endif
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0
+#endif
+#ifndef WNOHANG
+#define WNOHANG 1
+#endif
+
+/* --- shims: defined before the macros that redirect to them --- */
+
+static inline int
+hev_mw_sockerr (int wsaerr)
+{
+    switch (wsaerr) {
+    case WSAEWOULDBLOCK:
+        errno = EAGAIN;
+        break;
+    case WSAEINTR:
+        errno = EINTR;
+        break;
+    case WSAECONNRESET:
+        errno = ECONNRESET;
+        break;
+    case WSAECONNABORTED:
+        errno = ECONNABORTED;
+        break;
+    case WSAETIMEDOUT:
+        errno = ETIMEDOUT;
+        break;
+    case WSAEMSGSIZE:
+        errno = EMSGSIZE;
+        break;
+    case WSAECONNREFUSED:
+        errno = ECONNREFUSED;
+        break;
+    case WSAENETUNREACH:
+    case WSAEHOSTUNREACH:
+        errno = EHOSTUNREACH;
+        break;
+    default:
+        errno = EIO;
+        break;
+    }
+    return -1;
+}
+
+static inline ssize_t
+hev_mw_recv (int fd, void *buf, size_t len, int flags)
+{
+    int res;
+
+    res = recv ((SOCKET)(intptr_t)fd, (char *)buf, (int)len, flags);
+    return res == SOCKET_ERROR ? hev_mw_sockerr (WSAGetLastError ()) : res;
+}
+
+static inline ssize_t
+hev_mw_send (int fd, const void *buf, size_t len, int flags)
+{
+    int res;
+
+    res = send ((SOCKET)(intptr_t)fd, (const char *)buf, (int)len, flags);
+    return res == SOCKET_ERROR ? hev_mw_sockerr (WSAGetLastError ()) : res;
+}
+
+static inline ssize_t
+hev_mw_recvfrom (int fd, void *buf, size_t len, int flags,
+                 struct sockaddr *addr, socklen_t *addr_len)
+{
+    int res;
+
+    res = recvfrom ((SOCKET)(intptr_t)fd, (char *)buf, (int)len, flags, addr,
+                    (int *)addr_len);
+    return res == SOCKET_ERROR ? hev_mw_sockerr (WSAGetLastError ()) : res;
+}
+
+static inline ssize_t
+hev_mw_sendto (int fd, const void *buf, size_t len, int flags,
+               const struct sockaddr *addr, socklen_t addr_len)
+{
+    int res;
+
+    res = sendto ((SOCKET)(intptr_t)fd, (const char *)buf, (int)len, flags,
+                  addr, (int)addr_len);
+    return res == SOCKET_ERROR ? hev_mw_sockerr (WSAGetLastError ()) : res;
+}
+
+static inline int
+hev_mw_connect (int fd, const struct sockaddr *addr, socklen_t addr_len)
+{
+    int res;
+
+    res = connect ((SOCKET)(intptr_t)fd, addr, (int)addr_len);
+    if (res == SOCKET_ERROR) {
+        int wsaerr = WSAGetLastError ();
+
+        if (wsaerr == WSAEWOULDBLOCK)
+            errno = EINPROGRESS;
+        else if (wsaerr == WSAEALREADY || wsaerr == WSAEINVAL)
+            errno = EALREADY;
+        else if (wsaerr == WSAEISCONN)
+            errno = EISCONN;
+        else
+            errno = EIO;
+        return -1;
+    }
+    return res;
+}
+
+static inline int
+hev_mw_accept (int fd, struct sockaddr *addr, socklen_t *addr_len)
+{
+    SOCKET res;
+
+    res = accept ((SOCKET)(intptr_t)fd, addr, (int *)addr_len);
+    return res == INVALID_SOCKET ? hev_mw_sockerr (WSAGetLastError ())
+                                 : (int)res;
+}
+
+static inline ssize_t
+hev_mw_read (int fd, void *buf, size_t len)
+{
+    /* Under this port every readable fd is a socket (file logging is a
+     * no-op), so POSIX read() is winsock recv() with no flags. */
+    return hev_mw_recv (fd, buf, len, 0);
+}
+
+static inline ssize_t
+hev_mw_write (int fd, const void *buf, size_t len)
+{
+    return hev_mw_send (fd, buf, len, 0);
+}
+
+static inline ssize_t
+hev_mw_readv (int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    int i;
+
+    for (i = 0; i < iovcnt; i++) {
+        ssize_t res = hev_mw_recv (fd, iov[i].iov_base, iov[i].iov_len, 0);
+
+        if (res < 0)
+            return total ? total : res;
+        total += res;
+        if ((size_t)res < iov[i].iov_len)
+            break;
+    }
+    return total;
+}
+
+static inline ssize_t
+hev_mw_writev (int fd, const struct iovec *iov, int iovcnt)
+{
+    ssize_t total = 0;
+    int i;
+
+    for (i = 0; i < iovcnt; i++) {
+        ssize_t res = hev_mw_send (fd, iov[i].iov_base, iov[i].iov_len, 0);
+
+        if (res < 0)
+            return total ? total : res;
+        total += res;
+        if ((size_t)res < iov[i].iov_len)
+            break;
+    }
+    return total;
+}
+
+static inline int
+hev_mw_close (int fd)
+{
+    return closesocket ((SOCKET)(intptr_t)fd) == SOCKET_ERROR ? -1 : 0;
+}
+
+static inline int
+hev_mw_pipe (int fds[2])
+{
+    return _pipe (fds, 4096, _O_BINARY);
+}
+
+static inline int
+hev_mw_ioctl (int fd, unsigned long request, ...)
+{
+    va_list ap;
+    char *arg;
+    u_long value;
+
+    if (request != FIONBIO)
+        return -1;
+
+    va_start (ap, request);
+    arg = va_arg (ap, char *);
+    va_end (ap);
+
+    value = (arg && *(int *)arg == 0) ? 0ul : 1ul;
+    return ioctlsocket ((SOCKET)(intptr_t)fd, FIONBIO, &value) == 0 ? 0 : -1;
+}
+
+static inline int
+hev_mw_openat (int dirfd, const char *pathname, int flags, ...)
+{
+    (void)dirfd;
+    (void)pathname;
+    (void)flags;
+    return -1;
+}
+
+/* AF_UNIX socketpair() does not exist on Windows. A loopback TCP pair has
+ * the same semantics for the two users of socketpair() in this tree (the
+ * stop-wakeup event pair and the DNS resolver pair): connected, bidirectional,
+ * stream, and after WSAEventSelect/ioctlsocket nonblocking like its siblings.
+ */
+static inline int
+hev_mw_socketpair (int domain, int type, int protocol, int socket_vector[2])
+{
+    struct sockaddr_in addr;
+    socklen_t addr_len;
+    SOCKET listener, peer[2];
+    u_long nonblock = 1;
+    int i;
+
+    (void)domain;
+    (void)type;
+    (void)protocol;
+
+    listener = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (listener == INVALID_SOCKET)
+        return -1;
+
+    memset (&addr, 0, sizeof (addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl (INADDR_LOOPBACK);
+    addr.sin_port = 0;
+
+    if (bind (listener, (struct sockaddr *)&addr, sizeof (addr)) == SOCKET_ERROR)
+        goto close_listener;
+    if (listen (listener, 1) == SOCKET_ERROR)
+        goto close_listener;
+
+    addr_len = sizeof (addr);
+    if (getsockname (listener, (struct sockaddr *)&addr, (int *)&addr_len) == SOCKET_ERROR)
+        goto close_listener;
+
+    peer[0] = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (peer[0] == INVALID_SOCKET)
+        goto close_listener;
+
+    if (connect (peer[0], (struct sockaddr *)&addr, sizeof (addr)) == SOCKET_ERROR) {
+        closesocket (peer[0]);
+        goto close_listener;
+    }
+
+    peer[1] = accept (listener, NULL, NULL);
+    closesocket (listener);
+    if (peer[1] == INVALID_SOCKET) {
+        closesocket (peer[0]);
+        return -1;
+    }
+
+    for (i = 0; i < 2; i++) {
+        if (ioctlsocket (peer[i], FIONBIO, &nonblock) == SOCKET_ERROR) {
+            closesocket (peer[0]);
+            closesocket (peer[1]);
+            return -1;
+        }
+    }
+
+    socket_vector[0] = (int)peer[0];
+    socket_vector[1] = (int)peer[1];
+    return 0;
+
+close_listener:
+    closesocket (listener);
+    return -1;
+}
+
+static inline int
+hev_mw_daemon (int nochld, int noclose)
+{
+    (void)nochld;
+    (void)noclose;
+    return 0;
+}
+
+/* --- redirections (function-like: bare identifiers never expand) --- */
+
+#define recv(fd, buf, len, flags) hev_mw_recv ((fd), (buf), (len), (flags))
+#define send(fd, buf, len, flags) hev_mw_send ((fd), (buf), (len), (flags))
+#define recvfrom(fd, buf, len, flags, addr, addr_len) \
+    hev_mw_recvfrom ((fd), (buf), (len), (flags), (addr), (addr_len))
+#define sendto(fd, buf, len, flags, addr, addr_len) \
+    hev_mw_sendto ((fd), (buf), (len), (flags), (addr), (addr_len))
+#define connect(fd, addr, addr_len) \
+    hev_mw_connect ((fd), (addr), (addr_len))
+#define accept(fd, addr, addr_len) \
+    hev_mw_accept ((fd), (addr), (addr_len))
+#define read(fd, buf, len) hev_mw_read ((fd), (buf), (len))
+#define write(fd, buf, len) hev_mw_write ((fd), (buf), (len))
+#define readv(fd, iov, iovcnt) hev_mw_readv ((fd), (iov), (iovcnt))
+#define writev(fd, iov, iovcnt) hev_mw_writev ((fd), (iov), (iovcnt))
+#define close(fd) hev_mw_close ((fd))
+#define pipe(fds) hev_mw_pipe ((fds))
+#define ioctl(fd, request, ...) hev_mw_ioctl ((fd), (request), __VA_ARGS__)
+#define openat(dirfd, pathname, flags, ...) \
+    hev_mw_openat ((dirfd), (pathname), (flags))
+#define socketpair(domain, type, protocol, socket_vector) \
+    hev_mw_socketpair ((domain), (type), (protocol), (socket_vector))
+#define daemon(nochld, noclose) hev_mw_daemon ((nochld), (noclose))
+
+#endif /* defined(__MINGW32__) && !defined(__MSYS__) */
+
+#endif /* HEV_MINGW_H */

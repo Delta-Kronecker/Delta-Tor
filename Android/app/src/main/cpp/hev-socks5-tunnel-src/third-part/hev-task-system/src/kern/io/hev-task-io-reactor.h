@@ -23,7 +23,7 @@ struct _HevTaskIOReactor
     };
 };
 
-#if defined(__MSYS__)
+#if defined(__MSYS__) || defined(__MINGW32__)
 #include "kern/io/hev-task-io-reactor-iocp.h"
 #elif defined(__linux__)
 #include "kern/io/hev-task-io-reactor-epoll.h"

@@ -1260,7 +1260,7 @@ proxy_port), same QUIC/UDP rejection toggles.
    from secrets e.g. `WINDOWS_CERT_BASE64`/`WINDOWS_CERT_PASSWORD`,
    `signtool` with an RFC3161 timestamp) — applied to **our own binaries
    only** (`DeltaTor.exe`, `hev-socks5-tunnel.dll`); upstream signatures on
-   `tor.exe`/`lyrebird.exe`/`wintun.dll`/`msys-2.0.dll` stay intact because
+   `tor.exe`/`lyrebird.exe`/`wintun.dll` stay intact because
    erasing them would destroy the upstream authors' attestations, version check = exe
    FileVersion (first three parts) vs tag,
    pin check = SHA-256 of the signer DER cert read back out of the shipped
@@ -1351,15 +1351,19 @@ proxy_port), same QUIC/UDP rejection toggles.
   leftovers so a killed run can never leave a black-holing `0.0.0.0/1`
   behind until reboot.
 - **Native build:** `Windows/native/build-hev.sh` compiles the vendored tree
-  (`make static` + one `gcc -shared` link) in the CI MSYS2 step — the only
-  Windows toolchain upstream supports (POSIX sources + `__MSYS__`-gated
-  backend/IOCP reactor) — producing `hev-socks5-tunnel.dll` plus the
-  **pinned** `msys-2.0.dll` runtime from the official msys2-base
-  2024-07-27 snapshot (msys2-runtime 3.5.x, Git-for-Windows era, Win7+
-  compatible — NOT the CI image's newest runtime, whose DllMain fails on
-  older client Windows with 0x8007045A), both next to the exe; CI
-  smoke-tests that the DLL loads in a plain Win32 host; `wintun.dll`
-  comes pinned from `fetch-binaries.ps1`. Adapter name comes from a
+  (`make static` + one `gcc -shared` link) in the CI MSYS2 step using the
+  **MinGW-w64 toolchain in the MINGW64 environment** — a local port of
+  upstream's MSYS2-only sources (compat header force-included into every TU
+  plus stub POSIX headers: redirect `recv/send/close/connect/…` to Winsock,
+  raw SOCKET handles straight into the `__MINGW32__` IOCP reactor, lwip
+  stays `NO_SYS=1`, file-logger/stack-detector/`hev_exec_run` become no-ops)
+  — producing `hev-socks5-tunnel.dll` that links **only system DLLs
+  (ws2_32, iphlpapi, winpthread, …) — no `msys-2.0.dll` at all**, the cygwin
+  runtime whose DllMain was refused in user processes (0x8007045A), both
+  next to the exe; CI smoke-tests that the DLL loads in a plain Win32 host,
+  from a GUI-subsystem .NET host, and that a full start/stop cycle runs
+  in-process (`Windows/tests/NativeSmoke`); `wintun.dll` comes pinned from
+  `fetch-binaries.ps1`. Adapter name comes from a
   Windows-only `name:` line in the YAML config (Android omits it; the
   Windows backend cannot take a null name).
 
@@ -1442,7 +1446,7 @@ Windows/
 │   │                           #   (NO geo/ dir — geo-bypass ships data-less, as on Android)
 │   └── app/                    # icons
 ├── (build output)              # src/*/bin/Release/net8.0-windows/: DeltaTor.exe +
-│                               #   hev-socks5-tunnel.dll + msys-2.0.dll + wintun.dll,
+│                               #   hev-socks5-tunnel.dll + wintun.dll (system DLLs only),
 │                               #   + fetched: tor.exe, lyrebird.exe, data/geoip(+geoip6) → CI zips it
 └── release-signing-cert.sha256 # pinned Authenticode signer digest (parity with Android)
 ```
@@ -1515,7 +1519,7 @@ are only partially audited (marked inline).
 - [x] TorSocksBridge: no-auth SOCKS5 CONNECT, 32768 buffers, 8-thread DNS pool + 5-min cache over Tor, repoint on recovery, DomainRouter bypass, LocalProxyAuth RFC 1929, ProtocolSniffer fallback
 - [x] Snowflake: runs **through lyrebird** (managed-PT `CMETHOD snowflake`, no separate binary); built-in/AMP/SMART modes expressed as a synthetic bridge line with the same broker/front/STUN/uTLS/fingerprint constants ✓; torrc rules incl. no Socks5Proxy+CTP combo ✓
 - [x] Binaries: fetch script downloads Tor Expert Bundle **x86_64-15.0.25** + `wintun.dll`, SHA-256 verified, fail on mismatch (CI green); `tor.exe`/`lyrebird.exe` versions match the pin
-- [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2) + `msys-2.0.dll` + `wintun.dll` land next to the exe ✓; `TunnelEngine.Impl = WindowsTunnel` ✓; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present ✓; stats tx/rx feed the same UI counters — all runtime except the marked parts
+- [ ] Full tunnel: `hev-socks5-tunnel.dll` built in CI (MSYS2/MinGW-w64, no `msys-2.0.dll`) + `wintun.dll` land next to the exe ✓; CI load smoke tests (plain host + GUI host) + `NativeSmoke` start/stop gate ✓; `TunnelEngine.Impl = WindowsTunnel` ✓; Wintun adapter `DeltaTor`, MTU 1280, 10.255.255.1 + fd00::1; catch-all `0.0.0.0/1` + `128.0.0.0/1`, DNS 8.8.8.8; bypass `/32`s for tor/lyrebird destinations with seed-then-watch learning; `tun-routes.txt` crash recovery; elevation manifest present ✓; stats tx/rx feed the same UI counters — all runtime except the marked parts
 - [x] Full tunnel known limitation (documented, not a bug): Snowflake does not work through the tunnel on Windows — Proxy Only is the supported mode for it (documented in PLAN §3, the README Windows section and the checklist)
 - [x] DomainRouter dormant: `DISABLED` default, no UI exposure, no `geo/` assets shipped (hooks still wired in the bridge)
 - [x] Notifications/toasts: same wording everywhere — "Connecting…", "Connecting via X …", "Establishing VPN …", "Turning the VPN off …", "Stopping", "Reconnecting…", "Connected via X · Tor Network", "Restarting in auto …", traffic line (`DeltaTor — Connected|↑ x/s  ↓ y/s` + totals, identical reconnecting variant), update banner "NEW RELEASE vX.Y.Z"; tray menu actions present (open/disconnect/stop/start)
