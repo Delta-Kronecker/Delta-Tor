@@ -573,13 +573,38 @@ hev_mw_dup2 (int oldfd, int newfd)
 
 #endif /* HEV_MW_SOCKET_API */
 
-/* The task scheduler's context switch is written against the BSD-style
- * _setjmp/_longjmp (one/two args); the MS CRT only offers setjmp/longjmp.
- * setjmp.h is pre-included above, so its own setjmp/longjmp macros (if any)
- * resolve the real calls; blue-painting stops the chain from looping back
- * into _setjmp here. */
-#define _setjmp(env) setjmp (env)
-#define _longjmp(env, val) longjmp ((env), (val))
+/* Coroutine-safe setjmp/longjmp.
+ *
+ * hev-task-system switches coroutines by longjmping between the kernel
+ * stack and each task's heap-allocated stack. MSVCRT's longjmp validates
+ * the destination is an ancestor frame on the same stack and rejects such a
+ * jump (access violation on first resume). Cygwin/newlib's _setjmp/_longjmp
+ * are plain register save/restore, so upstream works under MSYS but not
+ * MinGW. We therefore supply our own x86_64 assembly (see
+ * hev-mingw-setjmp-x86_64.S) that saves the Win64 callee-saved set and
+ * RSP/RIP with no stack validation, and shadow the jmp_buf type to match.
+ *
+ * The struct layout must match that assembly, byte for byte. */
+typedef struct
+{
+    unsigned long long rbx, rbp, rsi, rdi;
+    unsigned long long r12, r13, r14, r15;
+    unsigned long long rsp, rip;
+    unsigned long long xmm[20]; /* xmm6..xmm15, 16 bytes each */
+    unsigned int mxcsr;
+    unsigned short x87cw;
+} __attribute__((aligned (16))) hev_mw_jmp_buf;
+
+int hev_mw_setjmp (hev_mw_jmp_buf *env);
+void hev_mw_longjmp (hev_mw_jmp_buf *env, int val)
+    __attribute__((noreturn));
+
+/* Shadow the CRT jmp_buf (already include-guarded above) so the task-system's
+ * `jmp_buf context;` fields use our buffer, and route the BSD-style
+ * _setjmp/_longjmp it calls to our implementations. */
+#define jmp_buf hev_mw_jmp_buf
+#define _setjmp(env) hev_mw_setjmp (&(env))
+#define _longjmp(env, val) hev_mw_longjmp (&(env), (val))
 
 #endif /* defined(__MINGW32__) && !defined(__MSYS__) */
 
