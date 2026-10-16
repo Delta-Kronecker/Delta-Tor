@@ -49,6 +49,19 @@ internal static class Program
         long rdx = Marshal.ReadInt64(ctx, 0x88);
         long rax = Marshal.ReadInt64(ctx, 0x78);
         Console.Error.WriteLine($"NATIVE CTX: rip=0x{rip:X} rsp=0x{rsp:X} rcx=0x{rcx:X} rdx=0x{rdx:X} rax=0x{rax:X}");
+
+        // Resolve RIP to module + RVA (GetModuleHandleExW returns the module
+        // base in hModule when called with FROM_ADDRESS), so the exact
+        // function inside hev-socks5-tunnel.dll can be identified.
+        foreach (var probe in new[] { rip, rcx, rax })
+        {
+            if (probe != 0 && GetModuleHandleExW(0x3, (IntPtr)probe, out var m))
+            {
+                var sb = new StringBuilder(260);
+                GetModuleFileNameW(m, sb, sb.Capacity);
+                Console.Error.WriteLine($"NATIVE MOD @0x{probe:X}: {Path.GetFileName(sb.ToString())} base=0x{m.ToInt64():X} rva=0x{probe - m.ToInt64():X}");
+            }
+        }
         return 0; // EXCEPTION_CONTINUE_SEARCH
     }
 
