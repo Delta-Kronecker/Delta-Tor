@@ -96,6 +96,9 @@ public sealed class MainForm : Form
             using var log = new LogForm();
             log.ShowDialog(this);
         };
+        // The bottom pills step aside while the drawer owns the screen and
+        // come back on the first paint after it has slid away.
+        _drawer.Closed += () => Invalidate();
 
         if (TrayIcon.LoadAppIcon() is { } appIcon) Icon = appIcon;
         _tray = new TrayIcon(this);
@@ -129,6 +132,14 @@ public sealed class MainForm : Form
             _tray.ShowRelease(pending);
         }
         RefreshFromState();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // The system caption is the one piece of chrome this owner-drawn
+        // window cannot paint itself; DWM paints it dark to match.
+        DarkTitleBar.Apply(Handle);
     }
 
     protected override void OnResize(EventArgs e)
@@ -369,6 +380,7 @@ public sealed class MainForm : Form
         if (_menuRect.Contains(e.Location))
         {
             _drawer.Open();
+            Invalidate(); // the bottom pills vanish under the open drawer
             return;
         }
 
@@ -790,7 +802,9 @@ public sealed class MainForm : Form
 
     /// <summary>BottomPanel (MainActivity 1579): action pills (kept in place
     /// during teardown, just relabeling and dimming), the two speed cards,
-    /// the two byte cards and the uptime/exit info pills, bottom-centered.</summary>
+    /// the two byte cards and the uptime/exit info pills, bottom-centered.
+    /// Compact pass: 34px pills, H2 values and tighter padding so the block
+    /// gives the ring and the state word room to breathe.</summary>
     private void PaintBottomPanel(Graphics g)
     {
         var s = _state;
@@ -801,33 +815,32 @@ public sealed class MainForm : Form
 
         using var capBold = new Font(
             DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
-        using var titleBold = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.TitlePt, FontStyle.Bold);
-        using var bodyBold = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
+        using var valueBold = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.H2Pt, FontStyle.Bold);
         var labelLine = g.MeasureString("A", capBold).Height;
-        var valueLine = g.MeasureString("A", bodyBold).Height;
-        var titleLine = g.MeasureString("A", titleBold).Height;
+        var valueLine = g.MeasureString("A", valueBold).Height;
 
-        var infoH = 7f + labelLine + 3f + valueLine + 7f;
-        var statH = 8f + Math.Max(15f, labelLine) + 4f + titleLine + 8f;
+        var infoH = 5f + labelLine + 2f + valueLine + 5f;
+        var statH = 6f + Math.Max(13f, labelLine) + 3f + valueLine + 6f;
         var busy = s.Connecting || s.Stopping;
+        _proxyLive = s.SocksEndpoint.Length > 0;
 
         // The action row is never removed. During teardown the left pill keeps
         // its slot and just relabels to START VPN, dimmed until the cores are
         // gone: a start click there would race the teardown for the ports, but
         // hiding the row made both buttons blink out and back in on every stop.
         // In proxy mode it becomes the endpoint pill instead of a lying
-        // START VPN the engine would decline.
-        var pillsVisible = s.Connected || s.TorRunning || s.Stopping;
-        var pillsH = pillsVisible ? 40f + 8f : 0f;
-        var total = 4f + pillsH + statH + 8f + statH + 8f + infoH + 9f + 12f;
+        // START VPN the engine would decline. An open drawer owns the screen,
+        // so the row steps aside while it is up and returns on the next paint
+        // after it closes.
+        var pillsVisible = (s.Connected || s.TorRunning || s.Stopping) && !_drawer.IsOpen;
+        var pillsH = pillsVisible ? 34f + 6f : 0f;
+        var total = 4f + pillsH + statH + 6f + statH + 6f + infoH + 10f;
         var y = ClientSize.Height - total;
 
         if (pillsVisible)
         {
             var py = y + 4f;
-            _proxyLive = s.SocksEndpoint.Length > 0;
             _pillAction.Label = _proxyLive
                 ? "SOCKS5 " + StripScheme(s.SocksEndpoint)
                 : s.Connected && !s.Stopping
@@ -836,12 +849,12 @@ public sealed class MainForm : Form
             _pillAction.Visible = true;
             _pillAction.Enabled = !busy;
             _pillAction.SetBounds(
-                (int)padX, (int)py, (int)halfW, 40);
+                (int)padX, (int)py, (int)halfW, 34);
             _pillDisconnect.Visible = true;
             _pillDisconnect.Enabled = !busy;
             _pillDisconnect.SetBounds(
-                (int)(padX + halfW + 10f), (int)py, (int)halfW, 40);
-            y = py + 40f + 8f;
+                (int)(padX + halfW + 10f), (int)py, (int)halfW, 34);
+            y = py + 34f + 6f;
         }
         else
         {
@@ -852,17 +865,17 @@ public sealed class MainForm : Form
         // Speed: live on the home screen itself, not only in a notification.
         DrawStatCard(g, padX, y, statW, statH, "SPEED DOWN",
             s.Connected ? UiHelpers.FormatBytes((long)s.RxSpeed) + "/s" : "--",
-            DeltaTorTheme.Green, false, capBold, titleBold);
+            DeltaTorTheme.Green, false, capBold, valueBold);
         DrawStatCard(g, padX + statW + 8f, y, statW, statH, "SPEED UP",
             s.Connected ? UiHelpers.FormatBytes((long)s.TxSpeed) + "/s" : "--",
-            DeltaTorTheme.Accent, true, capBold, titleBold);
-        y += statH + 8f;
+            DeltaTorTheme.Accent, true, capBold, valueBold);
+        y += statH + 6f;
 
         DrawStatCard(g, padX, y, statW, statH, "DOWNLOADED",
-            UiHelpers.FormatBytes(s.RxBytes), DeltaTorTheme.Green, false, capBold, titleBold);
+            UiHelpers.FormatBytes(s.RxBytes), DeltaTorTheme.Green, false, capBold, valueBold);
         DrawStatCard(g, padX + statW + 8f, y, statW, statH, "UPLOADED",
-            UiHelpers.FormatBytes(s.TxBytes), DeltaTorTheme.Accent, true, capBold, titleBold);
-        y += statH + 8f;
+            UiHelpers.FormatBytes(s.TxBytes), DeltaTorTheme.Accent, true, capBold, valueBold);
+        y += statH + 6f;
 
         var uptime = s.Connected
             ? UiHelpers.FormatDuration(
@@ -873,8 +886,8 @@ public sealed class MainForm : Form
             : s.Connected
                 ? "Locating …"
                 : "--";
-        DrawInfoPill(g, padX, y, statW, infoH, "UP TIME", uptime, capBold, bodyBold);
-        DrawInfoPill(g, padX + statW + 8f, y, statW, infoH, "EXIT", exit, capBold, bodyBold);
+        DrawInfoPill(g, padX, y, statW, infoH, "UP TIME", uptime, capBold, valueBold);
+        DrawInfoPill(g, padX + statW + 8f, y, statW, infoH, "EXIT", exit, capBold, valueBold);
     }
 
     /// <summary>Kotlin substringAfter("://"): the endpoint without its scheme.</summary>
@@ -888,10 +901,10 @@ public sealed class MainForm : Form
     /// value, SurfaceAlt→Surface tile with a Border hairline.</summary>
     private void DrawStatCard(
         Graphics g, float x, float y, float w, float h,
-        string label, string value, Color accent, bool up, Font capFont, Font titleFont)
+        string label, string value, Color accent, bool up, Font capFont, Font valueFont)
     {
         var rect = new RectangleF(x, y, w, h);
-        using (var path = DrawUtil.RoundedRect(rect, 14f))
+        using (var path = DrawUtil.RoundedRect(rect, 11f))
         {
             using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
                 rect, DeltaTorTheme.SurfaceAlt, DeltaTorTheme.Surface, 90f))
@@ -901,16 +914,16 @@ public sealed class MainForm : Form
         }
 
         var labelLine = g.MeasureString(label, capFont).Height;
-        var rowH = Math.Max(15f, labelLine);
-        Icons.Arrow(g, new RectangleF(x + 12f, y + 8f + (rowH - 15f) / 2f, 15f, 15f),
+        var rowH = Math.Max(13f, labelLine);
+        Icons.Arrow(g, new RectangleF(x + 10f, y + 6f + (rowH - 13f) / 2f, 13f, 13f),
             accent, up);
         using (var brush = new SolidBrush(DeltaTorTheme.Muted))
             DrawUtil.DrawSpaced(g, label, capFont, brush,
-                x + 12f + 15f + 7f, y + 8f + (rowH - labelLine) / 2f,
-                w - 12f * 2f - 22f, 1.2f);
+                x + 10f + 13f + 6f, y + 6f + (rowH - labelLine) / 2f,
+                w - 10f * 2f - 19f, 1.2f);
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
-            DrawUtil.DrawSpaced(g, value, titleFont, brush,
-                x + 12f, y + 8f + rowH + 4f, w - 24f, 0.4f);
+            DrawUtil.DrawSpaced(g, value, valueFont, brush,
+                x + 10f, y + 6f + rowH + 3f, w - 20f, 0.4f);
     }
 
     /// <summary>InfoPill (MainActivity 1797): label over value on a Surface
@@ -920,7 +933,7 @@ public sealed class MainForm : Form
         string label, string value, Font capFont, Font valueFont)
     {
         var rect = new RectangleF(x, y, w, h);
-        using (var path = DrawUtil.RoundedRect(rect, 12f))
+        using (var path = DrawUtil.RoundedRect(rect, 10f))
         {
             using var fill = new SolidBrush(DeltaTorTheme.Surface);
             g.FillPath(fill, path);
@@ -930,9 +943,9 @@ public sealed class MainForm : Form
 
         var labelLine = g.MeasureString(label, capFont).Height;
         using (var brush = new SolidBrush(DeltaTorTheme.Muted))
-            DrawUtil.DrawSpaced(g, label, capFont, brush, x + 12f, y + 7f, w - 24f, 1.2f);
+            DrawUtil.DrawSpaced(g, label, capFont, brush, x + 10f, y + 5f, w - 20f, 1.2f);
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
             DrawUtil.DrawSpaced(g, value, valueFont, brush,
-                x + 12f, y + 7f + labelLine + 3f, w - 24f, 0f);
+                x + 10f, y + 5f + labelLine + 2f, w - 20f, 0f);
     }
 }
