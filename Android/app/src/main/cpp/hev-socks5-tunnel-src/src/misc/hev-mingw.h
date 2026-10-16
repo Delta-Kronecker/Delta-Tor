@@ -111,6 +111,12 @@
 #ifndef SIGCHLD
 #define SIGCHLD 17
 #endif
+/* MinGW's fcntl.h has no O_NONBLOCK (CRT files are always blocking). The
+ * only uses are hev_task_io_open/openat OR-ing it into open() flags, where a
+ * zero value is harmless - file descriptors here are the no-op loggers. */
+#ifndef O_NONBLOCK
+#define O_NONBLOCK 0
+#endif
 
 /* --- shims: defined before the macros that redirect to them --- */
 

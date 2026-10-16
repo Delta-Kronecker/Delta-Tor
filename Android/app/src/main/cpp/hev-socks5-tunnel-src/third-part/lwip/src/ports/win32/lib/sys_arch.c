@@ -43,6 +43,8 @@
 #ifdef _MSC_VER
 #pragma warning (pop)
 #endif
+/* MinGW: CryptAcquireContext/CryptGenRandom live in wincrypt.h (advapi32). */
+#include <wincrypt.h>
 #include <time.h>
 
 #include <lwip/opt.h>
