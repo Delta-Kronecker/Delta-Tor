@@ -57,6 +57,7 @@
 #include <string.h>
 #include <time.h>
 #include <signal.h>
+#include <setjmp.h>
 #include <pthread.h>
 #include <poll.h>
 #include <sys/time.h>
@@ -538,6 +539,13 @@ hev_mw_dup2 (int oldfd, int newfd)
 #define usleep(usec) hev_mw_usleep ((usec))
 #define dup(fd) hev_mw_dup ((fd))
 #define dup2(oldfd, newfd) hev_mw_dup2 ((oldfd), (newfd))
+/* The task scheduler's context switch is written against the BSD-style
+ * _setjmp/_longjmp (one/two args); the MS CRT only offers setjmp/longjmp.
+ * setjmp.h is pre-included above, so its own setjmp/longjmp macros (if any)
+ * resolve the real calls; blue-painting stops the chain from looping back
+ * into _setjmp here. */
+#define _setjmp(env) setjmp (env)
+#define _longjmp(env, val) longjmp ((env), (val))
 
 #endif /* defined(__MINGW32__) && !defined(__MSYS__) */
 
