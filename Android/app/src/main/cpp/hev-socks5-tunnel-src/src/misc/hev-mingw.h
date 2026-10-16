@@ -443,7 +443,7 @@ hev_mw_socketpair (int domain, int type, int protocol, int socket_vector[2])
 
     listener = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (listener == INVALID_SOCKET)
-        return -1;
+        return hev_mw_sockerr (WSAGetLastError ());
 
     memset (&addr, 0, sizeof (addr));
     addr.sin_family = AF_INET;
@@ -451,35 +451,38 @@ hev_mw_socketpair (int domain, int type, int protocol, int socket_vector[2])
     addr.sin_port = 0;
 
     if (bind (listener, (struct sockaddr *)&addr, sizeof (addr)) == SOCKET_ERROR)
-        goto close_listener;
+        goto err_listener;
     if (listen (listener, 1) == SOCKET_ERROR)
-        goto close_listener;
+        goto err_listener;
 
     addr_len = sizeof (addr);
     if (getsockname (listener, (struct sockaddr *)&addr, (int *)&addr_len) == SOCKET_ERROR)
-        goto close_listener;
+        goto err_listener;
 
     peer[0] = socket (AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (peer[0] == INVALID_SOCKET)
-        goto close_listener;
+        goto err_listener;
 
     if (connect (peer[0], (struct sockaddr *)&addr, sizeof (addr)) == SOCKET_ERROR) {
+        int err = WSAGetLastError ();
         closesocket (peer[0]);
-        goto close_listener;
+        return hev_mw_sockerr (err);
     }
 
     peer[1] = accept (listener, NULL, NULL);
     closesocket (listener);
     if (peer[1] == INVALID_SOCKET) {
+        int err = WSAGetLastError ();
         closesocket (peer[0]);
-        return -1;
+        return hev_mw_sockerr (err);
     }
 
     for (i = 0; i < 2; i++) {
         if (ioctlsocket (peer[i], FIONBIO, &nonblock) == SOCKET_ERROR) {
+            int err = WSAGetLastError ();
             closesocket (peer[0]);
             closesocket (peer[1]);
-            return -1;
+            return hev_mw_sockerr (err);
         }
     }
 
@@ -487,9 +490,12 @@ hev_mw_socketpair (int domain, int type, int protocol, int socket_vector[2])
     socket_vector[1] = (int)peer[1];
     return 0;
 
-close_listener:
-    closesocket (listener);
-    return -1;
+err_listener:
+    {
+        int err = WSAGetLastError ();
+        closesocket (listener);
+        return hev_mw_sockerr (err);
+    }
 }
 
 static inline int
