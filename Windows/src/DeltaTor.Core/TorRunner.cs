@@ -785,9 +785,19 @@ public sealed partial class TorRunner
         return torrcFile;
     }
 
-    /// <summary>Quote a path for torrc when it contains spaces (common on Windows).</summary>
-    private static string Quote(string path) =>
-        path.Contains(' ') ? $"\"{path}\"" : path;
+    /// <summary>
+    /// Format a filesystem path for torrc. Always forward slashes: inside a
+    /// quoted value tor treats a backslash as an escape character, so
+    /// `C:\Users\...` fails parsing with "Invalid escape sequence in quoted
+    /// string" and Tor exits ("Reading config failed"). Windows APIs accept
+    /// `C:/...` unchanged. Quoted only when it contains spaces (an extracted
+    /// folder name like "Program Files (x86)").
+    /// </summary>
+    private static string Quote(string path)
+    {
+        var p = path.Replace('\\', '/');
+        return p.Contains(' ') ? $"\"{p}\"" : p;
+    }
 
     // --- Helpers ---
 
