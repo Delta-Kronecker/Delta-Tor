@@ -24,43 +24,57 @@ internal static class Program
 
     private static int VexHandlerImpl(IntPtr exceptionInfo)
     {
-        // exceptionInfo is PEXCEPTION_POINTERS: ExceptionRecord (ptr) at +0,
-        // ContextRecord (ptr) at +8. The EXCEPTION_RECORD itself has
-        // ExceptionCode (uint) at +0 and ExceptionAddress (void*) at +8.
-        var record = Marshal.ReadIntPtr(exceptionInfo, 0);
-        var code = Marshal.ReadInt32(record, 0);
-        var addr = Marshal.ReadIntPtr(record, 8);
-        Console.Error.WriteLine($"NATIVE FAULT: code=0x{code:X8} address=0x{addr.ToInt64():X}");
-        if (GetModuleHandleExW(0x3 /* GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS */, addr, out var mod))
+        try
         {
-            var sb = new StringBuilder(260);
-            GetModuleFileNameW(mod, sb, sb.Capacity);
-            Console.Error.WriteLine($"NATIVE FAULT module: {sb}");
-        }
+            // exceptionInfo is PEXCEPTION_POINTERS: ExceptionRecord (ptr) at
+            // +0, ContextRecord (ptr) at +8. EXCEPTION_RECORD has
+            // ExceptionCode (uint) at +0 and ExceptionAddress (void*) at +8.
+            var record = Marshal.ReadIntPtr(exceptionInfo, 0);
+            var code = Marshal.ReadInt32(record, 0);
+            var addr = Marshal.ReadIntPtr(record, 8);
+            Console.Error.WriteLine($"NATIVE FAULT: code=0x{code:X8} address=0x{addr.ToInt64():X}");
 
-        // Dump the CONTEXT registers so the faulting instruction can be
-        // located (RIP) and the source of a NULL pointer identified (RCX/RDX
-        // on Win64 hold the first two args, RSP the stack). x64 CONTEXT field
-        // offsets: Rax 0x78, Rcx 0x80, Rdx 0x88, Rsp 0x98, Rip 0xF8.
-        var ctx = Marshal.ReadIntPtr(exceptionInfo, 8);
-        long rip = Marshal.ReadInt64(ctx, 0xF8);
-        long rsp = Marshal.ReadInt64(ctx, 0x98);
-        long rcx = Marshal.ReadInt64(ctx, 0x80);
-        long rdx = Marshal.ReadInt64(ctx, 0x88);
-        long rax = Marshal.ReadInt64(ctx, 0x78);
-        Console.Error.WriteLine($"NATIVE CTX: rip=0x{rip:X} rsp=0x{rsp:X} rcx=0x{rcx:X} rdx=0x{rdx:X} rax=0x{rax:X}");
-
-        // Resolve RIP to module + RVA (GetModuleHandleExW returns the module
-        // base in hModule when called with FROM_ADDRESS), so the exact
-        // function inside hev-socks5-tunnel.dll can be identified.
-        foreach (var probe in new[] { rip, rcx, rax })
-        {
-            if (probe != 0 && GetModuleHandleExW(0x3, (IntPtr)probe, out var m))
+            // x64 CONTEXT field offsets (Windows SDK winnt.h):
+            //   Rax 0x78 Rcx 0x80 Rdx 0x88 Rbx 0x90 Rsp 0x98 Rbp 0xA0
+            //   Rsi 0xA8 Rdi 0xB0 R8  0xB8 R9  0xC0 R10 0xC8 R11 0xD0
+            //   R12 0xD8 R13 0xE0 R14 0xE8 R15 0xF0 Rip 0xF8
+            var ctx = Marshal.ReadIntPtr(exceptionInfo, 8);
+            string[] names = { "rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi",
+                               "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rip" };
+            int[] offs = { 0x78, 0x80, 0x88, 0x90, 0x98, 0xA0, 0xA8, 0xB0,
+                           0xB8, 0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8 };
+            var regs = new long[names.Length];
+            var sb = new System.Text.StringBuilder("NATIVE CTX:");
+            for (int i = 0; i < names.Length; i++)
             {
-                var sb = new StringBuilder(260);
-                GetModuleFileNameW(m, sb, sb.Capacity);
-                Console.Error.WriteLine($"NATIVE MOD @0x{probe:X}: {Path.GetFileName(sb.ToString())} base=0x{m.ToInt64():X} rva=0x{probe - m.ToInt64():X}");
+                regs[i] = Marshal.ReadInt64(ctx, offs[i]);
+                sb.Append(' ').Append(names[i]).Append("=0x").Append(regs[i].ToString("X"));
             }
+            Console.Error.WriteLine(sb.ToString());
+            long rip = regs[16];
+
+            // Raw instruction bytes at RIP so the faulting instruction can be
+            // disassembled locally (objdump -b binary -m i386:x86-64) even
+            // though the DLL only exists in CI.
+            var bytes = new byte[24];
+            Marshal.Copy((IntPtr)rip, bytes, 0, bytes.Length);
+            Console.Error.WriteLine("NATIVE BYTES: " + string.Concat(bytes.Select(b => b.ToString("x2"))));
+
+            // Which module owns RIP (module base = hModule with FROM_ADDRESS).
+            if (GetModuleHandleExW(0x3 /* FROM_ADDRESS */, (IntPtr)rip, out var mod))
+            {
+                var fn = new System.Text.StringBuilder(260);
+                GetModuleFileNameW(mod, fn, fn.Capacity);
+                Console.Error.WriteLine($"NATIVE MOD: {System.IO.Path.GetFileName(fn.ToString())} base=0x{mod.ToInt64():X} rip_rva=0x{rip - mod.ToInt64():X}");
+            }
+            else
+            {
+                Console.Error.WriteLine($"NATIVE MOD: GetModuleHandleExW failed err={Marshal.GetLastWin32Error()}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"NATIVE VEX-ERROR: {ex.GetType().Name}: {ex.Message}");
         }
         return 0; // EXCEPTION_CONTINUE_SEARCH
     }
