@@ -37,6 +37,18 @@ internal static class Program
             GetModuleFileNameW(mod, sb, sb.Capacity);
             Console.Error.WriteLine($"NATIVE FAULT module: {sb}");
         }
+
+        // Dump the CONTEXT registers so the faulting instruction can be
+        // located (RIP) and the source of a NULL pointer identified (RCX/RDX
+        // on Win64 hold the first two args, RSP the stack). x64 CONTEXT field
+        // offsets: Rax 0x78, Rcx 0x80, Rdx 0x88, Rsp 0x98, Rip 0xF8.
+        var ctx = Marshal.ReadIntPtr(exceptionInfo, 8);
+        long rip = Marshal.ReadInt64(ctx, 0xF8);
+        long rsp = Marshal.ReadInt64(ctx, 0x98);
+        long rcx = Marshal.ReadInt64(ctx, 0x80);
+        long rdx = Marshal.ReadInt64(ctx, 0x88);
+        long rax = Marshal.ReadInt64(ctx, 0x78);
+        Console.Error.WriteLine($"NATIVE CTX: rip=0x{rip:X} rsp=0x{rsp:X} rcx=0x{rcx:X} rdx=0x{rdx:X} rax=0x{rax:X}");
         return 0; // EXCEPTION_CONTINUE_SEARCH
     }
 
