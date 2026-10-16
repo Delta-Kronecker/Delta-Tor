@@ -14,6 +14,7 @@
 #define __HEV_RBTREE_H__
 
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct _HevRBTree HevRBTree;
 typedef struct _HevRBTreeNode HevRBTreeNode;
@@ -25,28 +26,35 @@ struct _HevRBTree
 
 struct _HevRBTreeNode
 {
-    unsigned long __parent_color;
+    /*
+     * Pack the parent pointer and color into one pointer-sized word.
+     * The field must be as wide as a pointer: on LLP64 (Windows/MinGW)
+     * `unsigned long` is only 32 bits, which truncates a 64-bit parent
+     * pointer and faults on the first tree walk. uintptr_t is pointer-
+     * width on every ABI, so use it instead of `unsigned long`.
+     */
+    uintptr_t __parent_color;
     HevRBTreeNode *right;
     HevRBTreeNode *left;
-} __attribute__ ((aligned (sizeof (long))));
+} __attribute__ ((aligned (sizeof (void *))));
 
 static inline int
 hev_rbtree_node_empty (HevRBTreeNode *node)
 {
-    return node->__parent_color == (unsigned long)node;
+    return node->__parent_color == (uintptr_t)node;
 }
 
 static inline HevRBTreeNode *
 hev_rbtree_node_parent (HevRBTreeNode *node)
 {
-    return (HevRBTreeNode *)(node->__parent_color & ~3);
+    return (HevRBTreeNode *)(node->__parent_color & ~(uintptr_t)3);
 }
 
 static inline void
 hev_rbtree_node_link (HevRBTreeNode *node, HevRBTreeNode *parent,
                       HevRBTreeNode **link)
 {
-    node->__parent_color = (unsigned long)parent;
+    node->__parent_color = (uintptr_t)parent;
     node->left = node->right = NULL;
 
     *link = node;
