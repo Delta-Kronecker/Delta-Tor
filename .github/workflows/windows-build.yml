@@ -137,6 +137,21 @@ jobs:
             exit 1
           }
 
+      # When the smoke test crashes, name the faulting function: the test
+      # prints "rip_rva=0x..." for the instruction that faulted, so dump the
+      # symbol table and a disassembly window around it. Runs on failure only,
+      # so a green build does not pay for it.
+      - name: Identify the faulting native function
+        if: failure()
+        shell: msys2 {0}
+        run: |
+          DLL=Windows/native/hev-socks5-tunnel/hev-socks5-tunnel.dll
+          if [ ! -f "$DLL" ]; then echo "no DLL to inspect"; exit 0; fi
+          echo "=== symbols by address (first 60) ==="
+          nm -n "$DLL" | head -60
+          echo "=== disassembly around fault RVA 0x1530 ==="
+          objdump -d --start-address=0x1480 --stop-address=0x1640 "$DLL"
+
       - name: Package the three artifacts
         shell: pwsh
         run: |
