@@ -81,7 +81,10 @@ public sealed class TrayIcon : IDisposable
     public void UpdateMenu(VpnState s)
     {
         _stop.Visible = s.Connected;
-        _start.Visible = !s.Connected && s.TorRunning && !Config.ProxyOnlyMode;
+        // Tunnel start is only meaningful in Tun mode; system-proxy and
+        // proxy-only modes never bring the tunnel up (Disconnect ends those).
+        _start.Visible = !s.Connected && s.TorRunning &&
+            !Config.ProxyOnlyMode && !Config.SystemProxyMode;
     }
 
     /// <summary>

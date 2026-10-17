@@ -6,7 +6,7 @@ namespace DeltaTor.App;
 /// <summary>
 /// The connection log screen (MainActivity LogScreen, line 3866): a borderless
 /// push-over form with the ScreenTopBar and COPY action, the recording-off
-/// notice, the transport and severity filter chips, and the grouped, filtered
+/// notice, the transport and severity filter dropdowns, and the grouped, filtered
 /// list painted newest-last with auto-follow at the bottom.
 ///
 /// Engine notes (this is a from-scratch rewrite of the first port):
@@ -16,9 +16,9 @@ namespace DeltaTor.App;
 /// 4500-line log scrolls and repaints at the cost of the visible slice.
 /// A per-unique-line measure cache absorbs the repetition of bootstrap
 /// output. The timer flushes the producer and repaints only when the
-/// snapshot reference actually moved — an idle screen paints nothing. Chip
-/// rows wrap instead of scrolling sideways, so every chip is reachable under
-/// the wheel and the wheel always scrolls the list.
+/// snapshot reference actually moved — an idle screen paints nothing. The
+/// filters are two dropdowns; an open one is a modal layer that owns clicks
+/// and closes on the wheel, Escape or an outside click.
 /// </summary>
 public sealed class LogForm : Form
 {
@@ -32,6 +32,17 @@ public sealed class LogForm : Form
     /// <summary>A node pinned at content Y with its measured height.</summary>
     private readonly record struct Placed(LogNode Node, float Y, float H);
 
+    /// <summary>An open filter dropdown: its trigger, options and the row
+    /// rects painted last frame (clicks are resolved against those).</summary>
+    private sealed class Drop
+    {
+        public required List<(string Key, string Label)> Options { get; init; }
+        public required RectangleF Trigger { get; init; }
+        public required string Value { get; init; }
+        public required Action<string> OnSelect { get; init; }
+        public readonly List<(RectangleF Rect, string Key)> Rows = new();
+    }
+
     private readonly Font _fMono = new("Consolas", 7.5f);
     private readonly System.Windows.Forms.Timer _tick = new() { Interval = 200 };
 
@@ -42,6 +53,10 @@ public sealed class LogForm : Form
     private char? _filter;
     private bool _copied;
     private long _copiedAt;
+
+    private Drop? _drop;
+    private RectangleF _tTrig;
+    private RectangleF _fTrig;
 
     private Placed[] _placed = Array.Empty<Placed>();
     private IReadOnlyList<LogEntry> _lastLines = Array.Empty<LogEntry>();
@@ -183,7 +198,15 @@ public sealed class LogForm : Form
         switch (e.KeyCode)
         {
             case Keys.Escape:
-                Close();
+                if (_drop != null)
+                {
+                    _drop = null;
+                    Invalidate();
+                }
+                else
+                {
+                    Close();
+                }
                 e.Handled = true;
                 break;
             case Keys.Down:
@@ -219,6 +242,13 @@ public sealed class LogForm : Form
     protected override void OnMouseWheel(MouseEventArgs e)
     {
         base.OnMouseWheel(e);
+        // The wheel always belongs to the list; an open dropdown just closes.
+        if (_drop != null)
+        {
+            _drop = null;
+            Invalidate();
+            return;
+        }
         var next = Math.Clamp(_scroll - e.Delta / 120f * 54f, 0f, MaxScroll);
         // At the bottom again the tail is followed once more.
         _follow = next >= MaxScroll - 2f;
@@ -231,6 +261,51 @@ public sealed class LogForm : Form
     {
         base.OnMouseClick(e);
         if (e.Button != MouseButtons.Left) return;
+
+        // Modal layer first: while a dropdown is open it owns the click.
+        if (_drop != null)
+        {
+            var hit = _drop.Rows.FirstOrDefault(r => r.Rect.Contains(e.Location));
+            if (hit.Rect != RectangleF.Empty)
+            {
+                var key = hit.Key;
+                var act = _drop.OnSelect;
+                _drop = null;
+                act(key);
+                Invalidate();
+                return;
+            }
+            if (!_drop.Trigger.Contains(e.Location))
+            {
+                _drop = null;
+                Invalidate();
+            }
+            return;
+        }
+
+        if (_tTrig.Contains(e.Location))
+        {
+            OpenDrop(_tTrig, TransportOptions(), _transport ?? "", key =>
+            {
+                _transport = key.Length == 0 ? null : key;
+                _follow = true;
+                Rebuild();
+            });
+            Invalidate();
+            return;
+        }
+        if (_fTrig.Contains(e.Location))
+        {
+            OpenDrop(_fTrig, LevelOptions(), _filter?.ToString() ?? "", key =>
+            {
+                _filter = key.Length == 0 ? null : key[0];
+                _follow = true;
+                Rebuild();
+            });
+            Invalidate();
+            return;
+        }
+
         foreach (var (rect, act) in _hits)
         {
             if (!rect.Contains(e.Location)) continue;
@@ -338,33 +413,17 @@ public sealed class LogForm : Form
             y += 6f + DeltaTorTheme.Small.Height + 6f;
         }
 
-        // ---- Transport chips (wrapped rows; no sideways scroll to hunt).
-        y += 6f;
-        var tChips = new List<(string Label, string Key)> { ("ALL", "") };
-        foreach (var t in AppLog.Transports)
-        {
-            var n = _tCounts.TryGetValue(t, out var c) ? c : 0;
-            tChips.Add((n > 0 ? t.ToUpperInvariant() + $" ({n})" : t.ToUpperInvariant(), t));
-        }
-        y = DrawChipRow(g, y, tChips, key =>
-        {
-            _transport = key.Length == 0 || _transport == key ? null : key;
-            _follow = true;
-            Rebuild();
-            Invalidate();
-        }, _transport ?? "", 14f, 7f);
-
-        // ---- Severity chips (wrapped rows).
-        y += 6f;
-        var fChips = new List<(string Label, string Key)> { ("ALL", "") };
-        foreach (var level in SeverityOrder) fChips.Add((LevelLabel(level), level.ToString()));
-        y = DrawChipRow(g, y, fChips, key =>
-        {
-            _filter = key.Length == 0 || _filter?.ToString() == key ? null : key[0];
-            _follow = true;
-            Rebuild();
-            Invalidate();
-        }, _filter?.ToString() ?? "", 13f, 6f);
+        // ---- Filter row: TRANSPORT + LEVEL dropdowns (one row, two triggers).
+        y += 8f;
+        const float trigH = 30f;
+        var trigW = (w - 40f - 10f) / 2f;
+        _tTrig = new RectangleF(20f, y, trigW, trigH);
+        _fTrig = new RectangleF(20f + trigW + 10f, y, trigW, trigH);
+        DrawFilterTrigger(g, _tTrig, "TRANSPORT",
+            _transport == null ? "ALL" : _transport.ToUpperInvariant());
+        DrawFilterTrigger(g, _fTrig, "LEVEL",
+            _filter is { } lv ? LevelLabel(lv) : "ALL");
+        y += trigH + 8f;
 
         // ---- The list.
         y += 6f;
@@ -402,6 +461,8 @@ public sealed class LogForm : Form
         g.Restore(clip);
 
         PaintScrollbar(g);
+        // The open dropdown paints last: it is a modal layer over the list.
+        if (_drop != null) PaintDrop(g);
     }
 
     private void CopyLog()
@@ -422,43 +483,108 @@ public sealed class LogForm : Form
         Invalidate();
     }
 
-    /// <summary>TransportChip / SeverityChip (MainActivity 3720): pills laid
-    /// out left to right, wrapping onto the next line when the row fills, so
-    /// every chip is reachable under the wheel with no sideways scroll.</summary>
-    private float DrawChipRow(
-        Graphics g, float y, IReadOnlyList<(string Label, string Key)> chips,
-        Action<string> pick, string selectedKey, float padH, float padV)
+    /// <summary>Filter trigger (TransportChip's replacement): a captioned
+    /// combobox-style pill with the current value and a chevron.</summary>
+    private void DrawFilterTrigger(Graphics g, RectangleF rect, string caption, string value)
     {
-        var w = Width;
-        var h = padV * 2f + DeltaTorTheme.Caption.Height;
-        var x = 20f;
-        var rowY = y + 6f;
-        foreach (var (label, key) in chips)
+        using (var path = DrawUtil.RoundedRect(rect, 10f))
         {
-            var cw = padH * 2f + DrawUtil.SpacedWidth(label, DeltaTorTheme.Caption, 1.1f);
-            if (x > 20f && x + cw > w - 20f)
-            {
-                x = 20f;
-                rowY += h + 6f;
-            }
-            var rect = new RectangleF(x, rowY, cw, h);
-            var selected = key == selectedKey;
-            using (var path = DrawUtil.RoundedRect(rect, h / 2f))
-            {
-                using var fill = new SolidBrush(
-                    selected ? DeltaTorTheme.SurfaceLight : DeltaTorTheme.Surface);
-                g.FillPath(fill, path);
-                using var pen = new Pen(
-                    selected ? DeltaTorTheme.BorderLight : DeltaTorTheme.Border);
-                g.DrawPath(pen, path);
-            }
-            using (var br = new SolidBrush(selected ? DeltaTorTheme.Text : DeltaTorTheme.Muted))
-                DrawUtil.DrawSpacedCentered(g, label, DeltaTorTheme.Caption, br, rect, 1.1f);
-            var captured = key;
-            _hits.Add((rect, () => pick(captured)));
-            x += cw + 8f;
+            using var fill = new SolidBrush(DeltaTorTheme.Surface);
+            g.FillPath(fill, path);
+            using var pen = new Pen(DeltaTorTheme.BorderLight);
+            g.DrawPath(pen, path);
         }
-        return rowY + h + 6f;
+        var pad = 10f;
+        var cy = rect.Y + (rect.Height - DeltaTorTheme.Small.Height) / 2f;
+        using (var br = new SolidBrush(DeltaTorTheme.Muted))
+            DrawUtil.DrawSpaced(g, caption, DeltaTorTheme.Small, br,
+                rect.X + pad, cy, rect.Width * 0.45f, 1.2f);
+
+        var chev = 10f;
+        var valX = rect.X + pad + rect.Width * 0.45f + 4f;
+        var valW = rect.Right - pad - chev - 6f - valX;
+        using (var br = new SolidBrush(DeltaTorTheme.Text))
+            DrawUtil.DrawSpaced(g, value, DeltaTorTheme.Small, br,
+                valX, cy, valW, 0.3f);
+        Icons.Chevron(g, new RectangleF(
+            rect.Right - pad - chev, rect.Y + (rect.Height - chev) / 2f, chev, chev),
+            DeltaTorTheme.AccentLight);
+    }
+
+    private void OpenDrop(
+        RectangleF trigger, List<(string Key, string Label)> options,
+        string value, Action<string> onSelect)
+    {
+        _drop = new Drop
+        {
+            Options = options,
+            Trigger = trigger,
+            Value = value,
+            OnSelect = onSelect
+        };
+    }
+
+    /// <summary>The open dropdown's panel: SurfaceAlt card under (or above)
+    /// the trigger, one 26px row per option, the selected one accent-tinted.</summary>
+    private void PaintDrop(Graphics g)
+    {
+        var drop = _drop;
+        const float rowH = 26f;
+        var panelH = rowH * drop.Options.Count;
+        var panelX = drop.Trigger.X;
+        var panelW = drop.Trigger.Width;
+        var belowY = drop.Trigger.Bottom + 4f;
+        var panelY = belowY + panelH > Height - 12f
+            ? drop.Trigger.Y - 4f - panelH
+            : belowY;
+
+        using (var path = DrawUtil.RoundedRect(
+            new RectangleF(panelX, panelY, panelW, panelH), 10f))
+        {
+            using var fill = new SolidBrush(DeltaTorTheme.SurfaceAlt);
+            g.FillPath(fill, path);
+            using var pen = new Pen(DeltaTorTheme.BorderLight);
+            g.DrawPath(pen, path);
+        }
+
+        drop.Rows.Clear();
+        for (var i = 0; i < drop.Options.Count; i++)
+        {
+            var (key, label) = drop.Options[i];
+            var row = new RectangleF(panelX + 1f, panelY + i * rowH, panelW - 2f, rowH);
+            var selected = key == drop.Value;
+            if (selected)
+            {
+                using var sel = new SolidBrush(Color.FromArgb(31, DeltaTorTheme.Accent));
+                g.FillRectangle(sel, row);
+            }
+            using (var br = new SolidBrush(
+                selected ? DeltaTorTheme.AccentLight : DeltaTorTheme.Text))
+                DrawUtil.DrawSpaced(g, label, DeltaTorTheme.Small, br,
+                    row.X + 10f, row.Y + (rowH - DeltaTorTheme.Small.Height) / 2f,
+                    row.Width - 20f, 0.3f);
+            drop.Rows.Add((row, key));
+        }
+    }
+
+    /// <summary>Options with live counts: ALL plus every transport in the log.</summary>
+    private List<(string Key, string Label)> TransportOptions()
+    {
+        var options = new List<(string Key, string Label)> { ("", "ALL") };
+        foreach (var t in AppLog.Transports)
+        {
+            var n = _tCounts.TryGetValue(t, out var c) ? c : 0;
+            options.Add((t, n > 0 ? t.ToUpperInvariant() + $" ({n})" : t.ToUpperInvariant()));
+        }
+        return options;
+    }
+
+    /// <summary>Options for the severity filter: ALL plus EWIDV.</summary>
+    private List<(string Key, string Label)> LevelOptions()
+    {
+        var options = new List<(string Key, string Label)> { ("", "ALL") };
+        foreach (var level in SeverityOrder) options.Add((level.ToString(), LevelLabel(level)));
+        return options;
     }
 
     /// <summary>Thin rounded thumb on the right edge while the list overflows.</summary>

@@ -184,12 +184,36 @@ public static class Config
     /// Run Tor as a plain local SOCKS5 proxy and never bring up the tunnel.
     /// The engine side is identical either way: Tor bootstraps through the same
     /// transports and listens on <see cref="ProxyPort"/>; nothing is captured.
+    /// Also never touches the machine proxy — the button is "No VPN &amp; Auto
+    /// Proxy" in the UI, both halves off.
     /// </summary>
     public static bool ProxyOnlyMode
     {
         get => GetBool("proxy_only_mode", false);
         set => SetBool("proxy_only_mode", value);
     }
+
+    public const string ModeTun = "tun";
+    public const string ModeSystemProxy = "system_proxy";
+
+    /// <summary>
+    /// How a connect hands Tor to the machine: "tun" routes everything through
+    /// the Se7enTun adapter; "system_proxy" (the default) runs Tor as a local
+    /// SOCKS and points WinINET at it once bootstrap reaches 100%. The choice
+    /// takes effect on the next connect.
+    /// </summary>
+    public static string ConnectionMode
+    {
+        get
+        {
+            var v = GetString("connection_mode", ModeSystemProxy);
+            return v == ModeTun ? ModeTun : ModeSystemProxy;
+        }
+        set => SetString("connection_mode", value);
+    }
+
+    /// <summary>True while the current mode is the system-proxy one.</summary>
+    public static bool SystemProxyMode => ConnectionMode == ModeSystemProxy;
 
     /// <summary>
     /// Whether a connect also races the bridges this app has already proven.
