@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using DeltaTor.Core.Util;
 using Microsoft.Win32;
 
 namespace DeltaTor.Core;
