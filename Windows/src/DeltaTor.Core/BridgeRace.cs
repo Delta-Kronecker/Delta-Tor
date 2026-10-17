@@ -511,7 +511,7 @@ public static class BridgeRace
         //
         // System proxy mode (the default): once the winner reports 100%, the
         // Windows per-user proxy is pointed at Tor's SOCKS automatically.
-        // "No VPN & Auto Proxy" (ProxyOnlyMode) is the manual variant: same
+        // "No VPN and System Proxy" (ProxyOnlyMode) is the manual variant: same
         // no-tunnel outcome, but the machine proxy is left untouched.
         var sysProxy = Config.SystemProxyMode;
         if (Config.ProxyOnlyMode || sysProxy)
