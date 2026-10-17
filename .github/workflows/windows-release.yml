@@ -160,7 +160,8 @@ jobs:
             "$out/DeltaTor.exe",
             "$out/Se7enTun.dll",
             "$out/Resources/tun2socks/tun2socks.exe",
-            "$out/Resources/tun2socks/wintun.dll")) {
+            "$out/Resources/tun2socks/wintun.dll",
+            "$out/flags/de.png")) {
             if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
             Write-Host "ok $f"
           }

@@ -100,6 +100,10 @@ public sealed partial class DrawerPanel : Panel
     private readonly List<Node> _nodes = new();
     private readonly List<(RectangleF Rect, Action Act)> _fixedHits = new();  // screen
     private readonly List<(RectangleF Rect, Action Act)> _scrollHits = new(); // content
+    // Children placed during this paint (see OnPaint): anything missing here
+    // is hidden after the node pass, so a still-placed child is never
+    // toggled and keeps its focus across repaints.
+    private readonly HashSet<Control> _placed = new();
     private Drop? _drop;
 
     private bool _dirty = true;
@@ -393,12 +397,16 @@ public sealed partial class DrawerPanel : Panel
         PaintHeader(g);
         if (_dirty) Rebuild();
 
-        // Children are placed only by the node that owns them. Anything not
-        // placed this frame stays hidden — including while the dropdown is
-        // open, so a TextBox can never sit on top of it.
-        foreach (Control c in Controls)
-            if (!ReferenceEquals(c, _github))
-                c.Visible = false;
+        // Children are placed only by the node that owns them. A child placed
+        // last frame stays visible while its node places it again this frame:
+        // the old hide-everything-then-show loop ran on every repaint — the
+        // 1s sync timer while the drawer is open — which killed focus in the
+        // custom-bridges TextBox within a second of clicking it, so typing
+        // and Ctrl+V never reached the box. Anything NOT placed this frame is
+        // hidden after the node pass instead (dropdown open, section
+        // collapsed, row scrolled away), so a TextBox can still never sit on
+        // top of the dropdown.
+        _placed.Clear();
 
         var w = Width;
         var clip = g.Save();
@@ -412,6 +420,10 @@ public sealed partial class DrawerPanel : Panel
             node.Draw?.Invoke(g, sy);
         }
         g.Restore(clip);
+
+        foreach (Control c in Controls)
+            if (!ReferenceEquals(c, _github) && !_placed.Contains(c))
+                c.Visible = false;
 
         PaintScrollbar(g);
         PaintDropdown(g);
@@ -539,6 +551,7 @@ public sealed partial class DrawerPanel : Panel
             c.Region = null;
         }
         c.Visible = true;
+        _placed.Add(c);
     }
 
     /// <summary>DrawerSection (MainActivity 1038): letter-spaced title,
@@ -553,9 +566,29 @@ public sealed partial class DrawerPanel : Panel
         {
             using (var b = new SolidBrush(DeltaTorTheme.Text))
                 DrawUtil.DrawSpaced(g, title, _fSection, b, 20f, sy + 16f, w * 0.5f, 1.8f);
+
+            // The summary may lead with a flag emoji; draw that as an image
+            // (the emoji font is not guaranteed on Windows) and shift the
+            // text over, keeping the emoji as fallback if no file ships.
+            var sumX = 20f;
+            var sumText = summary;
+            var sumY = sy + 16f + _sectionLineH + 4f;
+            var probe = summary;
+            if (UiHelpers.TrySplitFlag(ref probe, out var flagCode))
+            {
+                var drew = flagCode == "--";
+                if (drew)
+                    Icons.Globe(g, new RectangleF(sumX + 1f,
+                        sumY + (_summaryLineH - 13f) / 2f, 13f, 13f),
+                        DeltaTorTheme.Muted);
+                else
+                    drew = UiHelpers.DrawFlag(g, flagCode, sumX,
+                        sumY + (_summaryLineH - 12f) / 2f, 16f);
+                if (drew) sumText = probe;
+            }
             using (var b = new SolidBrush(DeltaTorTheme.Muted))
-                DrawUtil.DrawSpaced(g, summary, _fSummary, b, 20f,
-                    sy + 16f + _sectionLineH + 4f, w - 150f, 0.2f);
+                DrawUtil.DrawSpaced(g, sumText, _fSummary, b, sumX,
+                    sumY, w - (sumX - 20f) - 150f, 0.2f);
 
             var chev = new RectangleF(w - 20f - 12f,
                 sy + 16f + (_sectionLineH + 4f + _summaryLineH - 12f) / 2f, 12f, 12f);

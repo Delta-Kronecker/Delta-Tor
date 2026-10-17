@@ -526,16 +526,10 @@ public sealed class MainForm : Form
         const float padY = 14f;
         const float box = 34f;
 
-        // Drawer button: Surface box, radius 11, BorderLight hairline, menu glyph.
+        // Drawer button: the three lines alone. Any Surface box or hairline
+        // around it reads as a stray black frame around the button.
         var menu = new RectangleF(padX, padY, box, box);
         _menuRect = menu;
-        using (var path = DrawUtil.RoundedRect(menu, 11f))
-        {
-            using var fill = new SolidBrush(DeltaTorTheme.Surface);
-            g.FillPath(fill, path);
-            using var pen = new Pen(DeltaTorTheme.BorderLight);
-            g.DrawPath(pen, path);
-        }
         var glyph = new RectangleF(
             menu.X + (box - 15f) / 2f, menu.Y + (box - 15f) / 2f, 15f, 15f);
         Icons.Menu(g, glyph, DeltaTorTheme.AccentLight);
@@ -977,8 +971,32 @@ public sealed class MainForm : Form
         var labelLine = g.MeasureString(label, capFont).Height;
         using (var brush = new SolidBrush(DeltaTorTheme.Muted))
             DrawUtil.DrawSpaced(g, label, capFont, brush, x + 10f, y + 5f, w - 20f, 1.2f);
+
+        // The value may lead with a flag emoji (EXIT): draw it as an image
+        // (emoji render as "DE" without the emoji font) and shift the text,
+        // keeping the emoji only when no image ships for the code.
+        var valueY = y + 5f + labelLine + 2f;
+        var valueX = x + 10f;
+        var valueText = value;
+        var probe = value;
+        if (UiHelpers.TrySplitFlag(ref probe, out var flagCode))
+        {
+            var valueLine = g.MeasureString("A", valueFont).Height;
+            var drew = flagCode == "--";
+            if (drew)
+                Icons.Globe(g, new RectangleF(valueX + 1f,
+                    valueY + (valueLine - 13f) / 2f, 13f, 13f), DeltaTorTheme.Text);
+            else
+                drew = UiHelpers.DrawFlag(g, flagCode, valueX,
+                    valueY + (valueLine - 12f) / 2f, 16f);
+            if (drew)
+            {
+                valueText = probe;
+                valueX += 16f + 6f;
+            }
+        }
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
-            DrawUtil.DrawSpaced(g, value, valueFont, brush,
-                x + 10f, y + 5f + labelLine + 2f, w - 20f, 0f);
+            DrawUtil.DrawSpaced(g, valueText, valueFont, brush,
+                valueX, valueY, x + w - 10f - valueX, 0f);
     }
 }
