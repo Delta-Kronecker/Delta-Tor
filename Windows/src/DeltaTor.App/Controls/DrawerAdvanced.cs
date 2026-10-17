@@ -22,11 +22,10 @@ public sealed partial class DrawerPanel
     private string _customBridges = Config.CustomBridges;
     private bool _proxyOnly = Config.ProxyOnlyMode;
     private bool _loggingOn = Config.LoggingEnabled;
+    private string _connMode = Config.ConnectionMode;
     private bool _showAdvanced;
 
     private DrawerEdit? _customBox;
-    private ToggleSwitch? _proxySwitch;
-    private ToggleSwitch? _logSwitch;
     private Spinner? _storeSpinner;
 
     /// <summary>MainForm hooks this to the log screen once it exists.</summary>
@@ -68,6 +67,7 @@ public sealed partial class DrawerPanel
         var live = AppState.Mode;
         if (live.Length > 0 && live != _transportMode) _transportMode = live;
 
+        AddConnectionModeCard(flow);
         AddTransportCard(flow);
         if (_transportMode == ParallelTorManager.TransportAuto)
             AddRacersCard(flow);
@@ -177,8 +177,6 @@ public sealed partial class DrawerPanel
                 using var fill = new SolidBrush(DeltaTorTheme.SurfaceAlt);
                 g.FillPath(fill, path);
             }
-            using var pen = new Pen(v.On ? DeltaTorTheme.Green : DeltaTorTheme.BorderLight);
-            g.DrawPath(pen, path);
         }
         using (var b = new SolidBrush(v.On ? DeltaTorTheme.GreenLight : DeltaTorTheme.Muted))
             DrawUtil.DrawSpacedCentered(g, v.On ? "ON" : "OFF", _fLabel, b, btn, 1.2f);
@@ -186,42 +184,6 @@ public sealed partial class DrawerPanel
         _scrollHits.Add((
             new RectangleF(v.BtnX, top + v.BtnY, ToggleView.BtnW, ToggleView.BtnH),
             v.Toggle));
-    }
-
-    /// <summary>Title + wrapped description with a child switch on the right
-    /// (NoVpnOnlySwitch / RecordLogSwitch rows).</summary>
-    private sealed class SwitchView
-    {
-        public float TitleY;
-        public float DescY;
-        public float SwX;
-        public float SwY;
-        public float H;
-        public Size DescSize;
-        public required string Title;
-        public required string Desc;
-    }
-
-    private SwitchView MakeSwitch(float x, float w, float cy, string title, string desc)
-    {
-        var v = new SwitchView { Title = title, Desc = desc };
-        v.DescSize = Wrap(desc, _fBody, w - 58f);
-        var colH = _rowLineH + 3f + v.DescSize.Height;
-        v.SwX = x + w - 46f;
-        v.SwY = cy + Math.Max(0f, (colH - 26f) / 2f);
-        v.TitleY = cy;
-        v.DescY = cy + _rowLineH + 3f;
-        v.H = Math.Max(colH, 26f) + 2f;
-        return v;
-    }
-
-    private void DrawSwitch(
-        Graphics g, SwitchView v, float x, float w, float sy, ToggleSwitch sw)
-    {
-        using (var b = new SolidBrush(DeltaTorTheme.Text))
-            DrawUtil.DrawSpaced(g, v.Title, _fRow, b, x, sy + v.TitleY, w - 58f, 0.3f);
-        DrawWrap(g, v.Desc, _fBody, DeltaTorTheme.Muted, x, sy + v.DescY, v.DescSize);
-        PlaceChild(sw, new RectangleF(v.SwX, sy + v.SwY, 46f, 26f));
     }
 
     /// <summary>Small action box: outlined (EXPORT) or gradient-filled
@@ -242,6 +204,61 @@ public sealed partial class DrawerPanel
         }
         using var b = new SolidBrush(textColor);
         DrawUtil.DrawSpacedCentered(g, text, _fLabel, b, rect, 1.2f);
+    }
+
+    // ---- CONNECTION MODE ----------------------------------------------------
+
+    private const string TunDescription =
+        "Routes the whole device through Tor with the built-in tunnel. " +
+        "The system proxy is never touched.";
+    private const string SystemProxyDescription =
+        "Runs Tor as a local proxy and points Windows at it once the " +
+        "connection is ready. Nothing else is routed.";
+
+    /// <summary>Two exclusive ON/OFF rows (Tun Mode / System proxy), the
+    /// Android mode picker as the drawer draws it. Default is System proxy.</summary>
+    private void AddConnectionModeCard(Flow flow)
+    {
+        var w = flow.W;
+        var x = CardMargin + CardPadX;
+        var iw = w - CardMargin * 2f - CardPadX * 2f;
+        var top = flow.Y;
+
+        var cy = CardPadY;
+        var titleTop = cy;
+        cy += 2f + _cardTitleLineH + 4f + 4f;
+
+        var tunRow = MakeToggle(x, iw, cy, "Tun Mode", TunDescription,
+            _connMode == Config.ModeTun, () => SetConnMode(Config.ModeTun));
+        cy += tunRow.H;
+
+        var sysRow = MakeToggle(x, iw, cy, "System proxy", SystemProxyDescription,
+            _connMode == Config.ModeSystemProxy, () => SetConnMode(Config.ModeSystemProxy));
+        cy += sysRow.H;
+
+        var cardH = cy + CardPadY;
+
+        flow.Add(cardH + CardGap, (g, sy) =>
+        {
+            CardBg(g, CardMargin, sy, w - CardMargin * 2f, cardH);
+            DrawCardTitle(g, sy + titleTop, x, iw, "CONNECTION MODE",
+                null, default, null, top + titleTop);
+            DrawToggle(g, tunRow, x, iw, sy, top);
+            DrawToggle(g, sysRow, x, iw, sy, top);
+        });
+    }
+
+    private void SetConnMode(string mode)
+    {
+        if (_connMode == mode) return;
+        _connMode = mode;
+        Config.ConnectionMode = mode;
+        // The choice takes effect on the next connect; leaving System proxy
+        // while the machine proxy is applied must not strand it.
+        if (mode == Config.ModeTun) SystemProxy.Clear();
+        AppLog.I("UI", $"Connection mode set to {mode}");
+        MarkDirty();
+        Invalidate();
     }
 
     // ---- TRANSPORT ----------------------------------------------------------
@@ -572,8 +589,9 @@ public sealed partial class DrawerPanel
 
     private const string ProxyDescription =
         "Tor will bootstrap normally and listen on a local address. " +
-        "No tunnel is created and nothing on this device is routed " +
-        "automatically — you point each app at the address yourself.";
+        "No tunnel is created, nothing on this device is routed " +
+        "automatically, and the system proxy is left untouched — " +
+        "you point each app at the address yourself.";
 
     private void AddProxyCard(Flow flow)
     {
@@ -586,9 +604,17 @@ public sealed partial class DrawerPanel
         var titleTop = cy;
         cy += 2f + _cardTitleLineH + 4f + 4f;
 
-        var swView = MakeSwitch(x, iw, cy, "No VPN Only Proxy", ProxyDescription);
-        cy += swView.H;
-        EnsureProxySwitch();
+        var proxyRow = MakeToggle(x, iw, cy,
+            "No VPN & Auto Proxy", ProxyDescription,
+            _proxyOnly,
+            () =>
+            {
+                _proxyOnly = !_proxyOnly;
+                Config.ProxyOnlyMode = _proxyOnly;
+                MarkDirty();
+                Invalidate();
+            });
+        cy += proxyRow.H;
 
         // The endpoint block below is drawn whether or not Tor is up yet:
         // the card must not grow mid-bootstrap and shove the log card down.
@@ -647,7 +673,7 @@ public sealed partial class DrawerPanel
             CardBg(g, CardMargin, sy, w - CardMargin * 2f, cardH);
             DrawCardTitle(g, sy + titleTop, x, iw, "PROXY ONLY",
                 null, default, null, top + titleTop);
-            DrawSwitch(g, swView, x, iw, sy, _proxySwitch!);
+            DrawToggle(g, proxyRow, x, iw, sy, top);
             if (!showEndpoint) return;
 
             using (var b = new SolidBrush(Color.FromArgb(153, DeltaTorTheme.BorderLight)))
@@ -687,18 +713,6 @@ public sealed partial class DrawerPanel
     {
         var idx = endpoint.IndexOf("://", StringComparison.Ordinal);
         return idx >= 0 ? endpoint[(idx + 2)..] : endpoint;
-    }
-
-    private void EnsureProxySwitch()
-    {
-        if (_proxySwitch != null) return;
-        _proxySwitch = new ToggleSwitch { Checked = _proxyOnly, Visible = false };
-        _proxySwitch.CheckedChanged += (_, _) =>
-        {
-            _proxyOnly = _proxySwitch.Checked;
-            Config.ProxyOnlyMode = _proxyOnly;
-        };
-        Controls.Add(_proxySwitch);
     }
 
     // ---- EDIT TORRC --------------------------------------------------------
@@ -995,16 +1009,23 @@ public sealed partial class DrawerPanel
         var headRel = rowRel + (rowH - colH) / 2f;
         cy += rowH;
 
-        var divRel = cy;
-        cy += 1f + 10f;
-
         var recDesc = _loggingOn
             ? "Keeps every Tor line of every connect. Turn it off to stop " +
               "recording; the reason for a failure still shows on the screen."
             : "Nothing is being recorded. The bootstrap still runs — it just " +
               "is not kept, so a later log has nothing in it.";
-        var recView = MakeSwitch(x, iw, cy, "Record the log", recDesc);
-        cy += recView.H;
+        var recRow = MakeToggle(x, iw, cy + 6f,
+            "Record the log", recDesc,
+            _loggingOn,
+            () =>
+            {
+                _loggingOn = !_loggingOn;
+                Config.LoggingEnabled = _loggingOn;
+                AppLog.Enabled = _loggingOn;
+                MarkDirty();
+                Invalidate();
+            });
+        cy += 6f + recRow.H;
 
         var cardH = cy + CardPadY;
 
@@ -1031,24 +1052,7 @@ public sealed partial class DrawerPanel
                 new RectangleF(x + iw - pillW, top + pillRel, pillW, pillH),
                 () => OpenLog?.Invoke()));
 
-            using (var b = new SolidBrush(Color.FromArgb(153, DeltaTorTheme.BorderLight)))
-                g.FillRectangle(b, x, sy + divRel, iw, 1f);
-
-            EnsureLogSwitch();
-            DrawSwitch(g, recView, x, iw, sy, _logSwitch!);
+            DrawToggle(g, recRow, x, iw, sy, top);
         });
-    }
-
-    private void EnsureLogSwitch()
-    {
-        if (_logSwitch != null) return;
-        _logSwitch = new ToggleSwitch { Checked = _loggingOn, Visible = false };
-        _logSwitch.CheckedChanged += (_, _) =>
-        {
-            _loggingOn = _logSwitch.Checked;
-            Config.LoggingEnabled = _loggingOn;
-            AppLog.Enabled = _loggingOn;
-        };
-        Controls.Add(_logSwitch);
     }
 }

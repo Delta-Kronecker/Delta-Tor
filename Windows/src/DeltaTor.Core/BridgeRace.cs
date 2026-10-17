@@ -504,11 +504,17 @@ public static class BridgeRace
     /// <summary>Establish the tunnel on top of the running Tor engine.</summary>
     private static async Task EstablishTunnelAsync(TorRunner w, string proxyHost, int proxyPort)
     {
-        // Proxy mode never brings up a tunnel, so it must not announce one and
-        // must not report the missing engine as a failure. Tor is bootstrapped
-        // and listening at this point either way; all that differs is whether
-        // the machine is pointed at it.
-        if (Config.ProxyOnlyMode)
+        // Proxy-only and system-proxy modes never bring up a tunnel, so they
+        // must not announce one and must not report the missing engine as a
+        // failure. Tor is bootstrapped and listening at this point either way;
+        // all that differs is whether the machine is pointed at it.
+        //
+        // System proxy mode (the default): once the winner reports 100%, the
+        // Windows per-user proxy is pointed at Tor's SOCKS automatically.
+        // "No VPN & Auto Proxy" (ProxyOnlyMode) is the manual variant: same
+        // no-tunnel outcome, but the machine proxy is left untouched.
+        var sysProxy = Config.SystemProxyMode;
+        if (Config.ProxyOnlyMode || sysProxy)
         {
             var endpoint = $"socks5://{proxyHost}:{proxyPort}";
             AppState.Update(s => s with
@@ -521,7 +527,11 @@ public static class BridgeRace
                 ConnectedAtMillis = NowMs(),
                 SocksEndpoint = endpoint
             });
-            Notify("DeltaTor", $"Proxy ready \u00b7 {endpoint}", progress: false, progressValue: 0);
+            if (sysProxy && !Config.ProxyOnlyMode)
+            {
+                SystemProxy.Apply(proxyHost, proxyPort);
+            }
+            Notify("DeltaTor", $"Proxy ready · {endpoint}", progress: false, progressValue: 0);
             _quietProbes = 0;
             _bytesAtLastProbe = 0;
             StartExitLocator(proxyHost, proxyPort);
@@ -581,13 +591,14 @@ public static class BridgeRace
             AppLog.I(TAG, "VPN already active");
             return;
         }
-        // In proxy mode the tunnel is never what "stopped", so restarting it
-        // cannot be what brings it back either. Say so instead of silently
-        // returning, because the button is still on screen and pressing it and
-        // watching nothing happen is the worst possible answer.
-        if (Config.ProxyOnlyMode)
+        // In proxy and system-proxy modes the tunnel is never what "stopped",
+        // so restarting it cannot be what brings it back either. Say so
+        // instead of silently returning, because the button is still on
+        // screen and pressing it and watching nothing happen is the worst
+        // possible answer.
+        if (Config.ProxyOnlyMode || Config.SystemProxyMode)
         {
-            AppLog.I(TAG, "Ignoring start: proxy mode is on, there is no VPN to start");
+            AppLog.I(TAG, "Ignoring start: no-tunnel mode is on, there is no VPN to start");
             return;
         }
         var w = _activeRunner;
@@ -632,12 +643,13 @@ public static class BridgeRace
             AppLog.I(TAG, "Ignoring stop: a stop is already tearing the cores down");
             return;
         }
-        // Stopping the tunnel tears the data path down. In proxy mode there is
-        // no tunnel, and the listener the user was told to point their browser
-        // at is the thing being kept, so honouring this would shut the proxy off
-        // and leave them with a dead address and no error. Disconnect is what
-        // stops proxy mode, and it goes through the normal path below.
-        if (Config.ProxyOnlyMode)
+        // Stopping the tunnel tears the data path down. In proxy and
+        // system-proxy modes there is no tunnel, and the listener the user was
+        // told to point their browser at is the thing being kept, so honouring
+        // this would shut the proxy off and leave them with a dead address and
+        // no error. Disconnect is what stops those modes, and it goes through
+        // the normal path below.
+        if (Config.ProxyOnlyMode || Config.SystemProxyMode)
         {
             AppLog.I(TAG, "Ignoring stop: proxy mode is on, use Disconnect to shut the proxy down");
             return;
@@ -1327,6 +1339,9 @@ public static class BridgeRace
     private static void Teardown()
     {
         TeardownVpn();
+        // System proxy mode pointed WinINET at Tor; put the machine back
+        // before the SOCKS listener it points at disappears.
+        SystemProxy.Clear();
         try { TorSocksBridge.Stop(); } catch { /* already down */ }
         // Blocks until every Tor/lyrebird process is really gone and the ports
         // are released, so a connect right after a stop cannot hit EADDRINUSE.

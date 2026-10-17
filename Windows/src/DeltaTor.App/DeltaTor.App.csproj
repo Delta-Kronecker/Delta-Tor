@@ -15,6 +15,10 @@
     <RootNamespace>DeltaTor.App</RootNamespace>
     <AssemblyName>DeltaTor</AssemblyName>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <!-- Explorer / taskbar icon for the exe itself; the same file is copied
+         next to the exe (Content below) and loaded at runtime for the window
+         and the tray. -->
+    <ApplicationIcon>..\..\assets\app\DeltaTor.ico</ApplicationIcon>
     <!-- The Wintun adapter and route table need Administrator. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Version is overridden by the release workflow from the git tag

@@ -4,7 +4,7 @@ using DeltaTor.Core;
 namespace DeltaTor.App.Controls;
 
 /// <summary>
-/// The control drawer: a fixed CONTROLS header with a close box, a scrolling
+/// The control drawer: a fixed close box with a gradient rule, a scrolling
 /// flow of section nodes, and the GITHUB pill docked at the bottom.
 ///
 /// The flow is built into a flat node list whenever something structural
@@ -33,8 +33,6 @@ public sealed partial class DrawerPanel : Panel
     // One face per role, created once and disposed with the control. Sizes
     // are tuned for the 450px sheet: compact letter-spaced titles over
     // generous body and mono text, so nothing shouts and nothing is tiny.
-    private readonly Font _fTitle = new(DeltaTorTheme.FontFamilyName, 12f, FontStyle.Bold);
-    private readonly Font _fTitleSub = new(DeltaTorTheme.FontFamilyName, 8.5f);
     private readonly Font _fSection = new(DeltaTorTheme.FontFamilyName, 10f, FontStyle.Bold);
     private readonly Font _fSummary = new(DeltaTorTheme.FontFamilyName, 9.5f);
     private readonly Font _fCardTitle = new(DeltaTorTheme.FontFamilyName, 8.5f, FontStyle.Bold);
@@ -51,8 +49,6 @@ public sealed partial class DrawerPanel : Panel
     private readonly Font _fMonoBig = new("Consolas", 11f, FontStyle.Bold);
     private Font? _fEmoji;
 
-    private readonly float _titleLineH;
-    private readonly float _titleSubLineH;
     private readonly float _sectionLineH;
     private readonly float _summaryLineH;
     private readonly float _cardTitleLineH;
@@ -136,8 +132,6 @@ public sealed partial class DrawerPanel : Panel
         using (var bmp = new Bitmap(1, 1))
         using (var mg = Graphics.FromImage(bmp))
         {
-            _titleLineH = mg.MeasureString("A", _fTitle).Height;
-            _titleSubLineH = mg.MeasureString("A", _fTitleSub).Height;
             _sectionLineH = mg.MeasureString("A", _fSection).Height;
             _summaryLineH = mg.MeasureString("A", _fSummary).Height;
             _cardTitleLineH = mg.MeasureString("A", _fCardTitle).Height;
@@ -176,8 +170,6 @@ public sealed partial class DrawerPanel : Panel
         {
             _slide.Dispose();
             _sync.Dispose();
-            _fTitle.Dispose();
-            _fTitleSub.Dispose();
             _fSection.Dispose();
             _fSummary.Dispose();
             _fCardTitle.Dispose();
@@ -448,29 +440,19 @@ public sealed partial class DrawerPanel : Panel
         _scroll = Math.Clamp(_scroll, 0f, MaxScroll);
     }
 
-    /// <summary>Fixed header: title, subtitle, close box, gradient rule.
+    /// <summary>Fixed header: the close box and the gradient rule.
     /// Sets the viewport bounds everything else uses.</summary>
     private void PaintHeader(Graphics g)
     {
         var w = Width;
-        var colH = _titleLineH + 4f + _titleSubLineH;
-        var rowH = Math.Max(36f, colH);
-        const float rowY = 18f;
-        var colY = rowY + (rowH - colH) / 2f;
-        var dividerY = rowY + rowH + 16f;
+        const float rowY = 16f;
+        const float rowH = 36f;
+        var dividerY = rowY + rowH + 14f;
 
-        // Opaque band under the title: scrolled cards can never land on it,
-        // even when a partial repaint reaches into the header strip.
         using (var b = new SolidBrush(BackColor))
             g.FillRectangle(b, 0f, 0f, w, dividerY + 1f);
 
-        using (var b = new SolidBrush(DeltaTorTheme.Text))
-            DrawUtil.DrawSpaced(g, "CONTROLS", _fTitle, b, 20f, colY, w - 70f, 2.4f);
-        using (var b = new SolidBrush(DeltaTorTheme.Muted))
-            g.DrawString("Everything here applies on the next connect",
-                _fTitleSub, b, 20f, colY + _titleLineH + 4f);
-
-        var close = new RectangleF(w - 16f - 36f, rowY + (rowH - 36f) / 2f, 36f, 36f);
+        var close = new RectangleF(w - 16f - 36f, rowY, 36f, 36f);
         using (var path = DrawUtil.RoundedRect(close, 12f))
         {
             using var fill = new SolidBrush(DeltaTorTheme.Surface);
