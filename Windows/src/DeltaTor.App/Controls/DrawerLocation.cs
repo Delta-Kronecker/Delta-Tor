@@ -268,12 +268,20 @@ public sealed partial class DrawerPanel
 
             var contentY = sy + (h - blockH) / 2f;
             var x = row.X + 8f;
-            // GDI+ DrawString does not apply the regional-indicator flag
-            // substitution and shows the raw letters (e.g. "DE"); TextRenderer
-            // (GDI) with the emoji font does render the real flag.
-            TextRenderer.DrawText(g, emoji, _fEmoji!,
-                new Point((int)x, (int)(contentY + (17f - _emojiLineH) / 2f)),
-                DeltaTorTheme.Text, TextFormatFlags.NoPadding);
+            // Flags are images: regional-indicator emoji render as the plain
+            // letters "DE" without the emoji font, and GDI never applies the
+            // pair substitution anyway. "--" gets a drawn globe; a missing
+            // file falls back to the emoji string as a last resort.
+            if (!UiHelpers.DrawFlag(g, code, x, contentY + 2f, 17f))
+            {
+                if (code == "--")
+                    Icons.Globe(g, new RectangleF(x + 1f, contentY + 1f, 15f, 15f),
+                        DeltaTorTheme.Text);
+                else
+                    TextRenderer.DrawText(g, emoji, _fEmoji!,
+                        new Point((int)x, (int)(contentY + (17f - _emojiLineH) / 2f)),
+                        DeltaTorTheme.Text, TextFormatFlags.NoPadding);
+            }
             x += 19f + 12f;
 
             // Capacity numbers sit between the name and the code; measured

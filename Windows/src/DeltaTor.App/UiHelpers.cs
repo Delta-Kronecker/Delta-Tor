@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using System.Globalization;
 using DeltaTor.Core;
 
@@ -142,5 +143,76 @@ public static class UiHelpers
     {
         var v = (int)(value * 10f);
         return $"{v / 10}.{v % 10}";
+    }
+
+    // ---- flag images --------------------------------------------------------
+    // Regional-indicator emoji show as the plain letters "DE" on machines
+    // without Segoe UI Emoji (GDI never applies the pair substitution at all),
+    // so country flags ship as PNGs under assets/flags/ and are drawn as
+    // images. The emoji string stays the last-resort fallback when a file is
+    // missing for a code.
+
+    private static readonly Dictionary<string, Bitmap?> FlagCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Cached flag bitmap for an ISO code, or null when not shipped.</summary>
+    public static Bitmap? FlagImage(string code)
+    {
+        if (code.Length != 2 || !char.IsAsciiLetter(code[0]) || !char.IsAsciiLetter(code[1]))
+            return null;
+        var key = code.ToLowerInvariant();
+        if (FlagCache.TryGetValue(key, out var cached)) return cached;
+        Bitmap? bmp = null;
+        var path = AppAssets.Existing($"flags/{key}.png");
+        if (path != null)
+        {
+            try { bmp = new Bitmap(path); }
+            catch { bmp = null; }
+        }
+        FlagCache[key] = bmp;
+        return bmp;
+    }
+
+    /// <summary>Draw the flag at (x, y), w wide and its natural 4:3 tall.
+    /// Returns false when no image ships for the code, so the caller can fall
+    /// back to text instead of silently dropping the flag.</summary>
+    public static bool DrawFlag(Graphics g, string code, float x, float y, float w)
+    {
+        var bmp = FlagImage(code);
+        if (bmp == null) return false;
+        var h = w * bmp.Height / bmp.Width;
+        var state = g.Save();
+        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+        g.CompositingQuality = CompositingQuality.HighQuality;
+        g.DrawImage(bmp, x, y, w, h);
+        g.Restore(state);
+        return true;
+    }
+
+    /// <summary>Strips a leading flag emoji (regional pair, or the globe for
+    /// "any location" → code "--") from a display string. Each emoji is a
+    /// surrogate pair: both forms start with U+D83C, the globe's low word is
+    /// U+DF10 and regional indicators carry U+DDE6..U+DDFF letters.</summary>
+    public static bool TrySplitFlag(ref string text, out string code)
+    {
+        code = "";
+        if (text.Length < 2 || text[0] != '\uD83C') return false;
+        var lo1 = text[1];
+        if (lo1 == '\uDF10')
+        {
+            code = "--";
+            text = text.Substring(2).TrimStart();
+            return true;
+        }
+        if (lo1 is >= '\uDDE6' and <= '\xDDFF' &&
+            text.Length >= 4 && text[2] == '\uD83C' &&
+            text[3] is >= '\uDDE6' and <= '\xDDFF')
+        {
+            code = $"{(char)('A' + lo1 - '\uDDE6')}{(char)('A' + text[3] - '\uDDE6')}";
+            text = text.Substring(4).TrimStart();
+            return true;
+        }
+        return false;
     }
 }

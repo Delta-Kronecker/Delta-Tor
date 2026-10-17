@@ -152,4 +152,18 @@ public static class Icons
             new PointF(b.X + b.Width * 0.86f, b.Y + b.Height * 0.22f)
         });
     }
+
+    /// <summary>Globe for the "any location" rows: the emoji 🌐 renders as a
+    /// tofu box whenever the emoji font is missing, a drawn glyph never does.</summary>
+    public static void Globe(Graphics g, RectangleF b, Color color)
+    {
+        using var pen = new Pen(color, 1.5f)
+        {
+            StartCap = System.Drawing.Drawing2D.LineCap.Round,
+            EndCap = System.Drawing.Drawing2D.LineCap.Round
+        };
+        g.DrawEllipse(pen, b.X, b.Y, b.Width, b.Height);
+        g.DrawEllipse(pen, b.X + b.Width * 0.32f, b.Y, b.Width * 0.36f, b.Height);
+        g.DrawLine(pen, b.X, b.Y + b.Height / 2f, b.Right, b.Y + b.Height / 2f);
+    }
 }
