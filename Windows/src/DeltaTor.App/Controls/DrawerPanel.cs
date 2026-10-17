@@ -440,33 +440,29 @@ public sealed partial class DrawerPanel : Panel
         _scroll = Math.Clamp(_scroll, 0f, MaxScroll);
     }
 
-    /// <summary>Fixed header: the close box and the gradient rule.
+    /// <summary>Fixed header: just the three-line close button, nothing else.
     /// Sets the viewport bounds everything else uses.</summary>
     private void PaintHeader(Graphics g)
     {
         var w = Width;
         const float rowY = 16f;
         const float rowH = 36f;
-        var dividerY = rowY + rowH + 14f;
+        const float bottom = rowY + rowH + 10f;
 
+        // Opaque background only (same color as the drawer): content is
+        // clipped below _viewTop anyway; this just protects partial repaints.
         using (var b = new SolidBrush(BackColor))
-            g.FillRectangle(b, 0f, 0f, w, dividerY + 1f);
+            g.FillRectangle(b, 0f, 0f, w, bottom);
 
+        // The close button as the same three lines as the menu glyph — no
+        // box, no border, no rule under it.
         var close = new RectangleF(w - 16f - 36f, rowY, 36f, 36f);
-        using (var path = DrawUtil.RoundedRect(close, 12f))
-        {
-            using var fill = new SolidBrush(DeltaTorTheme.Surface);
-            g.FillPath(fill, path);
-            using var pen = new Pen(DeltaTorTheme.BorderLight);
-            g.DrawPath(pen, path);
-        }
-        Icons.Close(g,
-            new RectangleF(close.X + (36f - 13f) / 2f, close.Y + (36f - 13f) / 2f, 13f, 13f),
+        Icons.Menu(g, new RectangleF(
+            close.X + (36f - 16f) / 2f, close.Y + (36f - 16f) / 2f, 16f, 16f),
             DeltaTorTheme.Text);
         _fixedHits.Add((close, Close));
 
-        PaintGradientLine(g, dividerY, w);
-        _viewTop = dividerY + 1f;
+        _viewTop = bottom;
         _viewBottom = Height - 60f; // footer: 16 bottom + 40 pill + 4 above
     }
 

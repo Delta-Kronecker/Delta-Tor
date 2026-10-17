@@ -184,8 +184,8 @@ public static class Config
     /// Run Tor as a plain local SOCKS5 proxy and never bring up the tunnel.
     /// The engine side is identical either way: Tor bootstraps through the same
     /// transports and listens on <see cref="ProxyPort"/>; nothing is captured.
-    /// Also never touches the machine proxy — the button is "No VPN &amp; Auto
-    /// Proxy" in the UI, both halves off.
+    /// Also never touches the machine proxy — the button is "No VPN and
+    /// System Proxy" in the UI, both halves off.
     /// </summary>
     public static bool ProxyOnlyMode
     {

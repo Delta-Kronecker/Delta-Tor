@@ -605,7 +605,7 @@ public sealed partial class DrawerPanel
         cy += 2f + _cardTitleLineH + 4f + 4f;
 
         var proxyRow = MakeToggle(x, iw, cy,
-            "No VPN & Auto Proxy", ProxyDescription,
+            "No VPN and System Proxy", ProxyDescription,
             _proxyOnly,
             () =>
             {

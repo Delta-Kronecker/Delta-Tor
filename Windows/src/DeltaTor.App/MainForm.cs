@@ -85,8 +85,18 @@ public sealed class MainForm : Form
         Controls.Add(_drawer);
         _pillAction.Clicked += (_, _) =>
         {
-            // In proxy mode the left pill shows the endpoint and does nothing;
-            // pressing it would offer a start the engine declines.
+            // System proxy mode is live: this pill is the machine-proxy
+            // switch — ON points Windows at the bridge, OFF puts the old
+            // values back. The tunnel path below does not apply here.
+            if (_proxyLive && SysProxyLive(_state))
+            {
+                if (SystemProxy.IsApplied) SystemProxy.Clear();
+                else SystemProxy.Apply("127.0.0.1", Config.ProxyPort);
+                Invalidate();
+                return;
+            }
+            // In no-VPN proxy mode the left pill shows the endpoint and does
+            // nothing; pressing it would offer a start the engine declines.
             if (_proxyLive) return;
             StopOrStartVpn();
         };
@@ -207,6 +217,13 @@ public sealed class MainForm : Form
         }
     }
 
+    /// <summary>System proxy mode is really up: Tor is at 100%, a live SOCKS
+    /// endpoint exists, and the machine (not a tunnel) is doing the routing.
+    /// The screen reads CONNECTED here — READY is reserved for the no-VPN
+    /// (manual) mode, where the user points each app at the address.</summary>
+    private static bool SysProxyLive(VpnState s) =>
+        Config.SystemProxyMode && !Config.ProxyOnlyMode && s.SocksEndpoint.Length > 0;
+
     private void RefreshFromState()
     {
         var prev = _state;
@@ -214,6 +231,7 @@ public sealed class MainForm : Form
         var now = Environment.TickCount64;
 
         var sc = UiHelpers.StateColor(_state);
+        if (SysProxyLive(_state)) sc = DeltaTorTheme.Green;
         var sub = SubColor(_state);
         if (sc != _scTo || sub != _subTo)
         {
@@ -535,7 +553,9 @@ public sealed class MainForm : Form
 
         // Status chip, right-aligned on the menu row: Surface pill, BorderLight
         // hairline, 9px state dot, labelSmall bold in the state color.
-        var label = UiHelpers.StatusLabel(_state);
+        var label = SysProxyLive(_state)
+            ? "CONNECTED"
+            : UiHelpers.StatusLabel(_state);
         using var capFont = new Font(
             DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
         var textH = g.MeasureString(label, capFont).Height;
@@ -620,11 +640,16 @@ public sealed class MainForm : Form
     {
         var s = _state;
         var hasError = s.Error != null;
-        var word = UiHelpers.WordFor(
-            s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping, hasError);
-        var sub = UiHelpers.SublineFor(
-            s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping,
-            s.Transport, _peak, hasError);
+        var sysLive = SysProxyLive(s);
+        var word = sysLive
+            ? "CONNECTED"
+            : UiHelpers.WordFor(
+                s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping, hasError);
+        var sub = sysLive
+            ? "SYSTEM PROXY ACTIVE"
+            : UiHelpers.SublineFor(
+                s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping,
+                s.Transport, _peak, hasError);
 
         using var wordFont = new Font(DeltaTorTheme.FontFamilyName, 20f, FontStyle.Bold);
         using var subFont = new Font(
@@ -764,7 +789,8 @@ public sealed class MainForm : Form
         // The power glyph — crisp single color: 280° arc from 310° plus the stem.
         var rg = inner * 0.46f;
         var gp = 9f;
-        var glyphColor = UiHelpers.GlyphColor(connecting, _state.Connected, _state.Stopping);
+        var glyphColor = UiHelpers.GlyphColor(connecting,
+            _state.Connected || SysProxyLive(_state), _state.Stopping);
         using (var pen = new Pen(glyphColor, gp)
         {
             StartCap = System.Drawing.Drawing2D.LineCap.Round,
@@ -841,8 +867,13 @@ public sealed class MainForm : Form
         if (pillsVisible)
         {
             var py = y + 4f;
+            // Live endpoint: system-proxy mode turns this pill into the
+            // machine-proxy switch (no address dump); no-VPN mode keeps
+            // showing where to point the apps.
             _pillAction.Label = _proxyLive
-                ? "SOCKS5 " + StripScheme(s.SocksEndpoint)
+                ? SysProxyLive(s)
+                    ? (SystemProxy.IsApplied ? "SYSTEM PROXY ON" : "SYSTEM PROXY OFF")
+                    : "SOCKS5 " + StripScheme(s.SocksEndpoint)
                 : s.Connected && !s.Stopping
                     ? "STOP VPN"
                     : "START VPN";
