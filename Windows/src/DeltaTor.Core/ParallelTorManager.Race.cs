@@ -636,8 +636,9 @@ public static partial class ParallelTorManager
     public static bool StopAllAndWait(int basePort, string host = "127.0.0.1")
     {
         // basePort itself is the app's own bridge port; runners take
-        // +1 .. +MaxPortOffset.
-        var ports = Enumerable.Range(basePort, MaxPortOffset + 1).ToList();
+        // +1 .. +MaxPortOffset for SOCKS and +MaxPortOffset+HttpPortOffset for
+        // their Tor HTTPTunnelPort, so wait on the whole span.
+        var ports = Enumerable.Range(basePort, MaxPortOffset + TorRunner.HttpPortOffset + 1).ToList();
         var list = DetachRunners();
         foreach (var runner in list)
         {

@@ -68,6 +68,7 @@ public sealed class NoticeDialog : Form
 
         Controls.Add(_card);
         Controls.Add(_ok);
+        _ok.BringToFront();
 
         _ok.Clicked += (_, _) => Close();
         KeyDown += (_, e) =>
@@ -154,6 +155,11 @@ public sealed class NoticeDialog : Form
         var height = _blocksTop + _blocksH + 20 + ButtonHeight + Pad;
         _card.SetBounds(0, 0, _dialogW, height);
         Height = height;
+        // Clip the borderless form to the card's rounded outline so the
+        // square corners do not show the form BackColor as a black frame.
+        using (var path = DrawUtil.RoundedRect(
+            new RectangleF(0f, 0f, _dialogW, height), 22f))
+            Region = new Region(path);
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
