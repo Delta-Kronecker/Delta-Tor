@@ -229,7 +229,7 @@ public sealed class NoticeDialog : Form
             var saved = g.Save();
             g.SetClip(viewport);
             g.TranslateTransform(0f, -_owner._scroll);
-            var y = _owner._blocksTop;
+            var y = (float)_owner._blocksTop;
             foreach (var row in _owner._rows)
             {
                 if (row.Text.Length > 0)
