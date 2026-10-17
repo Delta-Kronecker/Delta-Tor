@@ -140,6 +140,13 @@ public static class BridgeRace
 
     private static TorRunner? _activeRunner;
 
+    /// <summary>
+    /// The winning Tor's HTTPTunnelPort, the port the system proxy points at
+    /// in System proxy mode. Kept here so the UI's proxy on/off pill can
+    /// re-apply the machine proxy without racing the engine for the winner.
+    /// </summary>
+    public static int ActiveHttpProxyPort { get; private set; }
+
     private static CancellationTokenSource? _statsCts;
     private static CancellationTokenSource? _linkWatchCts;
     private static CancellationTokenSource? _exitLocatorCts;
@@ -529,7 +536,8 @@ public static class BridgeRace
             });
             if (sysProxy && !Config.ProxyOnlyMode)
             {
-                SystemProxy.Apply(proxyHost, proxyPort);
+                ActiveHttpProxyPort = w.HttpProxyPort;
+                SystemProxy.Apply(proxyHost, w.HttpProxyPort);
             }
             Notify("DeltaTor", $"Proxy ready · {endpoint}", progress: false, progressValue: 0);
             _quietProbes = 0;
@@ -951,6 +959,13 @@ public static class BridgeRace
 
             TorSocksBridge.Repoint(winner.TorSocksPort);
             _activeRunner = winner;
+            // The system proxy still points at the dead runner's HTTP port;
+            // re-aim it at the fresh winner's HTTPTunnelPort.
+            if (Config.SystemProxyMode && !Config.ProxyOnlyMode)
+            {
+                ActiveHttpProxyPort = winner.HttpProxyPort;
+                SystemProxy.Apply("127.0.0.1", winner.HttpProxyPort);
+            }
             AppState.Update(s => s with
             {
                 Transports = new Dictionary<string, int>(StringComparer.Ordinal) { [winner.Name] = 100 },

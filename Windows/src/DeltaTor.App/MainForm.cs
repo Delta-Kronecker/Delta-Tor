@@ -52,8 +52,10 @@ public sealed class MainForm : Form
     private bool _noticeOpen;
 
     // Bottom-panel action pills: live controls laid over the painted rows.
-    private readonly GradientPill _pillAction = new() { Label = "START VPN", Filled = false };
-    private readonly GradientPill _pillDisconnect = new() { Label = "DISCONNECT", Filled = false };
+    private readonly GradientPill _pillAction = new()
+    { Label = "START VPN", Filled = false, ShowBorder = false };
+    private readonly GradientPill _pillDisconnect = new()
+    { Label = "DISCONNECT", Filled = false, ShowBorder = false };
     private bool _proxyLive;
 
     // The control drawer sits over everything, pills included.
@@ -91,7 +93,7 @@ public sealed class MainForm : Form
             if (_proxyLive && SysProxyLive(_state))
             {
                 if (SystemProxy.IsApplied) SystemProxy.Clear();
-                else SystemProxy.Apply("127.0.0.1", Config.ProxyPort);
+                else SystemProxy.Apply("127.0.0.1", BridgeRace.ActiveHttpProxyPort);
                 Invalidate();
                 return;
             }
@@ -659,7 +661,7 @@ public sealed class MainForm : Form
         var subH = sub.Length > 0 ? g.MeasureString(sub, subFont).Height : 0f;
         var blockH = wordH + 8f + subH;
         var cy = ClientSize.Height / 2f;
-        var top = cy - 112f - blockH / 2f;
+        var top = cy - 150f - blockH / 2f;
 
         DrawSpacedShadow(g, word, wordFont, _scCurrent, ClientSize.Width, top,
             Color.FromArgb(115, Color.Black)); // black 0.45, offset (0, 4)

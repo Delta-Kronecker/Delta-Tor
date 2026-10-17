@@ -6,11 +6,11 @@ namespace DeltaTor.Core;
 
 /// <summary>
 /// Points WinINET (the per-user Windows proxy Edge/Chrome/IE read) at the
-/// local HTTP→SOCKS bridge (<see cref="HttpSocksBridge"/>), which forwards to
-/// Tor. Applied only in System proxy mode after bootstrap reaches 100% with
-/// the "No VPN and System Proxy" toggle off; the values that were there
-/// before are saved once and restored when the proxy is cleared (disconnect,
-/// teardown, mode change to Tun, app exit).
+/// winning Tor instance's own HTTPTunnelPort (an HTTP CONNECT front Tor
+/// opens next to its SOCKS5 port). Applied only in System proxy mode after
+/// bootstrap reaches 100% with the "No VPN and System Proxy" toggle off;
+/// the values that were there before are saved once and restored when the
+/// proxy is cleared (disconnect, teardown, mode change to Tun, app exit).
 /// </summary>
 public static class SystemProxy
 {
@@ -35,26 +35,18 @@ public static class SystemProxy
     }
 
     /// <summary>Enable the machine proxy at host:port (HTTP-proxy form).
-    /// No-op-safe on failure.</summary>
+    /// <paramref name="port"/> is the winner's Tor HTTPTunnelPort. No-op-safe
+    /// on failure.</summary>
     public static void Apply(string host, int port)
     {
         lock (Lock)
         {
             try
             {
-                // WinINET only speaks the HTTP-proxy protocol to this address
-                // (CONNECT / absolute-form), while Tor speaks SOCKS5 — so the
-                // machine points at the local bridge, not at Tor's SOCKS port.
-                if (!HttpSocksBridge.Start())
-                {
-                    AppLog.W("SystemProxy", "HTTP bridge is down; system proxy not set");
-                    return;
-                }
                 using var key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
                 if (key == null)
                 {
                     AppLog.W("SystemProxy", "Internet Settings key missing; system proxy not set");
-                    HttpSocksBridge.Stop();
                     return;
                 }
                 if (!_applied)
@@ -63,16 +55,16 @@ public static class SystemProxy
                     _prevServer = key.GetValue("ProxyServer") as string ?? "";
                 }
                 // Bare host:port — the HTTP-proxy form the Windows settings
-                // page expects: Address 127.0.0.1, Port 9070. No scheme, no
+                // page expects: Address 127.0.0.1, Port 9071. No scheme, no
                 // "socks=" prefix (which Windows shows as garbage and many
-                // apps turn into "http://socks=…").
-                var target = $"{host}:{HttpSocksBridge.Port}";
+                // apps turn into "http://socks=…"). The port is Tor's own
+                // HTTPTunnelPort, which speaks HTTP CONNECT — no custom bridge.
+                var target = $"{host}:{port}";
                 key.SetValue("ProxyEnable", 1, RegistryValueKind.DWord);
                 key.SetValue("ProxyServer", target, RegistryValueKind.String);
                 NotifyWinInet();
                 _applied = true;
-                AppLog.I("SystemProxy",
-                    $"System proxy set to {target} (HTTP bridge → socks {host}:{port})");
+                AppLog.I("SystemProxy", $"System proxy set to {target} (Tor HTTPTunnelPort)");
             }
             catch (Exception e)
             {
@@ -81,8 +73,7 @@ public static class SystemProxy
         }
     }
 
-    /// <summary>Put the pre-app values back and stop the bridge. No-op when
-    /// nothing was applied.</summary>
+    /// <summary>Put the pre-app values back. No-op when nothing was applied.</summary>
     public static void Clear()
     {
         lock (Lock)
@@ -106,7 +97,6 @@ public static class SystemProxy
             finally
             {
                 _applied = false;
-                HttpSocksBridge.Stop();
             }
         }
     }

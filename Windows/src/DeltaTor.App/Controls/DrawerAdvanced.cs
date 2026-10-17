@@ -37,6 +37,36 @@ public sealed partial class DrawerPanel
     {
         public Action<MouseEventArgs>? WheelToDrawer;
 
+        public DrawerEdit()
+        {
+            // A right-click Paste is the reliable path: the multiline Edit's
+            // own Ctrl+V can be eaten by a parent key preview, so both this
+            // menu and ProcessCmdKey below guarantee a paste works.
+            var menu = new ContextMenuStrip
+            {
+                BackColor = DeltaTorTheme.Surface,
+                ForeColor = DeltaTorTheme.Text,
+                ShowImageMargin = false
+            };
+            menu.Items.Add("Paste", null, (_, _) => Paste());
+            menu.Items.Add("Copy", null, (_, _) => Copy());
+            menu.Items.Add("Cut", null, (_, _) => Cut());
+            menu.Items.Add("Select All", null, (_, _) => SelectAll());
+            ContextMenuStrip = menu;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            // Handled here (before the Edit control sees the key) so Ctrl+V
+            // pastes even if something up the chain would otherwise swallow it.
+            if (keyData == (Keys.Control | Keys.V))
+            {
+                Paste();
+                return true;
+            }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             if (Focused)

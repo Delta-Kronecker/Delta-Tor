@@ -268,8 +268,12 @@ public sealed partial class DrawerPanel
 
             var contentY = sy + (h - blockH) / 2f;
             var x = row.X + 8f;
-            using (var b = new SolidBrush(DeltaTorTheme.Text))
-                g.DrawString(emoji, _fEmoji!, b, x, contentY + (17f - _emojiLineH) / 2f);
+            // GDI+ DrawString does not apply the regional-indicator flag
+            // substitution and shows the raw letters (e.g. "DE"); TextRenderer
+            // (GDI) with the emoji font does render the real flag.
+            TextRenderer.DrawText(g, emoji, _fEmoji!,
+                new Point((int)x, (int)(contentY + (17f - _emojiLineH) / 2f)),
+                DeltaTorTheme.Text, TextFormatFlags.NoPadding);
             x += 19f + 12f;
 
             // Capacity numbers sit between the name and the code; measured

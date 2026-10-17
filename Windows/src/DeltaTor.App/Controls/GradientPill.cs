@@ -10,6 +10,7 @@ public sealed class GradientPill : Control
 {
     private string _label = "";
     private bool _filled;
+    private bool _showBorder = true;
     private float _labelPt = DeltaTorTheme.BodyPt;
     private float _radius = 20f;
 
@@ -33,6 +34,15 @@ public sealed class GradientPill : Control
     {
         get => _filled;
         set { _filled = value; Invalidate(); }
+    }
+
+    /// <summary>Outline pills draw a BorderLight hairline by default; the
+    /// home-screen action pills turn it off (the user reads it as a stray
+    /// box around the button).</summary>
+    public bool ShowBorder
+    {
+        get => _showBorder;
+        set { _showBorder = value; Invalidate(); }
     }
 
     public float LabelPt
@@ -86,9 +96,12 @@ public sealed class GradientPill : Control
         using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(rect, from, to, 0f))
             g.FillPath(brush, path);
 
-        using (var pen = new Pen(
-            _filled ? Color.FromArgb(102, DeltaTorTheme.AccentLight) : DeltaTorTheme.BorderLight))
+        if (_showBorder)
+        {
+            using var pen = new Pen(
+                _filled ? Color.FromArgb(102, DeltaTorTheme.AccentLight) : DeltaTorTheme.BorderLight);
             g.DrawPath(pen, path);
+        }
 
         // Label color: dimmed when inert is the only cue for a temporarily
         // disabled pill, so the button keeps its size instead of blinking

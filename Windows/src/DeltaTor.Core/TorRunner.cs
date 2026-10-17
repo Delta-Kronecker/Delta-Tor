@@ -73,6 +73,18 @@ public sealed partial class TorRunner
 
     public string Name => _name;
     public int TorSocksPort { get; }
+
+    /// <summary>
+    /// Where this Tor listens for HTTP CONNECT tunneling (torrc
+    /// HTTPTunnelPort). Windows/Edge reach the machine proxy over plain HTTP
+    /// CONNECT, while Tor's SocksPort only speaks SOCKS5 — HTTPTunnelPort is
+    /// Tor's own HTTP front for that. Offset from the SOCKS port so every
+    /// racing runner gets a unique HTTP port too (the SOCKS range is
+    /// basePort+1..basePort+MaxPortOffset, so +20 lands clear of it).
+    /// </summary>
+    public const int HttpPortOffset = 20;
+    public int HttpProxyPort => TorSocksPort + HttpPortOffset;
+
     public bool Ready => _ready;
     public bool Started => _started;
     public bool ConfirmedStopped => _confirmedStopped;
@@ -712,6 +724,7 @@ public sealed partial class TorRunner
         var torrcFile = Path.Combine(_dataDir, "torrc");
         var common = new StringBuilder();
         common.Append($"SocksPort {_listenHost}:{TorSocksPort}\n");
+        common.Append($"HTTPTunnelPort {_listenHost}:{HttpProxyPort}\n");
         common.Append($"DataDirectory {Quote(_dataDir)}\n");
         common.Append($"UseBridges {(isDirect ? 0 : 1)}\n");
         if (File.Exists(TorBinaries.GeoIp)) common.Append($"GeoIPFile {Quote(TorBinaries.GeoIp)}\n");
