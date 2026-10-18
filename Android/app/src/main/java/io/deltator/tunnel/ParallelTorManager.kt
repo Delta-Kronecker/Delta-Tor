@@ -52,6 +52,8 @@ object ParallelTorManager {
     const val TRANSPORT_OBFS4 = "obfs4"
     const val TRANSPORT_WEBTUNNEL = "webtunnel"
     const val TRANSPORT_SNOWFLAKE = "snowflake"
+    const val TRANSPORT_DNSTT = "dnstt"
+    const val TRANSPORT_MEEK_LITE = "meek_lite"
     const val TRANSPORT_FRESH = "fresh"
     const val TRANSPORT_COMBINED = "combined"
     const val TRANSPORT_DIRECT = "direct"
@@ -68,6 +70,8 @@ object ParallelTorManager {
         TRANSPORT_OBFS4,
         TRANSPORT_WEBTUNNEL,
         TRANSPORT_SNOWFLAKE,
+        TRANSPORT_DNSTT,
+        TRANSPORT_MEEK_LITE,
         TRANSPORT_DIRECT,
         TRANSPORT_CUSTOM
     )
@@ -163,6 +167,8 @@ object ParallelTorManager {
             "$BRIDGE_BASE_URL/webtunnel_ipv6.txt"
         ),
         TRANSPORT_SNOWFLAKE to listOf("$BRIDGE_BASE_URL/snowflake.txt"),
+        TRANSPORT_DNSTT to listOf("$BRIDGE_BASE_URL/dnstt.txt"),
+        TRANSPORT_MEEK_LITE to listOf("$BRIDGE_BASE_URL/meek_lite.txt"),
         TRANSPORT_FRESH to listOf(
             "$BRIDGE_BASE_URL/webtunnel_72h.txt",
             "$BRIDGE_BASE_URL/vanilla_72h.txt",
@@ -199,7 +205,7 @@ object ParallelTorManager {
     private const val PORT_FREE_POLL_MS = 250L
 
     /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
-    private const val MAX_PORT_OFFSET = 15
+    private const val MAX_PORT_OFFSET = 19
 
     /**
      * The same lines in a new order.
@@ -232,7 +238,11 @@ object ParallelTorManager {
         TRANSPORT_FRESH to basePort + 12,
         memoryNameFor(TRANSPORT_FRESH) to basePort + 13,
         TRANSPORT_COMBINED to basePort + 14,
-        memoryNameFor(TRANSPORT_COMBINED) to basePort + 15
+        memoryNameFor(TRANSPORT_COMBINED) to basePort + 15,
+        TRANSPORT_DNSTT to basePort + 16,
+        memoryNameFor(TRANSPORT_DNSTT) to basePort + 17,
+        TRANSPORT_MEEK_LITE to basePort + 18,
+        memoryNameFor(TRANSPORT_MEEK_LITE) to basePort + 19
     )
 
 
@@ -405,6 +415,8 @@ object ParallelTorManager {
                 TRANSPORT_OBFS4 -> add(TRANSPORT_OBFS4 to (lines[TRANSPORT_OBFS4] ?: ""))
                 TRANSPORT_WEBTUNNEL -> add(TRANSPORT_WEBTUNNEL to (lines[TRANSPORT_WEBTUNNEL] ?: ""))
                 TRANSPORT_SNOWFLAKE -> add(TRANSPORT_SNOWFLAKE to (lines[TRANSPORT_SNOWFLAKE] ?: ""))
+                TRANSPORT_DNSTT -> add(TRANSPORT_DNSTT to (lines[TRANSPORT_DNSTT] ?: ""))
+                TRANSPORT_MEEK_LITE -> add(TRANSPORT_MEEK_LITE to (lines[TRANSPORT_MEEK_LITE] ?: ""))
                 TRANSPORT_DIRECT -> add(TRANSPORT_DIRECT to "")
                 TRANSPORT_CUSTOM -> add(TRANSPORT_CUSTOM to (lines[TRANSPORT_CUSTOM] ?: ""))
             }

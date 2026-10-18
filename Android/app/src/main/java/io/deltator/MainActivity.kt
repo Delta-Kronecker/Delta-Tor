@@ -1959,6 +1959,22 @@ private fun BridgeCard(
 
         Spacer(Modifier.height(12.dp))
 
+        Row(modifier = Modifier.fillMaxWidth()) {
+            StatCell(
+                "DNSTT", bridges.dnstt, bridges.memOf(ParallelTorManager.TRANSPORT_DNSTT),
+                DeltaTor.Green, Modifier.weight(1f)
+            )
+            CellDivider()
+            StatCell(
+                "MEEK LITE", bridges.meekLite, bridges.memOf(ParallelTorManager.TRANSPORT_MEEK_LITE),
+                DeltaTor.Amber, Modifier.weight(1f)
+            )
+            CellDivider()
+            Box(Modifier.weight(1f))
+        }
+
+        Spacer(Modifier.height(12.dp))
+
         val err = bridges.error != null
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -2991,6 +3007,8 @@ private fun LazyListScope.AdvancedItems(
                     ParallelTorManager.TRANSPORT_OBFS4 to "obfs4",
                     ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel",
                     ParallelTorManager.TRANSPORT_SNOWFLAKE to "Snowflake",
+                    ParallelTorManager.TRANSPORT_DNSTT to "dnstt",
+                    ParallelTorManager.TRANSPORT_MEEK_LITE to "Meek Lite",
                     ParallelTorManager.TRANSPORT_DIRECT to "Direct",
                     ParallelTorManager.TRANSPORT_CUSTOM to "Custom"
                 )
@@ -3019,6 +3037,10 @@ private fun LazyListScope.AdvancedItems(
                         ParallelTorManager.TRANSPORT_WEBTUNNEL -> "webtunnel only, via lyrebird. Needs IPv6."
                         ParallelTorManager.TRANSPORT_SNOWFLAKE ->
                             "Snowflake only, via lyrebird. Uses the bundled two bridges."
+                        ParallelTorManager.TRANSPORT_DNSTT ->
+                            "dnstt only: a DNS tunnel client runs in-process and Tor connects through it. Slower, but hard to block."
+                        ParallelTorManager.TRANSPORT_MEEK_LITE ->
+                            "Meek Lite only, via lyrebird. Domain-fronted HTTP through a CDN."
                         ParallelTorManager.TRANSPORT_DIRECT ->
                             "No bridges at all \u2014 connects straight to a guard."
                         else -> "Uses only the bridge lines you paste below."

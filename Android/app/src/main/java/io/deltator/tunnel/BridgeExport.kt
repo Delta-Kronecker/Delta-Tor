@@ -36,6 +36,8 @@ object BridgeExport {
         ParallelTorManager.TRANSPORT_OBFS4 to "obfs4.txt",
         ParallelTorManager.TRANSPORT_WEBTUNNEL to "webtunnel.txt",
         ParallelTorManager.TRANSPORT_SNOWFLAKE to "snowflake.txt",
+        ParallelTorManager.TRANSPORT_DNSTT to "dnstt.txt",
+        ParallelTorManager.TRANSPORT_MEEK_LITE to "meek_lite.txt",
         ParallelTorManager.TRANSPORT_FRESH to "fresh.txt",
         ParallelTorManager.TRANSPORT_COMBINED to "combined.txt"
     )
@@ -49,6 +51,8 @@ object BridgeExport {
         ParallelTorManager.TRANSPORT_OBFS4 to "obfs4.txt",
         ParallelTorManager.TRANSPORT_WEBTUNNEL to "webtunnel.txt",
         ParallelTorManager.TRANSPORT_SNOWFLAKE to "snowflake.txt",
+        ParallelTorManager.TRANSPORT_DNSTT to "dnstt.txt",
+        ParallelTorManager.TRANSPORT_MEEK_LITE to "meek_lite.txt",
         ParallelTorManager.TRANSPORT_FRESH to "fresh.txt",
         ParallelTorManager.TRANSPORT_COMBINED to "combined.txt",
         ParallelTorManager.TRANSPORT_MEMORY to "auto-mixed.txt"
