@@ -133,6 +133,8 @@ object BridgeStore {
                 obfs4 = counts[ParallelTorManager.TRANSPORT_OBFS4] ?: 0,
                 webtunnel = counts[ParallelTorManager.TRANSPORT_WEBTUNNEL] ?: 0,
                 snowflake = counts[ParallelTorManager.TRANSPORT_SNOWFLAKE] ?: 0,
+                dnstt = counts[ParallelTorManager.TRANSPORT_DNSTT] ?: 0,
+                meekLite = counts[ParallelTorManager.TRANSPORT_MEEK_LITE] ?: 0,
                 fresh = counts[ParallelTorManager.TRANSPORT_FRESH] ?: 0,
                 combined = combinedCount(context),
                 memory = BridgeMemory.countsByTransport(context),

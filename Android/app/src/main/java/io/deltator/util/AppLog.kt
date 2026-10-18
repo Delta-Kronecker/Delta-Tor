@@ -122,7 +122,7 @@ object AppLog {
     }
 
     /** Transports raced in parallel; the log screen lets the user pick one. */
-    val TRANSPORTS = listOf("vanilla", "obfs4", "webtunnel", "snowflake", "memory", "direct", "custom")
+    val TRANSPORTS = listOf("vanilla", "obfs4", "webtunnel", "snowflake", "dnstt", "meek_lite", "memory", "direct", "custom")
 
     private val runnerTag = Regex("""TorRunner\[(\w+)]""")
 

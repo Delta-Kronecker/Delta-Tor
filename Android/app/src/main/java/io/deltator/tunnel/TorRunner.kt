@@ -2,6 +2,8 @@ package io.deltator.tunnel
 
 import android.content.Context
 import io.deltator.util.AppLog as Log
+import mobile.DnsttClient
+import mobile.Mobile
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -40,6 +42,14 @@ class TorRunner(
     @Volatile private var lyrebirdProcess: Process? = null
     private val lyrebirdCmethods = mutableMapOf<String, String>()
 
+    /**
+     * dnstt is not a managed pluggable transport: each bridge line starts an
+     * in-process Go client (from the bundled golibs AAR) that listens on a
+     * loopback port, and Tor dials that port as a vanilla bridge. The clients
+     * live as long as this runner and are torn down in [stop].
+     */
+    private val dnsttClients = mutableListOf<DnsttClient>()
+
     /** The loopback control port Tor binds when exit countries are selected. */
     @Volatile private var controlPort = 0
     private val exitApplied = AtomicBoolean(false)
@@ -59,7 +69,12 @@ class TorRunner(
 
     fun isRunning(): Boolean {
         val lyrebirdOk = lyrebirdProcess == null || lyrebirdProcess?.isAlive == true
-        return torProcess?.isAlive == true && lyrebirdOk
+        // A runner whose dnstt clients have all died is not running either: its
+        // local vanilla bridges point at listeners that no longer exist.
+        val dnsttOk = synchronized(dnsttClients) {
+            dnsttClients.isEmpty() || dnsttClients.any { it.isRunning }
+        }
+        return torProcess?.isAlive == true && lyrebirdOk && dnsttOk
     }
 
     fun isReady(): Boolean = ready && torProcess?.isAlive == true
@@ -311,8 +326,23 @@ class TorRunner(
             }
             val cleanLines = wellFormed.take(MAX_BRIDGE_LINES)
 
+            // dnstt lines are rewritten to local vanilla bridges before anything
+            // else looks at them: lyrebird does not serve dnstt, and Tor cannot
+            // parse a "dnstt ..." Bridge line. Every remaining line (obfs4,
+            // meek_lite, plain vanilla, a mixed memory pool) keeps its format.
+            val (dnsttLines, portLines) = cleanLines.partition { it.startsWith("$DNSTT_PREFIX ") }
+            var usablePreLines = portLines
+            if (dnsttLines.isNotEmpty()) {
+                val rewritten = startDnsttClients(dnsttLines)
+                if (rewritten.isEmpty() && portLines.isEmpty()) {
+                    stop()
+                    return Result.failure(RuntimeException("$tag: every dnstt line failed to start"))
+                }
+                usablePreLines = portLines + rewritten
+            }
+
             val isDirect = name == "direct"
-            if (cleanLines.isEmpty() && !isDirect) {
+            if (usablePreLines.isEmpty() && !isDirect) {
                 return Result.failure(RuntimeException("$tag: no bridge lines available"))
             }
 
@@ -322,7 +352,7 @@ class TorRunner(
             // plain `ip:port fp` lines with prefixed ones, and a bare address as
             // the first token must not be mistaken for a CMETHOD.
             val transports = if (isVanilla) mutableListOf<String>() else
-                cleanLines.mapNotNull { it.split(WHITESPACE).firstOrNull()?.lowercase() }
+                usablePreLines.mapNotNull { it.split(WHITESPACE).firstOrNull()?.lowercase() }
                     .filter { it in PLUGGABLE_TRANSPORTS }
                     .distinct()
                     .toMutableList()
@@ -336,7 +366,7 @@ class TorRunner(
 
             // The lines Tor is finally given. Narrowed below when lyrebird turns
             // out not to speak every transport the list asked for.
-            var usableLines = cleanLines
+            var usableLines = usablePreLines
 
             if (transports.isNotEmpty()) {
                 val ptBinary = getObfs4proxyPath()
@@ -353,7 +383,7 @@ class TorRunner(
                     // needs nothing else is a real failure.
                     Log.w(tag, "Lyrebird cannot serve $missing; dropping those bridge line(s)")
                     transports.removeAll(missing.toSet())
-                    usableLines = cleanLines.filterNot { line ->
+                    usableLines = usablePreLines.filterNot { line ->
                         line.split(WHITESPACE).firstOrNull()?.lowercase() in missing
                     }
                     if (usableLines.isEmpty() && !isDirect) {
@@ -520,6 +550,59 @@ class TorRunner(
         return Result.success(Unit)
     }
 
+    // --- dnstt in-process clients ---
+
+    /**
+     * Start one Go dnstt client per bridge line and rewrite each line to a
+     * local vanilla bridge (`127.0.0.1:<port> FINGERPRINT`). A line looks like
+     * `dnstt <ip>:<port> <FP> udp=8.8.8.8:53|doh=https://... pubkey=<hex>
+     * domain=<tunnel-domain>`; the first token is only a placeholder address
+     * Tor would never dial. Returns the rewritten lines, in input order.
+     */
+    private fun startDnsttClients(lines: List<String>): List<String> {
+        val rewritten = mutableListOf<String>()
+        for (line in lines) {
+            try {
+                val parts = line.split(WHITESPACE).filter { it.isNotBlank() }
+                if (parts.size < 5) throw RuntimeException("too few fields")
+                val fingerprint = parts[2]
+                val args = parts.drop(3).associate { token ->
+                    val i = token.indexOf('=')
+                    if (i > 0) token.substring(0, i).lowercase() to token.substring(i + 1)
+                    else token.lowercase() to ""
+                }
+                val resolver = args["udp"]?.let { "udp=$it" }
+                    ?: args["doh"]?.let { "doh=$it" }
+                    ?: args["dot"]?.let { "dot=$it" }
+                    ?: throw RuntimeException("missing udp=/doh=/dot= resolver")
+                val pubkey = args["pubkey"] ?: throw RuntimeException("missing pubkey=")
+                val domain = args["domain"] ?: throw RuntimeException("missing domain=")
+
+                val listenPort = freeEphemeralPort()
+                val listenAddr = "$listenHost:$listenPort"
+                val client = Mobile.newClient(resolver, domain, pubkey, listenAddr)
+                client.start()
+                val deadline = System.currentTimeMillis() + DNSTT_START_TIMEOUT_MS
+                while (!client.isRunning && System.currentTimeMillis() < deadline) {
+                    Thread.sleep(100)
+                }
+                if (!client.isRunning) {
+                    runCatching { client.stop() }
+                    throw RuntimeException("client did not come up")
+                }
+                synchronized(dnsttClients) { dnsttClients.add(client) }
+                noteLog("dnstt: local bridge $listenAddr -> $domain via $resolver")
+                Log.i(tag, "dnstt client up: $listenAddr -> $domain ($resolver)")
+                rewritten += "$listenAddr $fingerprint"
+            } catch (e: Exception) {
+                noteLog("dnstt line failed: ${e.message}")
+                Log.w(tag, "dnstt line failed (${e.message}): ${line.take(70)}")
+            }
+        }
+        Log.i(tag, "dnstt: ${rewritten.size}/${lines.size} client(s) running")
+        return rewritten
+    }
+
     // --- torrc ---
 
     private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
@@ -651,6 +734,12 @@ class TorRunner(
         val birdDead = terminate(bird, "lyrebird")
         confirmedStopped = (tor == null || torDead) && (bird == null || birdDead)
 
+        val dnstts = synchronized(dnsttClients) { dnsttClients.toList().also { dnsttClients.clear() } }
+        dnstts.forEach { client -> runCatching { client.stop() } }
+        if (dnstts.isNotEmpty()) {
+            Log.i(tag, "stopped ${dnstts.size} dnstt client(s)")
+        }
+
         lyrebirdCmethods.clear()
         ready = false
     }
@@ -690,7 +779,8 @@ class TorRunner(
     private fun isValidBridgeLine(line: String): Boolean {
         val parts = line.split(WHITESPACE).filter { it.isNotBlank() }
         if (parts.size < 2) return false
-        val fpIndex = if (parts[0].lowercase() in PLUGGABLE_TRANSPORTS) 2 else 1
+        val first = parts[0].lowercase()
+        val fpIndex = if (first in PLUGGABLE_TRANSPORTS || first == DNSTT_PREFIX) 2 else 1
         if (parts.size <= fpIndex) return false
         val addr = parts[fpIndex - 1]
         if (!addr.contains(':') || addr.startsWith(":")) return false
@@ -716,9 +806,11 @@ class TorRunner(
         private const val MAX_BRIDGE_LINES = 150
         private const val FINGERPRINT_HEX_LENGTH = 40
         private const val TERMINATE_TIMEOUT_MS = 2_000L
+        private const val DNSTT_START_TIMEOUT_MS = 3_000L
         private const val TAG_EXIT = "ExitNode"
         private const val CACHED_MARKER = "(cached): \$"
         private const val FRESH_MARKER = "(fresh): \$"
+        private const val DNSTT_PREFIX = "dnstt"
         private val WHITESPACE = Regex("\\s+")
         private val PLUGGABLE_TRANSPORTS = setOf("obfs4", "webtunnel", "snowflake", "meek_lite", "meek")
     }

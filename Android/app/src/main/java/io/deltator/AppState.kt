@@ -115,6 +115,8 @@ object AppState {
         val obfs4: Int = 0,
         val webtunnel: Int = 0,
         val snowflake: Int = 0,
+        val dnstt: Int = 0,
+        val meekLite: Int = 0,
         val fresh: Int = 0,
         val combined: Int = 0,
         /**

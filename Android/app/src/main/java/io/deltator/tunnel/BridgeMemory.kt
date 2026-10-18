@@ -205,7 +205,7 @@ object BridgeMemory {
     }
 
     private val WHITESPACE = Regex("\\s+")
-    private val PLUGGABLE_PREFIXES = setOf("obfs4", "webtunnel", "snowflake", "meek_lite", "meek")
+    private val PLUGGABLE_PREFIXES = setOf("obfs4", "webtunnel", "snowflake", "meek_lite", "meek", "dnstt")
 
     /** Transports that keep their own memory pool. */
     val TRANSPORTS = listOf(
@@ -213,6 +213,8 @@ object BridgeMemory {
         ParallelTorManager.TRANSPORT_OBFS4,
         ParallelTorManager.TRANSPORT_WEBTUNNEL,
         ParallelTorManager.TRANSPORT_SNOWFLAKE,
+        ParallelTorManager.TRANSPORT_DNSTT,
+        ParallelTorManager.TRANSPORT_MEEK_LITE,
         ParallelTorManager.TRANSPORT_FRESH,
         ParallelTorManager.TRANSPORT_COMBINED,
         ParallelTorManager.TRANSPORT_MEMORY
