@@ -73,6 +73,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
@@ -249,19 +251,23 @@ class MainActivity : ComponentActivity() {
             sendAction(TorVpnService.ACTION_DISCONNECT)
             return
         }
-        val vpnIntent = VpnService.prepare(this)
         if (Config.proxyOnlyMode) {
-            // No tunnel will be built, so do not ask for the permission that
-            // authorises one. Android's VPN consent dialog says the app can
-            // "monitor all network traffic" and route it through a VPN, which in
-            // proxy mode is false: nothing is captured and nothing is routed. Ask
-            // anyway and the user grants standing consent for a power the app is
-            // explicitly not using, then has to find Settings to revoke it.
+            // Proxy mode builds no tunnel, so it must never touch the VPN
+            // machinery at all. prepare() is how the system hands the VPN slot
+            // to a package: with standing consent granted in an earlier VPN-mode
+            // session it revokes whatever VPN is active right now -- even one
+            // belonging to a different app -- which is how starting DeltaTor in
+            // proxy mode was cutting the user's other VPN. No dialog is needed
+            // here either: Android's consent text describes monitoring traffic
+            // through a VPN, and in proxy mode nothing is captured or routed.
             startConnect()
-        } else if (vpnIntent != null) {
-            vpnPermissionLauncher.launch(vpnIntent)
         } else {
-            startConnect()
+            val vpnIntent = VpnService.prepare(this)
+            if (vpnIntent != null) {
+                vpnPermissionLauncher.launch(vpnIntent)
+            } else {
+                startConnect()
+            }
         }
     }
 
@@ -404,6 +410,7 @@ private fun MainScreen(
                     progress = if (release.totalBytes > 0L) {
                         release.bytes.toFloat() / release.totalBytes.toFloat()
                     } else 0f,
+                    error = release.lastError,
                     onTap = {
                         when (release.phase) {
                             "ready" -> ReleaseChecker.installLatest(context)
@@ -2687,6 +2694,7 @@ private fun UpdateBanner(
     version: String,
     phase: String,
     progress: Float,
+    error: String,
     onTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2740,6 +2748,14 @@ private fun UpdateBanner(
             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
             color = DeltaTor.Muted
         )
+        if (error.isNotEmpty()) {
+            Spacer(Modifier.height(3.dp))
+            Text(
+                error,
+                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                color = DeltaTor.Amber
+            )
+        }
         if (downloading) {
             Spacer(Modifier.height(7.dp))
             LinearProgressIndicator(
@@ -2996,6 +3012,8 @@ private class AdvancedForm {
     var runMemory by mutableStateOf(Config.runMemory)
     var loggingOn by mutableStateOf(Config.loggingEnabled)
     var proxyOnly by mutableStateOf(Config.proxyOnlyMode)
+    var proxyPort by mutableStateOf(Config.proxyPort.toString())
+    var portMessage by mutableStateOf("")
     var splitOn by mutableStateOf(Config.splitTunnelEnabled)
     var splitMode by mutableStateOf(Config.splitTunnelMode)
     var splitPicked by mutableStateOf(Config.splitTunnelSelected)
@@ -3371,6 +3389,78 @@ private fun LazyListScope.AdvancedItems(
                         style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
                         color = DeltaTor.Muted,
                         modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+    item(key = "adv-port") {
+        Column(Modifier.fillMaxWidth()) {
+            SettingsCard {
+                CardTitle("SOCKS5 PORT")
+                Text(
+                    "The local port DeltaTor listens on. Tor and the transport " +
+                        "helpers use the ports just above it.",
+                    style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                    color = DeltaTor.Muted
+                )
+                OutlinedTextField(
+                    value = form.proxyPort,
+                    onValueChange = {
+                        form.proxyPort = it.filter(Char::isDigit).take(5)
+                        form.portMessage = ""
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    singleLine = true,
+                    label = { Text("Port") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    colors = AdvancedFieldColors()
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (form.portMessage.isNotEmpty()) {
+                        Text(
+                            form.portMessage,
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp)
+                        )
+                    }
+                    Text(
+                        "APPLY",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = 1.3.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.AccentLight,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                val s = AppState.state.value
+                                val busy = s.connecting || s.connected ||
+                                    s.reconnecting || s.stopping || s.torRunning
+                                val v = form.proxyPort.toIntOrNull()
+                                when {
+                                    busy -> form.portMessage = "Disconnect first."
+                                    v == null || v < 1024 || v > 65535 ->
+                                        form.portMessage = "Use a port between 1024 and 65535."
+                                    else -> {
+                                        Config.proxyPort = v
+                                        form.proxyPort = v.toString()
+                                        form.portMessage = "Saved \u2014 applies on the next connect."
+                                        AppLog.i("UI", "proxy port set to $v")
+                                    }
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
                     )
                 }
             }
