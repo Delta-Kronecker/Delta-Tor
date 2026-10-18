@@ -4,11 +4,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import androidx.core.app.NotificationCompat
-import androidx.core.content.FileProvider
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +34,6 @@ object ReleaseChecker {
     private const val REPO = "Delta-Kronecker/Delta-Tor"
     private const val API_LATEST = "https://api.github.com/repos/$REPO/releases/latest"
     private const val GITHUB_URL = "https://github.com/$REPO"
-    private const val MIME_APK = "application/vnd.android.package.archive"
     private const val UPDATES_DIR = "updates"
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -183,44 +181,37 @@ object ReleaseChecker {
             notifyError(context, apkTag, msg)
             return
         }
-        if (!canInstall(context)) {
-            // Without the per-app "Install unknown apps" grant the installer
-            // may close itself without a word, which is exactly the silent
-            // nothing the banner tap used to look like. Send the user to the
-            // switch instead of pretending the tap did nothing.
-            AppState.updateRelease {
-                it.copy(lastError = "Allow installing from this source in Settings, then tap to install.")
-            }
-            openUnknownSources(context)
-            return
-        }
+        // PackageInstaller is the same session API adb install and the Play
+        // Store use: it talks straight to the system service, so it does not
+        // depend on any activity being registered to handle an ACTION_VIEW
+        // intent, and it is the system itself that raises the "install unknown
+        // apps" grant and the install confirmation -- this code no longer has
+        // to guess at either.
         try {
-            context.startActivity(installIntent(context, file))
+            val installer = context.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+            val sessionId = installer.createSession(params)
+            installer.openSession(sessionId).use { session ->
+                session.openWrite("DeltaTor", 0, file.length()).use { out ->
+                    file.inputStream().use { input -> input.copyTo(out) }
+                    session.fsync(out)
+                }
+                val intent = Intent(context, InstallResultReceiver::class.java)
+                val pendingIntent = PendingIntent.getBroadcast(
+                    context,
+                    sessionId,
+                    intent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                )
+                session.commit(pendingIntent.intentSender)
+            }
             AppState.updateRelease { it.copy(lastError = "") }
+            Log.i(TAG, "Install session $sessionId committed")
         } catch (e: Exception) {
-            Log.w(TAG, "Install launch failed: ${e.message}")
-            val msg = "Could not open the installer: ${e.message}"
+            Log.w(TAG, "Install session failed: ${e.message}")
+            val msg = "Could not start the installer: ${e.message}"
             AppState.updateRelease { it.copy(lastError = msg) }
             notifyError(context, apkTag, msg)
-        }
-    }
-
-    /** Whether the system will let this app hand an APK to the installer at all. */
-    private fun canInstall(context: Context): Boolean =
-        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-            context.packageManager.canRequestPackageInstalls()
-
-    /** This package's own "Install unknown apps" switch in Settings. */
-    private fun openUnknownSources(context: Context) {
-        try {
-            context.startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                    Uri.parse("package:${context.packageName}")
-                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        } catch (e: Exception) {
-            Log.w(TAG, "Could not open unknown-sources settings: ${e.message}")
         }
     }
 
@@ -299,35 +290,22 @@ object ReleaseChecker {
     }
 
     private fun notifyReady(context: Context, version: String) {
-        val file = apkFile ?: return
-        // A PendingIntent that cannot be built (or that would open an installer
-        // the system will refuse) must not become a dead notification tap: fall
-        // back to opening the app, where the banner explains what to do.
-        val allowed = canInstall(context)
-        val tap = if (allowed) {
-            runCatching {
-                PendingIntent.getActivity(
-                    context,
-                    41,
-                    installIntent(context, file),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-            }.getOrElse {
-                Log.w(TAG, "Install PendingIntent failed: ${it.message}")
-                openAppIntent(context)
-            }
-        } else {
-            openAppIntent(context)
-        }
+        // The tap starts a PackageInstaller session directly, so it does not
+        // need an activity to "handle" an install intent -- that resolution is
+        // what failed outright on stripped-down images with no package
+        // installer app registered for ACTION_VIEW.
+        val tap = PendingIntent.getBroadcast(
+            context,
+            41,
+            Intent(context, InstallTriggerReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         post(
             context,
             NotificationCompat.Builder(context, TorVpnService.CHANNEL_UPDATES)
                 .setSmallIcon(R.drawable.ic_tor)
                 .setContentTitle("DeltaTor $version ready")
-                .setContentText(
-                    if (allowed) "Tap to install the new version."
-                    else "Tap to allow installs, then install."
-                )
+                .setContentText("Tap to install the new version.")
                 .setContentIntent(tap)
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
@@ -362,13 +340,6 @@ object ReleaseChecker {
         } catch (e: Exception) {
             Log.w(TAG, "Update notification failed: ${e.message}")
         }
-    }
-
-    private fun installIntent(context: Context, file: File): Intent {
-        val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-        return Intent(Intent.ACTION_VIEW)
-            .setDataAndType(uri, MIME_APK)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
 
     private fun pruneUpdates(context: Context, keep: File?) {
