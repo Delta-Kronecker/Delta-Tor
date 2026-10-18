@@ -184,14 +184,13 @@ object ReleaseChecker {
         }
         // PackageInstaller would raise its own "install unknown apps" dialog
         // at commit() time, which is jarring and easy to dismiss by accident.
-        // Catch it one step earlier instead: go straight to the per-app switch
-        // in Settings and tell the user what to do, so the only thing standing
-        // between them and the install is one toggle they can see.
+        // Catch it one step earlier instead and let the caller guide the user
+        // through Settings explicitly, rather than yanking them out of the app
+        // without warning.
         if (!canInstall(context)) {
-            AppState.updateRelease {
-                it.copy(lastError = "Enable \u201cAllow from this source\u201d for DeltaTor in Settings, then tap to install.")
-            }
-            openUnknownSources(context)
+            val msg = "Allow installing from this source for DeltaTor, then try again."
+            AppState.updateRelease { it.copy(lastError = msg) }
+            notifyError(context, apkTag, msg)
             return
         }
         // PackageInstaller is the same session API adb install and the Play
@@ -228,12 +227,12 @@ object ReleaseChecker {
     }
 
     /** Whether the system will let this app hand an APK to the installer at all. */
-    private fun canInstall(context: Context): Boolean =
+    fun canInstall(context: Context): Boolean =
         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
             context.packageManager.canRequestPackageInstalls()
 
     /** This package's own "Install unknown apps" switch in Settings. */
-    private fun openUnknownSources(context: Context) {
+    fun openUnknownSources(context: Context) {
         try {
             context.startActivity(
                 Intent(
