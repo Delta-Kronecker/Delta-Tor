@@ -626,7 +626,11 @@ event_task_init (void)
 
     res = socketpair (PF_LOCAL, SOCK_STREAM, 0, event_fds);
     if (res < 0) {
+#ifdef __MINGW32__
         LOG_E ("socks5 tunnel event (errno=%d wsa=%d)", errno, hev_mw_last_wsa);
+#else
+        LOG_E ("socks5 tunnel event (errno=%d %s)", errno, strerror (errno));
+#endif
         return -1;
     }
 
