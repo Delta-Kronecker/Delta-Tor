@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
@@ -181,12 +182,23 @@ object ReleaseChecker {
             notifyError(context, apkTag, msg)
             return
         }
+        // PackageInstaller would raise its own "install unknown apps" dialog
+        // at commit() time, which is jarring and easy to dismiss by accident.
+        // Catch it one step earlier instead: go straight to the per-app switch
+        // in Settings and tell the user what to do, so the only thing standing
+        // between them and the install is one toggle they can see.
+        if (!canInstall(context)) {
+            AppState.updateRelease {
+                it.copy(lastError = "Enable \u201cAllow from this source\u201d for DeltaTor in Settings, then tap to install.")
+            }
+            openUnknownSources(context)
+            return
+        }
         // PackageInstaller is the same session API adb install and the Play
         // Store use: it talks straight to the system service, so it does not
         // depend on any activity being registered to handle an ACTION_VIEW
-        // intent, and it is the system itself that raises the "install unknown
-        // apps" grant and the install confirmation -- this code no longer has
-        // to guess at either.
+        // intent, and it is the system itself that raises the install
+        // confirmation -- this code no longer has to guess at that.
         try {
             val installer = context.packageManager.packageInstaller
             val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
@@ -212,6 +224,25 @@ object ReleaseChecker {
             val msg = "Could not start the installer: ${e.message}"
             AppState.updateRelease { it.copy(lastError = msg) }
             notifyError(context, apkTag, msg)
+        }
+    }
+
+    /** Whether the system will let this app hand an APK to the installer at all. */
+    private fun canInstall(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+
+    /** This package's own "Install unknown apps" switch in Settings. */
+    private fun openUnknownSources(context: Context) {
+        try {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open unknown-sources settings: ${e.message}")
         }
     }
 
