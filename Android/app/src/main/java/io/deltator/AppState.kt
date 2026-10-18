@@ -132,7 +132,14 @@ object AppState {
         val checking: Boolean = false,
         val latestVersion: String = "",
         val latestUrl: String = "",
-        val newer: Boolean = false
+        val newer: Boolean = false,
+        /** idle | downloading | ready | error */
+        val phase: String = "idle",
+        val bytes: Long = 0L,
+        val totalBytes: Long = 0L,
+        /** True when the APK was already downloaded in an earlier run, so the
+         *  install dialog should open by itself instead of waiting for a tap. */
+        val autoPrompt: Boolean = false
     )
 
     private val _state = MutableStateFlow(VpnState())

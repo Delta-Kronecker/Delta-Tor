@@ -68,6 +68,7 @@ import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -331,6 +332,18 @@ private fun MainScreen(
     val sc = stateColor(state)
     val context = LocalContext.current
 
+    // An APK downloaded in an earlier run opens the installer by itself as soon
+    // as this screen is up. The latch matters: without it a cancel would bring
+    // the dialog straight back on the next recomposition, and the intent of the
+    // automatic prompt is once per launch, not once per frame.
+    var updatePrompted by remember { mutableStateOf(false) }
+    LaunchedEffect(release.phase, release.autoPrompt) {
+        if (!updatePrompted && release.autoPrompt && release.phase == "ready") {
+            updatePrompted = true
+            ReleaseChecker.installLatest(context)
+        }
+    }
+
     val connecting = state.connecting
     val connected = state.connected
     val torRunning = state.torRunning
@@ -387,7 +400,17 @@ private fun MainScreen(
             if (release.newer && release.latestVersion.isNotBlank()) {
                 UpdateBanner(
                     version = release.latestVersion,
-                    onOpen = { ReleaseChecker.openInBrowser(context, release.latestUrl) },
+                    phase = release.phase,
+                    progress = if (release.totalBytes > 0L) {
+                        release.bytes.toFloat() / release.totalBytes.toFloat()
+                    } else 0f,
+                    onTap = {
+                        when (release.phase) {
+                            "ready" -> ReleaseChecker.installLatest(context)
+                            "downloading" -> Unit
+                            else -> ReleaseChecker.retryDownload(context)
+                        }
+                    },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .offset(y = 98.dp)
@@ -2662,10 +2685,19 @@ private fun ScreenTopBar(
 @Composable
 private fun UpdateBanner(
     version: String,
-    onOpen: () -> Unit,
+    phase: String,
+    progress: Float,
+    onTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val downloading = phase == "downloading"
+    val status = when {
+        downloading -> "Downloading update\u2026 ${(progress.coerceIn(0f, 1f) * 100).toInt()}%"
+        phase == "ready" -> "Update downloaded \u00b7 tap to install"
+        phase == "error" -> "Download failed \u00b7 tap to retry"
+        else -> "Downloading update\u2026"
+    }
     Column(
         modifier
             .fillMaxWidth()
@@ -2676,7 +2708,7 @@ private fun UpdateBanner(
                 shape
             )
             .border(1.dp, DeltaTor.Accent.copy(alpha = 0.45f), shape)
-            .clickable { onOpen() }
+            .clickable { onTap() }
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2684,7 +2716,13 @@ private fun UpdateBanner(
                 Modifier
                     .size(9.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(DeltaTor.Green)
+                    .background(
+                        when {
+                            phase == "error" -> DeltaTor.Red
+                            phase == "ready" -> DeltaTor.Green
+                            else -> DeltaTor.Amber
+                        }
+                    )
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -2693,15 +2731,26 @@ private fun UpdateBanner(
                     letterSpacing = 1.3.sp,
                     fontWeight = FontWeight.Bold
                 ),
-                color = DeltaTor.GreenLight
+                color = if (phase == "error") DeltaTor.Red else DeltaTor.GreenLight
             )
         }
         Spacer(Modifier.height(5.dp))
         Text(
-            "An update is available \u00b7 tap anywhere to open on GitHub",
+            status,
             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
             color = DeltaTor.Muted
         )
+        if (downloading) {
+            Spacer(Modifier.height(7.dp))
+            LinearProgressIndicator(
+                progress = { progress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp),
+                color = DeltaTor.Green,
+                trackColor = DeltaTor.Border
+            )
+        }
     }
 }
 

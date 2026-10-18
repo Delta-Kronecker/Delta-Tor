@@ -13,6 +13,11 @@
     <!-- Notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- The in-app updater installs the APK it downloaded; without this the
+         system refuses to open the installer for a package that is not a
+         package manager. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- Split tunnelling: the app list has to name every installed app so the user
          can route each one. Android 11 (API 30) hides packages from
          getInstalledApplications unless the app holds this permission, which would
