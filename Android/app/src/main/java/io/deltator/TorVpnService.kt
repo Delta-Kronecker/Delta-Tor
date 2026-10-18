@@ -313,6 +313,19 @@ class TorVpnService : VpnService() {
         super.onDestroy()
     }
 
+    override fun onRevoke() {
+        // The default implementation stops the service. That is correct for a
+        // session that established an interface, but proxy mode never did: a
+        // revoke signal (however it arrives) would otherwise kill the local
+        // proxy other apps are pointed at. Second line of defence behind never
+        // calling VpnService.prepare() from proxy mode in the first place.
+        if (Config.proxyOnlyMode) {
+            Log.i(TAG, "onRevoke ignored: proxy mode holds no VPN interface")
+            return
+        }
+        super.onRevoke()
+    }
+
     private fun connect() {
         if (AppState.state.value.stopping) {
             Log.i(TAG, "Ignoring connect: a stop is still tearing the cores down")

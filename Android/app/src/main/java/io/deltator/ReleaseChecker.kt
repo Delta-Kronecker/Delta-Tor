@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.FileProvider
 import io.deltator.util.AppLog as Log
@@ -87,7 +88,8 @@ object ReleaseChecker {
                         phase = "idle",
                         bytes = 0L,
                         totalBytes = 0L,
-                        autoPrompt = false
+                        autoPrompt = false,
+                        lastError = ""
                     )
                 }
                 // Whatever an earlier run downloaded is either installed now or
@@ -118,7 +120,8 @@ object ReleaseChecker {
                         phase = "ready",
                         bytes = file.length(),
                         totalBytes = file.length(),
-                        autoPrompt = true
+                        autoPrompt = true,
+                        lastError = ""
                     )
                 }
                 notifyReady(context, tag)
@@ -135,7 +138,8 @@ object ReleaseChecker {
                     phase = "downloading",
                     bytes = 0L,
                     totalBytes = size,
-                    autoPrompt = false
+                    autoPrompt = false,
+                    lastError = ""
                 )
             }
             startDownload(context)
@@ -173,11 +177,50 @@ object ReleaseChecker {
     /** Called from the banner and the notification once the file is complete. */
     fun installLatest(context: Context) {
         val file = apkFile ?: return
-        if (!file.exists()) return
+        if (!file.exists() || file.length() == 0L) {
+            val msg = "The downloaded file is gone \u00b7 tap to download it again."
+            AppState.updateRelease { it.copy(phase = "error", lastError = msg) }
+            notifyError(context, apkTag, msg)
+            return
+        }
+        if (!canInstall(context)) {
+            // Without the per-app "Install unknown apps" grant the installer
+            // may close itself without a word, which is exactly the silent
+            // nothing the banner tap used to look like. Send the user to the
+            // switch instead of pretending the tap did nothing.
+            AppState.updateRelease {
+                it.copy(lastError = "Allow installing from this source in Settings, then tap to install.")
+            }
+            openUnknownSources(context)
+            return
+        }
         try {
             context.startActivity(installIntent(context, file))
+            AppState.updateRelease { it.copy(lastError = "") }
         } catch (e: Exception) {
             Log.w(TAG, "Install launch failed: ${e.message}")
+            val msg = "Could not open the installer: ${e.message}"
+            AppState.updateRelease { it.copy(lastError = msg) }
+            notifyError(context, apkTag, msg)
+        }
+    }
+
+    /** Whether the system will let this app hand an APK to the installer at all. */
+    private fun canInstall(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+
+    /** This package's own "Install unknown apps" switch in Settings. */
+    private fun openUnknownSources(context: Context) {
+        try {
+            context.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${context.packageName}")
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not open unknown-sources settings: ${e.message}")
         }
     }
 
@@ -230,8 +273,9 @@ object ReleaseChecker {
             } catch (e: Exception) {
                 part.delete()
                 Log.w(TAG, "Update download failed: ${e.message}")
-                AppState.updateRelease { it.copy(phase = "error") }
-                notifyError(context, apkTag)
+                val msg = "Download failed \u00b7 open the app to retry."
+                AppState.updateRelease { it.copy(phase = "error", lastError = msg) }
+                notifyError(context, apkTag, msg)
             }
         }
     }
@@ -256,32 +300,48 @@ object ReleaseChecker {
 
     private fun notifyReady(context: Context, version: String) {
         val file = apkFile ?: return
-        val install = PendingIntent.getActivity(
-            context,
-            41,
-            installIntent(context, file),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        // A PendingIntent that cannot be built (or that would open an installer
+        // the system will refuse) must not become a dead notification tap: fall
+        // back to opening the app, where the banner explains what to do.
+        val allowed = canInstall(context)
+        val tap = if (allowed) {
+            runCatching {
+                PendingIntent.getActivity(
+                    context,
+                    41,
+                    installIntent(context, file),
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+            }.getOrElse {
+                Log.w(TAG, "Install PendingIntent failed: ${it.message}")
+                openAppIntent(context)
+            }
+        } else {
+            openAppIntent(context)
+        }
         post(
             context,
             NotificationCompat.Builder(context, TorVpnService.CHANNEL_UPDATES)
                 .setSmallIcon(R.drawable.ic_tor)
                 .setContentTitle("DeltaTor $version ready")
-                .setContentText("Tap to install the new version.")
-                .setContentIntent(install)
+                .setContentText(
+                    if (allowed) "Tap to install the new version."
+                    else "Tap to allow installs, then install."
+                )
+                .setContentIntent(tap)
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_RECOMMENDATION)
                 .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         )
     }
 
-    private fun notifyError(context: Context, version: String) {
+    private fun notifyError(context: Context, version: String, text: String) {
         post(
             context,
             NotificationCompat.Builder(context, TorVpnService.CHANNEL_UPDATES)
                 .setSmallIcon(R.drawable.ic_tor)
                 .setContentTitle("DeltaTor $version update")
-                .setContentText("Download failed \u00b7 open the app to retry.")
+                .setContentText(text)
                 .setContentIntent(openAppIntent(context))
                 .setAutoCancel(true)
                 .setCategory(NotificationCompat.CATEGORY_ERROR)

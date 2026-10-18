@@ -139,7 +139,9 @@ object AppState {
         val totalBytes: Long = 0L,
         /** True when the APK was already downloaded in an earlier run, so the
          *  install dialog should open by itself instead of waiting for a tap. */
-        val autoPrompt: Boolean = false
+        val autoPrompt: Boolean = false,
+        /** Why the last install attempt did not open the installer, if it did not. */
+        val lastError: String = ""
     )
 
     private val _state = MutableStateFlow(VpnState())
