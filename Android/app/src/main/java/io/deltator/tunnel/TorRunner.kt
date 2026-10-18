@@ -571,9 +571,7 @@ class TorRunner(
                     if (i > 0) token.substring(0, i).lowercase() to token.substring(i + 1)
                     else token.lowercase() to ""
                 }
-                val resolver = args["udp"]?.let { "udp=$it" }
-                    ?: args["doh"]?.let { "doh=$it" }
-                    ?: args["dot"]?.let { "dot=$it" }
+                val resolver = args["udp"] ?: args["doh"] ?: args["dot"]
                     ?: throw RuntimeException("missing udp=/doh=/dot= resolver")
                 val pubkey = args["pubkey"] ?: throw RuntimeException("missing pubkey=")
                 val domain = args["domain"] ?: throw RuntimeException("missing domain=")
@@ -775,16 +773,30 @@ class TorRunner(
      * that is checked here before anything reaches torrc. The shape is either
      * `addr:port FINGERPRINT ...` (vanilla) or
      * `obfs4|webtunnel|snowflake|meek addr:port FINGERPRINT ...`.
+     *
+     * For pluggable transports the fingerprint is optional: Tor's parse_bridge_line
+     * treats a `k=v` token in that position as a SOCKS argument instead, so a line
+     * like `meek_lite 192.0.2.20:80 url=... front=...` parses without one.
      */
     private fun isValidBridgeLine(line: String): Boolean {
         val parts = line.split(WHITESPACE).filter { it.isNotBlank() }
         if (parts.size < 2) return false
         val first = parts[0].lowercase()
-        val fpIndex = if (first in PLUGGABLE_TRANSPORTS || first == DNSTT_PREFIX) 2 else 1
-        if (parts.size <= fpIndex) return false
-        val addr = parts[fpIndex - 1]
+        val isTransport = first in PLUGGABLE_TRANSPORTS
+        val fpIndex = if (isTransport || first == DNSTT_PREFIX) 2 else 1
+        val addrIndex = fpIndex - 1
+        val addr = parts[addrIndex]
         if (!addr.contains(':') || addr.startsWith(":")) return false
-        return isFingerprint(parts[fpIndex])
+        if (parts.size == fpIndex) {
+            // A transport line may stop right after the address: everything
+            // after addr:port (fingerprint included) is optional for Tor.
+            return isTransport
+        }
+        val token = parts[fpIndex]
+        if (isFingerprint(token)) return true
+        if (!isTransport) return false
+        val eq = token.indexOf('=')
+        return eq > 0
     }
 
     /** A bridge identity digest is always 40 hex characters. */
