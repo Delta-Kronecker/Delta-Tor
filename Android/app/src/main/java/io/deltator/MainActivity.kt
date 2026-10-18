@@ -122,6 +122,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.deltator.tunnel.BridgeExport
 import io.deltator.tunnel.BridgeStore
 import androidx.core.graphics.drawable.toBitmap
@@ -342,12 +345,34 @@ private fun MainScreen(
     // as this screen is up. The latch matters: without it a cancel would bring
     // the dialog straight back on the next recomposition, and the intent of the
     // automatic prompt is once per launch, not once per frame.
-    var updatePrompted by remember { mutableStateOf(false) }
-    LaunchedEffect(release.phase, release.autoPrompt) {
-        if (!updatePrompted && release.autoPrompt && release.phase == "ready") {
-            updatePrompted = true
-            ReleaseChecker.installLatest(context)
+    var updateDialogShown by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateDialogStep by remember { mutableStateOf("intro") }
+    var awaitingInstallPermission by remember { mutableStateOf(false) }
+    LaunchedEffect(release.newer, release.phase) {
+        if (release.newer && release.phase == "ready" && !updateDialogShown) {
+            updateDialogShown = true
+            showUpdateDialog = true
+            updateDialogStep = "intro"
         }
+    }
+    // After the user taps "Open Settings" and grants the install permission,
+    // coming back to the app is the signal to carry on: kick the install off
+    // automatically so the system's own install confirmation appears without
+    // making them find the banner and tap again.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (awaitingInstallPermission && ReleaseChecker.canInstall(context)) {
+                    awaitingInstallPermission = false
+                    showUpdateDialog = false
+                    ReleaseChecker.installLatest(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val connecting = state.connecting
@@ -370,6 +395,26 @@ private fun MainScreen(
         NoticeDialog(
             notice = notice,
             onDismiss = { AppState.clearNotice(notice.id) }
+        )
+    }
+
+    if (showUpdateDialog) {
+        UpdateAvailableDialog(
+            version = release.latestVersion,
+            step = updateDialogStep,
+            onUpdate = {
+                if (ReleaseChecker.canInstall(context)) {
+                    showUpdateDialog = false
+                    ReleaseChecker.installLatest(context)
+                } else {
+                    updateDialogStep = "permission"
+                }
+            },
+            onNotNow = { showUpdateDialog = false },
+            onOpenSettings = {
+                awaitingInstallPermission = true
+                ReleaseChecker.openUnknownSources(context)
+            }
         )
     }
 
@@ -654,6 +699,7 @@ private fun NoticeDialog(
 private fun NoticeButton(
     label: String,
     modifier: Modifier = Modifier,
+    primary: Boolean = true,
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(13.dp)
@@ -662,7 +708,12 @@ private fun NoticeButton(
             .fillMaxWidth()
             .height(44.dp)
             .clip(shape)
-            .background(DeltaTor.Accent, shape)
+            .background(if (primary) DeltaTor.Accent else Color.Transparent, shape)
+            .border(
+                1.dp,
+                if (primary) Color.Transparent else DeltaTor.BorderLight,
+                shape
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -676,10 +727,108 @@ private fun NoticeButton(
                 letterSpacing = 1.2.sp,
                 fontWeight = FontWeight.Bold
             ),
-            color = Color.White,
+            color = if (primary) Color.White else DeltaTor.Text,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
+    }
+}
+
+@Composable
+private fun UpdateAvailableDialog(
+    version: String,
+    step: String,
+    onUpdate: () -> Unit,
+    onNotNow: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onNotNow,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = true
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    RoundedCornerShape(22.dp)
+                )
+                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(DeltaTor.Green.copy(alpha = 0.16f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    WarnIcon(color = DeltaTor.Green)
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    "NEW RELEASE",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        letterSpacing = 1.5.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
+                    color = DeltaTor.GreenLight
+                )
+            }
+            Spacer(Modifier.height(14.dp))
+            if (step == "permission") {
+                Text(
+                    "One more step",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 20.sp
+                    ),
+                    color = DeltaTor.Text
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Android needs you to allow DeltaTor to install apps from " +
+                        "this source before it can update itself. Tap Open " +
+                        "Settings, turn the switch on, then come back.",
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                    color = DeltaTor.Text
+                )
+            } else {
+                Text(
+                    "DeltaTor $version is available",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 20.sp
+                    ),
+                    color = DeltaTor.Text
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "A newer version has been downloaded and is ready to install.",
+                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                    color = DeltaTor.Text
+                )
+            }
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                NoticeButton(
+                    label = "NOT NOW",
+                    modifier = Modifier.weight(1f),
+                    onClick = onNotNow,
+                    primary = false
+                )
+                NoticeButton(
+                    label = if (step == "permission") "OPEN SETTINGS" else "UPDATE",
+                    modifier = Modifier.weight(1f),
+                    onClick = if (step == "permission") onOpenSettings else onUpdate
+                )
+            }
+        }
     }
 }
 
