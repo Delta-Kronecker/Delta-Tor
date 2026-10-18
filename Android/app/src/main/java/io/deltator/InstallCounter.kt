@@ -27,7 +27,7 @@ object InstallCounter {
     private const val MAX_ATTEMPTS = 5
     private const val ASSET_URL =
         "https://github.com/Delta-Kronecker/ForInstallationStatistics/releases/download/" +
-            "ForInstallationStatistics/DeltaTorAndroid"
+            "ForInstallationStatistics/DeltaTorAndroid213"
 
     suspend fun countInstall(context: Context) = withContext(Dispatchers.IO) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
