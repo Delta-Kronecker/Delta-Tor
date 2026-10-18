@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.os.Build
 import io.deltator.tunnel.BridgeStore
+import io.deltator.tunnel.CombinedMemorySeed
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.util.AppLog
@@ -29,6 +30,12 @@ class DeltaTorApp : Application() {
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
         appScope.launch { ReleaseChecker.check(this@DeltaTorApp) }
         appScope.launch { InstallCounter.countInstall(this@DeltaTorApp) }
+        // A fresh install only: the first-run flag is still unset here, and
+        // MainActivity sets it as soon as the screen is up, so an upgrading
+        // install -- which set it long ago -- never reaches this branch.
+        if (!Config.firstRunNoticeShown) {
+            appScope.launch { CombinedMemorySeed.seedIfFresh(this@DeltaTorApp) }
+        }
     }
 
     private fun createNotificationChannels() {

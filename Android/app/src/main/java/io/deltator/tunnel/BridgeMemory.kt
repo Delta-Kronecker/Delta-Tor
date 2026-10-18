@@ -47,8 +47,11 @@ object BridgeMemory {
         }
 
     private const val KEY_PREFIX = "healthy_"
+    private const val SUCCESS_KEY_PREFIX = "success_"
 
     private fun key(name: String) = "$KEY_PREFIX$name"
+
+    private fun successKey(name: String) = "$SUCCESS_KEY_PREFIX$name"
 
     /**
      * Fingerprints remembered for one transport, in the order they were proven.
@@ -112,6 +115,55 @@ object BridgeMemory {
     }
 
     /**
+     * How many times each bridge has been proven, for one transport, keyed by
+     * fingerprint. Stored as `fingerprint:count` pairs, comma separated.
+     *
+     * The pool only says a bridge is in it; this says how many times it actually
+     * worked, which is the figure a report needs to rank bridges by reliability
+     * rather than by recency.
+     */
+    fun successCounts(context: Context, name: String): Map<String, Int> =
+        prefs(context).getString(successKey(name), "")
+            .orEmpty()
+            .split(',')
+            .mapNotNull { pair ->
+                val parts = pair.split(':')
+                val fp = parts.getOrNull(0)?.trim()?.lowercase() ?: return@mapNotNull null
+                val count = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: return@mapNotNull null
+                if (fp.isEmpty() || count <= 0) null else fp to count
+            }
+            .toMap()
+
+    /**
+     * Increment the success count of every proven bridge in [name]'s pool.
+     *
+     * Called alongside [remember] each time a runner proves a bridge, so the
+     * counter tracks how many times each bridge has actually worked, not just
+     * that it is in the pool. The set is trimmed to the same ceiling as the pool
+     * so it cannot grow without bound; the least-successful entries fall off.
+     */
+    fun recordSuccess(context: Context, name: String, fingerprints: Collection<String>) {
+        val current = successCounts(context, name).toMutableMap()
+        var changed = false
+        fingerprints.map { it.trim().lowercase() }.filter { isFingerprint(it) }.distinct().forEach { fp ->
+            current[fp] = (current[fp] ?: 0) + 1
+            changed = true
+        }
+        if (!changed) return
+        val trimmed = if (current.size > MAX_PER_TRANSPORT) {
+            current.entries
+                .sortedByDescending { it.value }
+                .take(MAX_PER_TRANSPORT)
+                .associate { it.key to it.value }
+        } else {
+            current
+        }
+        prefs(context).edit()
+            .putString(successKey(name), trimmed.entries.joinToString(",") { "${it.key}:${it.value}" })
+            .apply()
+    }
+
+    /**
      * Forget every remembered bridge.
      *
      * Swept by key prefix rather than by the transports listed in [TRANSPORTS]: a
@@ -122,7 +174,7 @@ object BridgeMemory {
      */
     fun clear(context: Context) {
         val store = prefs(context)
-        val stale = store.all.keys.filter { it.startsWith(KEY_PREFIX) }
+        val stale = store.all.keys.filter { it.startsWith(KEY_PREFIX) || it.startsWith(SUCCESS_KEY_PREFIX) }
         stale.forEach { store.edit().remove(it).apply() }
         Log.i(TAG, "memory cleared (${stale.size} pool(s))")
     }
