@@ -6,4 +6,11 @@
     <cache-path
         name="bridge_exports"
         path="exports/" />
+
+    <!-- The downloaded update APK is handed to the system installer through the
+         provider, and only from this one folder: nothing else under files/ is
+         reachable. -->
+    <files-path
+        name="updates"
+        path="updates/" />
 </paths>
