@@ -70,8 +70,14 @@ object BridgeExport {
             .toMutableMap()
         // Combined keeps no cache of its own, so it is rebuilt here for the same
         // reason it is rebuilt on connect: its value is that it can be merged.
+        // A new user's seeded combined list is folded in too, so the export
+        // matches what the app actually races.
         val combined = ParallelTorManager.mergeBridgeLists(
-            ParallelTorManager.COMBINED_SOURCES.mapNotNull { cached[it] }
+            ParallelTorManager.COMBINED_SOURCES.mapNotNull { cached[it] } +
+                listOfNotNull(
+                    BridgeStore.lines(context, ParallelTorManager.TRANSPORT_COMBINED)
+                        ?.takeIf { it.isNotBlank() }
+                )
         ).lines().filter { it.isNotBlank() }
         if (combined.isNotEmpty()) cached[ParallelTorManager.TRANSPORT_COMBINED] = combined.joinToString("\n")
 
@@ -106,6 +112,27 @@ object BridgeExport {
                 out.write(body.joinToString("\n").toByteArray())
                 out.closeEntry()
                 written += "memory/$file (${body.size} of $pool remembered)"
+            }
+            // How many times each bridge actually worked, per transport. The
+            // memory files above only say a bridge is in the pool; this says how
+            // many times it has been proven, so a report can rank bridges by
+            // reliability instead of just recency.
+            val successLines = BridgeMemory.TRANSPORTS.flatMap { transport ->
+                BridgeMemory.successCounts(context, transport)
+                    .entries
+                    .sortedByDescending { it.value }
+                    .map { "${transport} ${it.key} ${it.value}" }
+            }
+            if (successLines.isNotEmpty()) {
+                val report = buildString {
+                    appendLine("# Per-bridge success counts by transport.")
+                    appendLine("# Format: <transport> <fingerprint> <successes>")
+                    successLines.forEach { appendLine(it) }
+                }
+                out.putNextEntry(ZipEntry("memory/successes.txt"))
+                out.write(report.toByteArray())
+                out.closeEntry()
+                written += "memory/successes.txt (${successLines.size})"
             }
             out.putNextEntry(ZipEntry("README.txt"))
             out.write(readme(written, total).toByteArray())
@@ -150,6 +177,8 @@ object BridgeExport {
         appendLine("            A remembered bridge whose list has since changed is")
         appendLine("            left out: only its fingerprint was stored, and a")
         appendLine("            fingerprint is not something Tor can connect to.")
+        appendLine("            successes.txt lists how many times each bridge has")
+        appendLine("            worked, as: <transport> <fingerprint> <successes>.")
         appendLine()
         appendLine("Files in this archive:")
         written.forEach { appendLine("  $it") }

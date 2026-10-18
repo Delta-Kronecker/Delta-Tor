@@ -341,9 +341,11 @@ object ParallelTorManager {
         // lists it covers. Merged rather than concatenated: the merge alternates
         // between the sources and drops repeats by fingerprint, so the per-runner
         // line cap in TorRunner takes an even slice of vanilla, obfs4, webtunnel
-        // and snowflake instead of the first hundred vanilla bridges.
+        // and snowflake instead of the first hundred vanilla bridges. A new
+        // user's seeded combined list is folded in as a fourth source.
         val combinedLines = if (mode == TRANSPORT_COMBINED) {
-            mergeBridgeLists(COMBINED_SOURCES.mapNotNull { fetched[it] })
+            val seed = BridgeStore.lines(context, TRANSPORT_COMBINED)?.takeIf { it.isNotBlank() }
+            mergeBridgeLists(COMBINED_SOURCES.mapNotNull { fetched[it] } + listOfNotNull(seed))
         } else {
             null
         }
@@ -566,6 +568,7 @@ object ParallelTorManager {
         }
         val transport = baseTransportOf(runner.name)
         val added = BridgeMemory.remember(context, transport, proven)
+        BridgeMemory.recordSuccess(context, transport, proven)
         Log.transport(
             sessionId, runner.name, 'I', TAG,
             "memory[$transport] updated: ${proven.size} working bridge(s), +$added new " +
