@@ -17,110 +17,70 @@ import android.content.SharedPreferences
  *
  * The shipped template carries no comments, because it is shown verbatim in an
  * editable text field and prose about the config is not what someone editing a
- * config is looking at. The reasoning lives here instead, where it does not get
- * written into the user's torrc:
+ * config is looking for. The reasoning lives here instead, where it does not get
+ * written into the user's torrc.
  *
- *  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort`, ever.
- *    Three Tor processes run in parallel and the app owns the only SOCKS5
- *    listener; a hard-coded port here would be claimed by whichever started
- *    first and make the other two fail. `SocksPolicy` only.
- *  - `ConfluxEnabled` / `ConfluxClientUX` are the only Conflux knobs this Android
- *    tor binary has. The `ConfluxNum*` family is fork-only and would abort
- *    startup here, so it is left out rather than parked as a comment.
- *  - `CircuitPadding`, `ConnectionPadding` and `UseMicrodescriptors` trade
- *    cover traffic for throughput. That is a deliberate choice, not a default.
- *  - `MaxCircuitDirtiness`, `SocksTimeout`, `CircuitBuildTimeout` and
- *    `MaxClientCircuitsPending` appear twice, and the repeat is intentional:
- *    torrc is last-wins, so the tail block overrides the bootstrap block above it.
- *    The tail is the reconnect tuning. 24h circuits kept feeding a circuit Tor
- *    had not noticed was dead; a 2 minute `SocksTimeout` held stalled tun2socks
- *    connections; and a 20s `CircuitBuildTimeout` threw away a build that was
- *    about to succeed, so a returning network paid for several complete attempts
- *    and every one of them read as a dead link to the liveness probe.
+ * The values are the ones the Windows build ships with, kept verbatim so both
+ * clients behave the same. The directives below are deliberately absent: they
+ * either do not exist on Android, or [TorRunner] already supplies them and a
+ * second copy here would win and break them (torrc is last-wins).
  *
- *  On ordering, which is easy to get backwards from the field names: the file is
- *  assembled as forced defaults, then this template, then `ClientTransportPlugin`,
- *  then `Bridge`, then `ControlPort` (see `TorRunner.writeTorrc`). Later wins, so
- *  the template overrides the forced defaults, and the Snowflake runner's own
- *  `ConnectionPadding 1` / `SafeLogging 0` / `NumEntryGuards 1` are in turn
- *  overridden by anything this template declares for those keys.
- *  - `NewCircuitPeriod 10` is how often Tor resets per-circuit failure counts and
- *    expires aged circuits -- not how often it builds one, which is a common and
- *    expensive misreading. Lowering it churns circuits without warming anything.
- *  - `Schedulers Vanilla`, measured faster on a phone than `KISTLite,Vanilla`.
- *    KISTLite only exists to batch cells so Conflux can spread a set over several
- *    circuits, and with `ConfluxEnabled 0` below there are no circuit sets to
- *    spread over: the batching is pure overhead, and it was also paying for a
- *    kernel queue query the NDK build cannot issue anyway. Naming one scheduler is
- *    what makes this explicit -- Tor's rule is "first type in the list that this
- *    build can use", so `KISTLite,Vanilla` and `KIST,Vanilla` both silently run
- *    Vanilla while looking like they ask for something smarter.
- *  - `ConfluxEnabled 0`, for the same reason. Conflux multiplexes several circuits
- *    per set, which is a throughput feature; on a phone its cost is paid on every
- *    single connect and it measurably delayed the first usable circuit. The
- *    `ConfluxClientUX` line that came with it is gone with it: an inert knob next
- *    to a feature that is off only misleads whoever reads this file next.
- *  - No `CircuitPriorityHalflife`. It is a cell-EWMA in tenths of the 10s scheduler
- *    tick, so `5` meant "half a tick", and the consensus default (30s) is a saner
- *    spread than anything worth pinning by hand on a phone.
- *  - `PathsNeededToBuildCircuits 0.25`, exactly what the line above used to say less
- *    of. Tor clamps anything under 0.25 back up to 0.25 and logs a warning, so 0.1
- *    bought nothing but a `log_warn` on every start.
- *  - `CircuitStreamTimeout 60`. 10 was Tor's floor (`MIN_CIRCUIT_STREAM_TIMEOUT`),
- *    not a choice: it bounded the lifetime of a stream on its circuit, so a page
- *    slower than 10s had its circuit torn down mid-load and rebuilt from scratch.
- *  - `NumEntryGuards 10` / `NumPrimaryGuards 15`. Guards are kept, not raced fast:
- *    a bigger list is a better fingerprint, a longer first connect. These two are
- *    also locked together -- Tor refuses to start if NumEntryGuards exceeds
- *    NumPrimaryGuards.
+ *  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort` /
+ *    `CookieAuthentication`, ever. Three Tor processes run in parallel and the app
+ *    owns the only SOCKS5 listener; a hard-coded port here would be claimed by
+ *    whichever started first and make the other two fail. `SocksPolicy` only.
+ *    `ControlPort` is appended by the app with a free ephemeral port, and only
+ *    when exit-country steering actually needs it.
+ *  - No `DataDirectory`: the app writes the absolute per-runner path.
+ *  - No `GeoIPFile` / `GeoIPv6File`: the app generates the database itself and
+ *    passes absolute paths. A relative `data/geoip` here would shadow them and
+ *    silently disable country steering.
+ *  - No `ClientTransportPlugin`: the app appends lyrebird's `socks5` line for each
+ *    transport it launched. The Windows `Transport/*.exe` paths do not exist here.
  */
 object TorrcSettings {
 
     private const val PREFS = "deltator"
-    private const val KEY_TEMPLATE = "torrc_template_v5"
+    private const val KEY_TEMPLATE = "torrc_template_v6"
     private lateinit var prefs: SharedPreferences
 
     val defaultTemplate: String = """SocksPolicy accept 127.0.0.1
 SocksPolicy reject *
-
 CircuitPadding 0
 ConnectionPadding 0
 UseMicrodescriptors 1
-
 DormantOnFirstStartup 0
 DormantCanceledByStartup 1
 LearnCircuitBuildTimeout 0
-CircuitBuildTimeout 30
 MaxCircuitDirtiness 3600
-NumEntryGuards 10
+NumEntryGuards 15
 NumDirectoryGuards 6
-MaxClientCircuitsPending 64
-SocksTimeout 60
-
+KeepalivePeriod 3600
 ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
 ClientBootstrapConsensusFallbackDownloadInitialDelay 0
 ClientBootstrapConsensusAuthorityOnlyDownloadInitialDelay 0
 ClientBootstrapConsensusMaxInProgressTries 6
-
 FetchDirInfoEarly 1
 FetchDirInfoExtraEarly 1
-
 PathsNeededToBuildCircuits 0.25
-
 DisableDebuggerAttachment 1
+AvoidDiskWrites 1
 SafeLogging 1
-
-ConfluxEnabled 0
-
-MaxCircuitDirtiness 600
-NewCircuitPeriod 10
-SocksTimeout 30
+ConfluxEnabled 1
+ConfluxClientUX throughput
 CircuitsAvailableTimeout 4320
-CircuitStreamTimeout 60
-CircuitBuildTimeout 40
-NumPrimaryGuards 15
+CircuitStreamTimeout 10
+CircuitBuildTimeout 20
+NumPrimaryGuards 20
 Schedulers Vanilla
-MaxClientCircuitsPending 128"""
+MaxClientCircuitsPending 128
+CircuitPriorityHalflife 5
+SocksTimeout 120
+ConfluxNumSets 32
+ConfluxNumLinkedSets 32
+ConfluxNumLegs 2
+ConfluxSetSelection 1
+ConfluxSetRttPct 10"""
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
