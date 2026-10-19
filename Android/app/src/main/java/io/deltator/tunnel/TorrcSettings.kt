@@ -36,7 +36,8 @@ import android.content.SharedPreferences
  *    passes absolute paths. A relative `data/geoip` here would shadow them and
  *    silently disable country steering.
  *  - No `ClientTransportPlugin`: the app appends lyrebird's `socks5` line for each
- *    transport it launched. The Windows `Transport/*.exe` paths do not exist here.
+ *    transport it launched. The Windows pluggable-transport executables those
+ *    directives point at do not exist here.
  */
 object TorrcSettings {
 
@@ -52,8 +53,8 @@ UseMicrodescriptors 1
 DormantOnFirstStartup 0
 DormantCanceledByStartup 1
 LearnCircuitBuildTimeout 0
-MaxCircuitDirtiness 3600
-NumEntryGuards 15
+MaxCircuitDirtiness 600
+NumEntryGuards 10
 NumDirectoryGuards 6
 KeepalivePeriod 3600
 ClientBootstrapConsensusAuthorityDownloadInitialDelay 0
@@ -69,13 +70,13 @@ SafeLogging 1
 ConfluxEnabled 1
 ConfluxClientUX throughput
 CircuitsAvailableTimeout 4320
-CircuitStreamTimeout 10
-CircuitBuildTimeout 20
-NumPrimaryGuards 20
+CircuitStreamTimeout 60
+CircuitBuildTimeout 40
+NumPrimaryGuards 15
 Schedulers Vanilla
 MaxClientCircuitsPending 128
 CircuitPriorityHalflife 5
-SocksTimeout 120
+SocksTimeout 30
 ConfluxNumSets 32
 ConfluxNumLinkedSets 32
 ConfluxNumLegs 2
