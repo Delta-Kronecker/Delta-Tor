@@ -63,15 +63,15 @@ object ParallelTorManager {
     const val TRANSPORT_AUTO = "auto"
     const val TRANSPORT_CUSTOM = "custom"
     val MODES = listOf(
+        TRANSPORT_COMBINED,
         TRANSPORT_AUTO,
         TRANSPORT_FRESH,
-        TRANSPORT_COMBINED,
         TRANSPORT_VANILLA,
         TRANSPORT_OBFS4,
         TRANSPORT_WEBTUNNEL,
         TRANSPORT_SNOWFLAKE,
-        TRANSPORT_DNSTT,
         TRANSPORT_MEEK_LITE,
+        TRANSPORT_DNSTT,
         TRANSPORT_DIRECT,
         TRANSPORT_CUSTOM
     )

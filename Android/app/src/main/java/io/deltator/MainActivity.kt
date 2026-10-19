@@ -2107,10 +2107,25 @@ private fun BridgeCard(
 
         Row(modifier = Modifier.fillMaxWidth()) {
             StatCell(
+                "COMBINED-BRIDGE", bridges.combined,
+                bridges.memOf(ParallelTorManager.TRANSPORT_COMBINED),
+                DeltaTor.AmberLight, Modifier.weight(1f)
+            )
+            CellDivider()
+            StatCell(
+                "FRESH", bridges.fresh, bridges.memOf(ParallelTorManager.TRANSPORT_FRESH),
+                DeltaTor.GreenLight, Modifier.weight(1f)
+            )
+            CellDivider()
+            StatCell(
                 "VANILLA", bridges.vanilla, bridges.memOf(ParallelTorManager.TRANSPORT_VANILLA),
                 DeltaTor.Accent, Modifier.weight(1f)
             )
-            CellDivider()
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        Row(modifier = Modifier.fillMaxWidth()) {
             StatCell(
                 "OBFS4", bridges.obfs4, bridges.memOf(ParallelTorManager.TRANSPORT_OBFS4),
                 DeltaTor.Green, Modifier.weight(1f)
@@ -2120,39 +2135,24 @@ private fun BridgeCard(
                 "WEBTUNNEL", bridges.webtunnel, bridges.memOf(ParallelTorManager.TRANSPORT_WEBTUNNEL),
                 DeltaTor.Amber, Modifier.weight(1f)
             )
-        }
-
-        Spacer(Modifier.height(12.dp))
-
-        Row(modifier = Modifier.fillMaxWidth()) {
+            CellDivider()
             StatCell(
                 "SNOWFLAKE", bridges.snowflake, bridges.memOf(ParallelTorManager.TRANSPORT_SNOWFLAKE),
                 DeltaTor.AccentSoft, Modifier.weight(1f)
             )
-            CellDivider()
-            StatCell(
-                "FRESH", bridges.fresh, bridges.memOf(ParallelTorManager.TRANSPORT_FRESH),
-                DeltaTor.GreenLight, Modifier.weight(1f)
-            )
-            CellDivider()
-            StatCell(
-                "COMBINED-BRIDGE", bridges.combined,
-                bridges.memOf(ParallelTorManager.TRANSPORT_COMBINED),
-                DeltaTor.AmberLight, Modifier.weight(1f)
-            )
         }
 
         Spacer(Modifier.height(12.dp))
 
         Row(modifier = Modifier.fillMaxWidth()) {
             StatCell(
-                "DNSTT", bridges.dnstt, bridges.memOf(ParallelTorManager.TRANSPORT_DNSTT),
-                DeltaTor.Green, Modifier.weight(1f)
+                "MEEK LITE", bridges.meekLite, bridges.memOf(ParallelTorManager.TRANSPORT_MEEK_LITE),
+                DeltaTor.Amber, Modifier.weight(1f)
             )
             CellDivider()
             StatCell(
-                "MEEK LITE", bridges.meekLite, bridges.memOf(ParallelTorManager.TRANSPORT_MEEK_LITE),
-                DeltaTor.Amber, Modifier.weight(1f)
+                "DNSTT", bridges.dnstt, bridges.memOf(ParallelTorManager.TRANSPORT_DNSTT),
+                DeltaTor.Green, Modifier.weight(1f)
             )
             CellDivider()
             Box(Modifier.weight(1f))
@@ -3222,15 +3222,15 @@ private fun LazyListScope.AdvancedItems(
                 // for a second sentence, and nine of them made the menu taller than
                 // the reason for opening it.
                 val modes = listOf(
+                    ParallelTorManager.TRANSPORT_COMBINED to "Combined-Bridge",
                     ParallelTorManager.TRANSPORT_AUTO to "Auto",
                     ParallelTorManager.TRANSPORT_FRESH to "Fresh",
-                    ParallelTorManager.TRANSPORT_COMBINED to "Combined-Bridge",
                     ParallelTorManager.TRANSPORT_VANILLA to "Vanilla",
                     ParallelTorManager.TRANSPORT_OBFS4 to "obfs4",
                     ParallelTorManager.TRANSPORT_WEBTUNNEL to "WebTunnel",
                     ParallelTorManager.TRANSPORT_SNOWFLAKE to "Snowflake",
-                    ParallelTorManager.TRANSPORT_DNSTT to "dnstt",
                     ParallelTorManager.TRANSPORT_MEEK_LITE to "Meek Lite",
+                    ParallelTorManager.TRANSPORT_DNSTT to "dnstt",
                     ParallelTorManager.TRANSPORT_DIRECT to "Direct",
                     ParallelTorManager.TRANSPORT_CUSTOM to "Custom"
                 )
