@@ -365,14 +365,14 @@ private fun MainScreen(
     // After the user taps "Open Settings" and grants the install permission,
     // coming back to the app is the signal to carry on: kick the install off
     // automatically so the system's own install confirmation appears without
-    // making them find the banner and tap again.
+    // making them find the banner and tap again. The dialog stays up either
+    // way — cancelling the system confirmation just brings them back to it.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 if (awaitingInstallPermission && ReleaseChecker.canInstall(context)) {
                     awaitingInstallPermission = false
-                    showUpdateDialog = false
                     ReleaseChecker.installLatest(context)
                 }
             }
@@ -410,13 +410,11 @@ private fun MainScreen(
             step = updateDialogStep,
             onUpdate = {
                 if (ReleaseChecker.canInstall(context)) {
-                    showUpdateDialog = false
                     ReleaseChecker.installLatest(context)
                 } else {
                     updateDialogStep = "permission"
                 }
             },
-            onNotNow = { showUpdateDialog = false },
             onOpenSettings = {
                 awaitingInstallPermission = true
                 ReleaseChecker.openUnknownSources(context)
@@ -745,14 +743,15 @@ private fun UpdateAvailableDialog(
     version: String,
     step: String,
     onUpdate: () -> Unit,
-    onNotNow: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    // Mandatory update: no "not now", and neither a tap outside nor the back
+    // key dismisses it. The only way forward is the install path below.
     Dialog(
-        onDismissRequest = onNotNow,
+        onDismissRequest = {},
         properties = DialogProperties(
-            dismissOnBackPress = true,
-            dismissOnClickOutside = true
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
         )
     ) {
         Column(
@@ -821,19 +820,11 @@ private fun UpdateAvailableDialog(
                 )
             }
             Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                NoticeButton(
-                    label = "NOT NOW",
-                    modifier = Modifier.weight(1f),
-                    onClick = onNotNow,
-                    primary = false
-                )
-                NoticeButton(
-                    label = if (step == "permission") "OPEN SETTINGS" else "UPDATE",
-                    modifier = Modifier.weight(1f),
-                    onClick = if (step == "permission") onOpenSettings else onUpdate
-                )
-            }
+            NoticeButton(
+                label = if (step == "permission") "OPEN SETTINGS" else "UPDATE",
+                modifier = Modifier.fillMaxWidth(),
+                onClick = if (step == "permission") onOpenSettings else onUpdate
+            )
         }
     }
 }
