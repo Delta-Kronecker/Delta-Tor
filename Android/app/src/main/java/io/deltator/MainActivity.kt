@@ -2176,21 +2176,9 @@ private fun ProxyChainSheet(
                     label = if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
                     filled = false,
                     enabled = !ProxyChainManager.testing && list.servers.isNotEmpty(),
+                    labelSize = 12.sp,
+                    height = 34.dp,
                     onClick = { scope.launch { ProxyChainManager.testAll() } }
-                )
-            }
-
-            val running = chain.testTotal >= 0
-            if (running) {
-                Spacer(Modifier.height(6.dp))
-                LinearProgressIndicator(
-                    progress = { chain.tested.coerceAtLeast(0) / chain.testTotal.toFloat() },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text(
-                    "real SSTP session per server, 10 at a time \u00b7 ${chain.tested}/${chain.testTotal}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = DeltaTor.Muted
                 )
             }
 
@@ -2206,6 +2194,11 @@ private fun ProxyChainSheet(
             )
 
             Spacer(Modifier.height(8.dp))
+
+            // The live test needs no bar and no caption any more: the pill above
+            // says TESTING\, and the rows themselves keep filling in milliseconds
+            // as each server answers.
+            val running = chain.testTotal >= 0
 
             val filtered = list.servers.filter {
                 search.isBlank() ||
@@ -2339,9 +2332,10 @@ private fun GradientPill(
     filled: Boolean,
     enabled: Boolean = true,
     labelSize: TextUnit = 14.sp,
+    height: Dp = 40.dp,
     onClick: () -> Unit
 ) {
-    val shape = RoundedCornerShape(20.dp)
+    val shape = RoundedCornerShape(height / 2)
     val bg = if (filled) {
         Brush.horizontalGradient(listOf(DeltaTor.AccentSoft, DeltaTor.Accent))
     } else {
@@ -2350,7 +2344,7 @@ private fun GradientPill(
     val borderC = if (filled) DeltaTor.AccentLight.copy(alpha = 0.4f) else DeltaTor.BorderLight
     Box(
         modifier = modifier
-            .height(40.dp)
+            .height(height)
             .clip(shape)
             .background(bg, shape)
             .border(1.dp, borderC, shape)
