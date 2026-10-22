@@ -9,7 +9,9 @@ import kittoku.osc.SstpMode
 import kittoku.osc.SstpParams
 import kittoku.osc.control.Controller
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,22 +101,27 @@ object ProxyChainManager {
         if (appContext != null) return
         appContext = context.applicationContext
         load(context.applicationContext)
-        clearMeasurements(context.applicationContext)
+        clearProbes()
     }
 
     // -------------------------------------------------------------- freshness
 
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /**
-     * Drop every stored probe delay once per process. A ping from yesterday is
-     * not a ping from today; the sheet shows all servers untested until the
-     * user (or a fresh probe run) measures them again in this run.
+     * Drop every stored probe delay. Runs at app start (a ping from a previous
+     * run is not a ping from this one) and whenever the user disconnects, so
+     * the sheet in front of them only ever carries numbers from this session.
      */
-    private fun clearMeasurements(context: Context) {
-        if (servers.none { it.delayMs >= 0 }) return
-        servers = servers.map { it.copy(delayMs = NO_DELAY) }
-        save(context)
-        publish()
-        Log.i(TAG, "probe delays cleared for this run")
+    fun clearProbes() {
+        synchronized(listLock) {
+            if (servers.none { it.delayMs >= 0 }) return
+            servers = servers.map { it.copy(delayMs = NO_DELAY) }
+            publish()
+        }
+        val context = appContext ?: return
+        ioScope.launch { save(context) }
+        Log.i(TAG, "probe delays cleared")
     }
 
     // ------------------------------------------------------------------ store

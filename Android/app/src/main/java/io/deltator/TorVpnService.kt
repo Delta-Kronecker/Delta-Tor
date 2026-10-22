@@ -998,6 +998,9 @@ class TorVpnService : VpnService() {
     /** The user cancelled the chain: back to the plain Tor VPN as well. */
     fun onChainStoppedByUser() {
         Log.i(TAG, "chain stopped by user — restoring plain Tor VPN")
+        // The pings this session measured were for the chain that just ended;
+        // a fresh chain owes the sheet fresh numbers, not yesterday's memory.
+        ProxyChainManager.clearProbes()
         AppState.updateChain { AppState.ChainState() }
         restoreTorVpn()
     }
@@ -1839,6 +1842,9 @@ class TorVpnService : VpnService() {
             )
         }
         updateNotification("Stopping", progress = true, progressValue = 0)
+        // Whatever pings this session measured belong to a connection that is
+        // about to be nothing; drop them together with the tunnel.
+        ProxyChainManager.clearProbes()
         serviceScope.launch {
             teardown()
             val left = STOPPING_MIN_MS - (SystemClock.elapsedRealtime() - startedAt)
