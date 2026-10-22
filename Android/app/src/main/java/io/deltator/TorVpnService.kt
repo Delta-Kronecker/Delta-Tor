@@ -591,6 +591,8 @@ class TorVpnService : VpnService() {
             }
             // Not a recovery the service can perform; posted by the UI instead.
             AppState.NoticeKind.FirstRun -> return
+            // Posted directly on the card's tap, never by a recovery.
+            AppState.NoticeKind.ChainIntro -> return
         }
 
         // The old attempt's runners are already gone and the per-transport map
@@ -616,6 +618,7 @@ class TorVpnService : VpnService() {
                         "Auto is now your connection mode. If you would rather pick " +
                         "the transport yourself again, change it in Settings."
                 AppState.NoticeKind.FirstRun -> ""
+                AppState.NoticeKind.ChainIntro -> ""
             }
         )
         updateNotification("Restarting in auto \u2026", progress = true, progressValue = 0)
