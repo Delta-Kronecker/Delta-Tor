@@ -25,7 +25,13 @@ object AppState {
         AutoRecovery,
 
         /** One-time explainer shown the first time the app is ever opened. */
-        FirstRun
+        FirstRun,
+
+        /**
+         * The three-language warning that sits between a tap on the PROXY CHAIN
+         * card and its server list, so nobody chains by reflex.
+         */
+        ChainIntro
     }
 
     /**
