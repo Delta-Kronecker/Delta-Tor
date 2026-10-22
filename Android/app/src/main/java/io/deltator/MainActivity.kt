@@ -10,7 +10,6 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -252,27 +251,6 @@ class MainActivity : ComponentActivity() {
         )
     )
 
-    /**
-     * The ProXY CHAIN warning: what the chain is for, and what it costs, in the
-     * three languages the app speaks. Kept to three sentences on purpose; the
-     * NoticeDialog lays each block out in its own direction.
-     */
-    private fun chainIntroNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
-        AppState.NoticeBlock(
-            lead = "فقط برای سرویس‌هایی مثل جمنای",
-            text = "این قابلیت فقط برای دسترسی به سرویس‌هایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم می‌کند؛ فقط در صورت نیاز استفاده کنید.",
-            rtl = true
-        ),
-        AppState.NoticeBlock(
-            lead = "Only for services like Gemini",
-            text = "This feature exists to reach services like Gemini that Tor cannot access. It slows the connection down; use it only when you need it."
-        ),
-        AppState.NoticeBlock(
-            lead = "Только для сервисов вроде Gemini",
-            text = "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно."
-        )
-    )
-
     private fun requestNotificationPermissionIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
@@ -334,6 +312,28 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 }
+
+/**
+ * The ProXY CHAIN warning: what the chain is for, and what it costs, in the
+ * three languages the app speaks. Kept to three sentences on purpose; the
+ * NoticeDialog lays each block out in its own direction. File-level so the
+ * composables can reach it.
+ */
+private fun chainIntroNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
+    AppState.NoticeBlock(
+        lead = "فقط برای سرویس‌هایی مثل جمنای",
+        text = "این قابلیت فقط برای دسترسی به سرویس‌هایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم می‌کند؛ فقط در صورت نیاز استفاده کنید.",
+        rtl = true
+    ),
+    AppState.NoticeBlock(
+        lead = "Only for services like Gemini",
+        text = "This feature exists to reach services like Gemini that Tor cannot access. It slows the connection down; use it only when you need it."
+    ),
+    AppState.NoticeBlock(
+        lead = "Только для сервисов вроде Gemini",
+        text = "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно."
+    )
+)
 
 // ---------------------------------------------------------------------------
 // DeltaTor — a bold, glassy VPN interface: layered ambient glow, an animated
@@ -2283,20 +2283,13 @@ private fun ChainCountryHeader(code: String, name: String, count: Int) {
         code.isNotBlank() -> code
         else -> "unknown"
     }
-    val flag = flagEmoji(code)
+    val flag = if (code.length == 2) flagEmoji(code) else ""
     Text(
         text = if (flag.isEmpty()) "$title \u00b7 $count" else "$flag $title \u00b7 $count",
         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
         color = DeltaTor.Text,
         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
     )
-}
-
-fun flagEmoji(code: String): String {
-    // A flag is the two ISO letters shifted into the regional-indicator block.
-    val upper = code.take(2).uppercase(Locale.ROOT)
-    if (upper.length != 2 || upper.any { it !in 'A'..'Z' }) return ""
-    return upper.map { String(Character.toChars(0x1F1E6 + (it - 'A'))) }.joinToString("")
 }
 
 /** Proxy mode gives the chain nothing to chain onto; switching is the user's call. */
