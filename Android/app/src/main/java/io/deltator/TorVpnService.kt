@@ -297,6 +297,13 @@ class TorVpnService : VpnService() {
     @Volatile private var currentSession: Int = 0
 
     /**
+     * The one-shot safe-torrc recovery. Armed while a connect or a VPN re-start
+     * is in flight; the first [fail] that lands on it swaps the torrc template
+     * for the fallback and starts the whole attempt again exactly once.
+     */
+    @Volatile private var safeTorrcArmed = false
+
+    /**
      * What the connected notification last rendered, so an idle tunnel can leave
      * the notification alone instead of reposting the same two numbers.
      */
@@ -348,6 +355,7 @@ class TorVpnService : VpnService() {
             return
         }
         AppState.markStarted()
+        safeTorrcArmed = true
         currentSession = Log.beginSession("connect")
         recoveriesSpent.clear()
         AppState.update { it.copy(connecting = true, connected = false, reconnecting = false, torRunning = false, error = null, transports = emptyMap(), transport = "", socksEndpoint = "") }
@@ -781,6 +789,9 @@ class TorVpnService : VpnService() {
                 socksEndpoint = ""
             )
         }
+        // The attempt lived long enough to carry a tunnel: no safe-torrc retry
+        // can fire off it any more.
+        safeTorrcArmed = false
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         lastRenderedText = ""
         quietProbes = 0
@@ -794,6 +805,7 @@ class TorVpnService : VpnService() {
 
     /** Re-establish the VPN on top of an already-running Tor engine. */
     private fun startVpn() {
+        safeTorrcArmed = true
         if (AppState.state.value.stopping) {
             Log.i(TAG, "Ignoring start: a stop is still tearing the cores down")
             return
@@ -1803,6 +1815,24 @@ class TorVpnService : VpnService() {
         if (AppState.state.value.stopping) {
             Log.i(TAG, "Ignoring '$message': a stop is already tearing the cores down")
             return
+        }
+        // The attempt this failure belongs to was a connect or a VPN re-start,
+        // and the fallback torrc has not been tried yet: swap the template for
+        // the known-good one and run the whole attempt again, once. A retry that
+        // fails again meets a template that is already the fallback, which
+        // applies nothing, and the failure below becomes terminal as usual.
+        if (safeTorrcArmed) {
+            safeTorrcArmed = false
+            if (TorrcSettings.applyErrorFallback()) {
+                Log.w(TAG, "connect failed ($message) \u2014 retrying once with the fallback torrc")
+                Log.endSession("failed \u00b7 retrying with the fallback torrc")
+                // Same start a stopped service would get: reset, tear down what
+                // this attempt left behind, connect again on the live template.
+                teardown()
+                AppState.markStopped()
+                connect()
+                return
+            }
         }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
