@@ -233,9 +233,6 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
-        // Persian first. It is the app's own language and the one this notice was
-        // written in; the other two are there because the people who need it are
-        // not all reading the same script.
         AppState.NoticeBlock(
             text = "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
             rtl = true,
@@ -252,6 +249,27 @@ class MainActivity : ComponentActivity() {
                 "которые он использовал в вашей сети, и после примерно 2-3 подключений время, " +
                 "необходимое для подключения, сокращается.",
             lead = "Пожалуйста, будьте терпеливы при первом подключении"
+        )
+    )
+
+    /**
+     * The ProXY CHAIN warning: what the chain is for, and what it costs, in the
+     * three languages the app speaks. Kept to three sentences on purpose; the
+     * NoticeDialog lays each block out in its own direction.
+     */
+    private fun chainIntroNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
+        AppState.NoticeBlock(
+            lead = "فقط برای سرویس‌هایی مثل جمنای",
+            text = "این قابلیت فقط برای دسترسی به سرویس‌هایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم می‌کند؛ فقط در صورت نیاز استفاده کنید.",
+            rtl = true
+        ),
+        AppState.NoticeBlock(
+            lead = "Only for services like Gemini",
+            text = "This feature exists to reach services like Gemini that Tor cannot access. It slows the connection down; use it only when you need it."
+        ),
+        AppState.NoticeBlock(
+            lead = "Только для сервисов вроде Gemini",
+            text = "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно."
         )
     )
 
@@ -436,7 +454,14 @@ private fun MainScreen(
     if (notice != null) {
         NoticeDialog(
             notice = notice,
-            onDismiss = { AppState.clearNotice(notice.id) }
+            onDismiss = {
+                val kind = notice.kind
+                AppState.clearNotice(notice.id)
+                // The intro stands between the card and its list: closing it
+                // (button, back, tap outside - all of them mean "understood")
+                // is what opens the server sheet.
+                if (kind == AppState.NoticeKind.ChainIntro) showChainSheet = true
+            }
         )
     }
 
@@ -580,7 +605,16 @@ private fun MainScreen(
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
-                onOpenChain = { showChainSheet = true },
+                // The card's tap never jumps straight to the list: it first
+                // raises the three-language warning, and the sheet follows
+                // wherever that dialog is dismissed.
+                onOpenChain = {
+                    AppState.postNoticeBlocks(
+                        AppState.NoticeKind.ChainIntro,
+                        "",
+                        chainIntroNoticeBlocks()
+                    )
+                },
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
