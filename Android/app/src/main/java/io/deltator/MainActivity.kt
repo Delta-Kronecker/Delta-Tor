@@ -2172,45 +2172,41 @@ private fun ProxyChainSheet(
                     )
                 }
 
-                GradientPill(
-                    label = if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
-                    filled = false,
-                    enabled = !ProxyChainManager.testing && list.servers.isNotEmpty(),
-                    labelSize = 12.sp,
-                    height = 34.dp,
-                    onClick = { scope.launch { ProxyChainManager.testAll() } }
+                // No frame, no pill: the test trigger is just its word, in the
+                // app's accent, and it dims while a probe is already running.
+                Text(
+                    if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    ),
+                    color = when {
+                        ProxyChainManager.testing -> DeltaTor.Amber
+                        list.servers.isNotEmpty() -> DeltaTor.Accent
+                        else -> DeltaTor.Muted
+                    },
+                    modifier = Modifier
+                        .clickable(
+                            enabled = !ProxyChainManager.testing && list.servers.isNotEmpty()
+                        ) {
+                            scope.launch { ProxyChainManager.testAll() }
+                        }
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
                 )
             }
 
             Spacer(Modifier.height(10.dp))
 
-            OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
-                singleLine = true,
-                placeholder = { Text("search", style = MaterialTheme.typography.bodyMedium, color = DeltaTor.Muted) },
-                modifier = Modifier.fillMaxWidth(),
-                colors = AdvancedFieldColors()
-            )
-
-            Spacer(Modifier.height(8.dp))
-
             // The live test needs no bar and no caption any more: the pill above
-            // says TESTING\, and the rows themselves keep filling in milliseconds
-            // as each server answers.
+            // keeps its accent while probing, and the rows themselves keep
+            // filling in milliseconds as each server answers.
             val running = chain.testTotal >= 0
 
-            val filtered = list.servers.filter {
-                search.isBlank() ||
-                    it.host.contains(search.trim(), ignoreCase = true) ||
-                    it.countryName.contains(search.trim(), ignoreCase = true)
-            }
-
             // Country groups, driven by whatever the last fetch declared: each
-            // group keeps the file's own order, the fastest servers first, and
+            // group keeps the file's order, the fastest servers first, and
             // the header is drawn from the country facts still attached to the
             // rows themselves.
-            val groups = filtered.groupBy { it.countryCode }
+            val groups = list.servers.groupBy { it.countryCode }
             LazyColumn(
                 Modifier
                     .fillMaxWidth()
