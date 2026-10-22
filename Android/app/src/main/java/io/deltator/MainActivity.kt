@@ -108,6 +108,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.Clipboard
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
@@ -1900,12 +1901,23 @@ private fun BottomPanel(
     onOpenChain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // The one law this panel obeys: it is exactly one third of the app's
+    // screen, on every device. No matter how many sections are visible, the
+    // stack can never grow up into the ring, and it never floats loose when a
+    // large screen leaves the content room to spread.
+    val thirdOfScreen = (LocalConfiguration.current.screenHeightDp / 3).dp
     Column(
         modifier
             .fillMaxWidth()
+            .height(thirdOfScreen)
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
+        horizontalAlignment = Alignment.CenterHorizontally,
+        // Room left over inside the third is handed to the equal gaps between
+        // sections, so the stack fills its thirds instead of piling at the top
+        // with a hole underneath. A screen too short for the content falls back
+        // to the plain sequential stack, and the same scroll as ever takes over.
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
         // The chain card sits first, right where the finger already is: it is
         // only meaningful once Tor is connected, and its own state decides what
@@ -1925,9 +1937,8 @@ private fun BottomPanel(
                         onOpenChain()
                     }
                 },
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
             )
-            Spacer(Modifier.height(8.dp))
         }
         // The row is never removed. During teardown the left pill keeps its slot
         // and just relabels to START VPN, dimmed until the cores are gone: a
@@ -1941,7 +1952,10 @@ private fun BottomPanel(
             // at. Hide it rather than ship a button that does nothing.
             val proxyLive = state.socksEndpoint.isNotEmpty()
             if (!proxyLive) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     GradientPill(
                         modifier = Modifier.weight(1f),
                         label = if (state.connected && !state.stopping) "STOP VPN" else "START VPN",
@@ -1957,9 +1971,11 @@ private fun BottomPanel(
                         onClick = onDisconnect
                     )
                 }
-                Spacer(Modifier.height(8.dp))
             } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     GradientPill(
                         modifier = Modifier.weight(1f),
                         label = "SOCKS5 " + state.socksEndpoint
@@ -1976,11 +1992,13 @@ private fun BottomPanel(
                         onClick = onDisconnect
                     )
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
         // Live speed on the home screen itself, not only in the notification.
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             StatCard(
                 label = "SPEED DOWN",
                 value = if (state.connected) "${formatBytes(state.rxSpeed.toLong())}/s" else "--",
@@ -1997,9 +2015,10 @@ private fun BottomPanel(
             )
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             StatCard(
                 label = "DOWNLOADED",
                 value = formatBytes(state.rxBytes),
@@ -2016,9 +2035,10 @@ private fun BottomPanel(
             )
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             InfoPill(
                 label = "UP TIME",
                 value = if (state.connected) formatDuration(System.currentTimeMillis() - state.connectedAtMillis) else "--",
@@ -2035,8 +2055,6 @@ private fun BottomPanel(
                 modifier = Modifier.weight(1f)
             )
         }
-
-        Spacer(Modifier.height(9.dp))
     }
 }
 
