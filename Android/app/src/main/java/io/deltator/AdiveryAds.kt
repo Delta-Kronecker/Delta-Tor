@@ -1,5 +1,6 @@
 package io.deltator
 
+import android.app.Activity
 import android.app.Application
 import android.util.Log
 import androidx.compose.runtime.Composable
@@ -16,8 +17,8 @@ import com.adivery.sdk.AdiveryListener
 import com.adivery.sdk.BannerSize
 
 /**
- * Adivery ads: one 320x50 banner under the header plus one interstitial that
- * opens when the user disconnects the VPN.
+ * Adivery ads: one 320x50 banner under the header plus one app open full
+ * screen that opens halfway through a connect.
  *
  * The app id is bound once in [io.deltator.DeltaTorApp.onCreate] at
  * application start, so the first banner request races the app's own first
@@ -33,8 +34,8 @@ object AdiveryAds {
     /** The 320x50 banner slot under the header. */
     const val BANNER_PLACEMENT = "76eec56c-40c4-4c19-8e07-50e4a57f3d11"
 
-    /** The full-screen slot shown on VPN disconnect. */
-    const val INTERSTITIAL_PLACEMENT = "a7785856-e7ba-4203-b898-6191e394ddf3"
+    /** The full-screen slot shown at the half mark of a connect. */
+    const val APP_OPEN_PLACEMENT = "b4250c54-1a08-455c-9813-b8ac79c3f062"
 
     /** Set once the network refused the slot; the UI then lets it go. */
     val bannerFailed = mutableStateOf(false)
@@ -43,9 +44,10 @@ object AdiveryAds {
     val bannerLoaded = mutableStateOf(false)
 
     /**
-     * Bind the app id, preload the interstitial and hang one global listener
-     * off the SDK. Called exactly once from the Application's onCreate; the
-     * banner itself is loaded by its composable when the slot composes.
+     * Bind the app id and hang one global listener off the SDK. Called exactly
+     * once from the Application's onCreate; the banner itself is loaded by its
+     * composable, and the app open slot is warmed from the main activity
+     * because the SDK wants an Activity for it.
      */
     fun init(app: Application) {
         // The SDK's own diagnostics go to Logcat on debug builds only, the
@@ -54,16 +56,16 @@ object AdiveryAds {
         Adivery.configure(app, APP_ID)
 
         Adivery.addGlobalListener(object : AdiveryListener() {
-            override fun onInterstitialAdLoaded(placementId: String) {
-                Log.i(TAG, "interstitial loaded")
+            override fun onAppOpenAdLoaded(placementId: String) {
+                Log.i(TAG, "app open loaded")
             }
 
-            override fun onInterstitialAdShown(placementId: String) {
-                Log.i(TAG, "interstitial shown")
+            override fun onAppOpenAdShown(placementId: String) {
+                Log.i(TAG, "app open shown")
             }
 
-            override fun onInterstitialAdClosed(placementId: String) {
-                Log.i(TAG, "interstitial closed")
+            override fun onAppOpenAdClosed(placementId: String) {
+                Log.i(TAG, "app open closed")
             }
 
             override fun log(placementId: String, message: String) {
@@ -73,20 +75,29 @@ object AdiveryAds {
                 Log.d(TAG, "sdk: $message")
             }
         })
-
-        // One prepare. The SDK refills the slot itself after every show, per
-        // its auto-caching model.
-        Adivery.prepareInterstitialAd(app, INTERSTITIAL_PLACEMENT)
     }
 
     /**
-     * Show the interstitial if one is cached. Called from the disconnect tap:
-     * the teardown keeps running underneath, and by the time the ad closes
-     * the screen is already back to its disconnected state.
+     * Warm the app open slot. The SDK wants an Activity here, not a Context
+     * (unlike the banner), so this runs from the main activity's onCreate;
+     * the SDK refills by itself after every show.
      */
-    fun showInterstitialIfReady() {
-        if (Adivery.isLoaded(INTERSTITIAL_PLACEMENT)) {
-            Adivery.showAd(INTERSTITIAL_PLACEMENT)
+    fun prepareAppOpenAd(activity: Activity) {
+        Adivery.prepareAppOpenAd(activity, APP_OPEN_PLACEMENT)
+    }
+
+    /**
+     * Show the app open full screen if one is cached. The connect keeps
+     * running underneath, so it is usually live by the time the ad closes.
+     * An empty slot re-arms itself: a first load that failed never retries
+     * on its own.
+     */
+    fun showAppOpenAdIfReady(activity: Activity) {
+        if (Adivery.isLoaded(APP_OPEN_PLACEMENT)) {
+            Adivery.showAppOpenAd(activity, APP_OPEN_PLACEMENT)
+        } else {
+            Log.i(TAG, "app open not loaded; re-warming the slot")
+            Adivery.prepareAppOpenAd(activity, APP_OPEN_PLACEMENT)
         }
     }
 

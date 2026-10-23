@@ -166,6 +166,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
+        // The app open slot asks for an Activity, so it warms here rather
+        // than in the Application; the half-mark watcher lives in the UI.
+        AdiveryAds.prepareAppOpenAd(this)
         maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
@@ -537,9 +540,9 @@ private fun MainScreen(
         ) {
             AirBackground(glow = scAnimated, connecting = connecting)
 
-            // Watches the bootstrap and opens the interstitial at the quarter
+            // Watches the bootstrap and opens the app open ad at the half
             // mark; composes nothing itself.
-            InterstitialAtQuarter(state)
+            AppOpenAtHalf(state)
 
             Header(
                 statusColor = scAnimated,
@@ -1532,24 +1535,25 @@ private fun ringProgressOf(state: AppState.VpnState): Float? {
 }
 
 /**
- * The interstitial's trigger point: it opens once per connect, when the
- * leading racer first reaches a quarter of the bootstrap. The bootstrap keeps
- * running underneath the ad, so the connection is usually live by the time
- * the ad closes. The shown flag resets only when the connect ends, so the
- * percentage wobbling around 25 -- or the lead swapping racers -- cannot
- * fire it twice, and a connect that never reaches a quarter shows nothing.
+ * The app open ad's trigger point: it opens once per connect, when the
+ * leading racer reaches half of the bootstrap. The connect keeps running
+ * underneath the ad, so the connection is usually live by the time the ad
+ * closes. The shown flag resets only when the connect ends, so the percentage
+ * wobbling around 50 -- or the lead swapping racers -- cannot fire it twice,
+ * and a connect that never reaches half shows nothing.
  */
 @Composable
-private fun InterstitialAtQuarter(state: AppState.VpnState) {
+private fun AppOpenAtHalf(state: AppState.VpnState) {
     val peak = peakPct(state.connecting, state.torRunning, state.transports)
+    val activity = LocalContext.current as? Activity
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(state.connecting) {
         if (!state.connecting) shown = false
     }
-    LaunchedEffect(state.connecting, peak >= 25) {
-        if (state.connecting && peak >= 25 && !shown) {
+    LaunchedEffect(state.connecting, peak >= 50) {
+        if (state.connecting && peak >= 50 && !shown && activity != null) {
             shown = true
-            AdiveryAds.showInterstitialIfReady()
+            AdiveryAds.showAppOpenAdIfReady(activity)
         }
     }
 }
