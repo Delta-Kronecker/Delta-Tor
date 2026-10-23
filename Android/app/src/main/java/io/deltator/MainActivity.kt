@@ -166,9 +166,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
-        // The app open slot asks for an Activity, so it warms here rather
-        // than in the Application; the return watcher lives in AdiveryAds.
-        AdiveryAds.prepareAppOpenAd(this)
         maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
