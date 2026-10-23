@@ -184,4 +184,10 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.17.0")
+
+    // Adivery ads (mavenCentral is already a project repository). The
+    // advertising-id artifact is pinned: 18.1.0+ crashes on Android 7 and
+    // 18.3.0 needs minSdk 23, and this app still ships to Android 7.
+    implementation("com.adivery:sdk:4.9.0")
+    implementation("com.google.android.gms:play-services-ads-identifier:18.0.1")
 }

@@ -190,9 +190,14 @@ class MainActivity : ComponentActivity() {
                             // is no VPN to start. Must be checked before torRunning,
                             // which is also true in this state and would otherwise
                             // send a start the service declines to act on.
-                            s.socksEndpoint.isNotEmpty() ->
+                            s.socksEndpoint.isNotEmpty() -> {
+                                AdiveryAds.showInterstitialIfReady()
                                 sendAction(TorVpnService.ACTION_DISCONNECT)
-                            s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
+                            }
+                            s.connecting || s.connected -> {
+                                AdiveryAds.showInterstitialIfReady()
+                                sendAction(TorVpnService.ACTION_DISCONNECT)
+                            }
                             s.torRunning -> {
                                 ConnectCounter.countConnect(applicationContext)
                                 sendAction(TorVpnService.ACTION_START_VPN)
@@ -204,7 +209,12 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onStopVpn = { sendAction(TorVpnService.ACTION_STOP_VPN) },
-                    onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) },
+                    onDisconnect = {
+                        // The teardown keeps running underneath the ad; when it
+                        // closes the screen is already back to its idle state.
+                        AdiveryAds.showInterstitialIfReady()
+                        sendAction(TorVpnService.ACTION_DISCONNECT)
+                    },
                     onChainPick = { host, port -> sendActionChain(host, port) },
                     onUpdateBridges = { BridgeStore.update(applicationContext) }
                 )
@@ -544,6 +554,16 @@ private fun MainScreen(
                 modifier = Modifier.align(Alignment.TopCenter)
             )
 
+            // The Adivery slot: the highest spot under the header, above the
+            // ring. It stays zero-tall until the network answers and vanishes
+            // for good if the request is refused, so an ad-less install sees
+            // exactly the old screen.
+            AdiveryBanner(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 92.dp, start = 16.dp, end = 16.dp)
+            )
+
             if (release.newer && release.latestVersion.isNotBlank()) {
                 UpdateBanner(
                     version = release.latestVersion,
@@ -561,7 +581,9 @@ private fun MainScreen(
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = 98.dp)
+                        // The own update banner slides under the ad slot only
+                        // once the ad is really occupying it.
+                        .offset(y = if (AdiveryAds.bannerLoaded.value) 168.dp else 98.dp)
                 )
             }
 

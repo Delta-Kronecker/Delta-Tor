@@ -21,6 +21,10 @@ class DeltaTorApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Adivery: bound at application start so a banner request is ready
+        // before the first screen composes and the interstitial is already
+        // caching for the first disconnect.
+        AdiveryAds.init(this)
         Config.init(this)
         AppLog.enabled = Config.loggingEnabled
         TorrcSettings.init(this)
