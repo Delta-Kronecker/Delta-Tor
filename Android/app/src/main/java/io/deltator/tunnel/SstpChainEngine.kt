@@ -2,7 +2,6 @@ package io.deltator.tunnel
 
 import android.net.VpnService
 import io.deltator.AppState
-import io.deltator.ChainStatus
 import io.deltator.Config
 import io.deltator.ProxyChainManager
 import io.deltator.TorVpnService
@@ -80,7 +79,7 @@ class SstpChainEngine(private val service: TorVpnService) {
 
         setChain {
             it.copy(
-                status = ChainStatus.CONNECTING,
+                status = AppState.ChainStatus.CONNECTING,
                 host = host,
                 port = port,
                 message = "",
@@ -138,7 +137,7 @@ class SstpChainEngine(private val service: TorVpnService) {
         restoreOnEnd = false
         deliberate.set(true)
         setChain {
-            it.copy(status = ChainStatus.STOPPING, host = host, port = port, message = "switching…")
+            it.copy(status = AppState.ChainStatus.STOPPING, host = host, port = port, message = "switching…")
         }
         controller?.disconnect()
     }
@@ -151,7 +150,7 @@ class SstpChainEngine(private val service: TorVpnService) {
         if (!running.get()) return
         restoreOnEnd = false
         deliberate.set(true)
-        setChain { it.copy(status = ChainStatus.STOPPING) }
+        setChain { it.copy(status = AppState.ChainStatus.STOPPING) }
         controller?.disconnect()
     }
 
@@ -160,7 +159,7 @@ class SstpChainEngine(private val service: TorVpnService) {
         if (!running.get()) return
         restoreOnEnd = true
         deliberate.set(true)
-        setChain { it.copy(status = ChainStatus.STOPPING) }
+        setChain { it.copy(status = AppState.ChainStatus.STOPPING) }
         controller?.disconnect()
     }
 
@@ -189,7 +188,7 @@ class SstpChainEngine(private val service: TorVpnService) {
 
                 val message = if (attempt == 1) "" else "attempt $attempt/$RETRIES_PER_HOST"
                 setChain {
-                    it.copy(status = ChainStatus.CONNECTING, host = candidate.first, port = candidate.second, message = message)
+                    it.copy(status = AppState.ChainStatus.CONNECTING, host = candidate.first, port = candidate.second, message = message)
                 }
                 Log.i(TAG, "chain attempt ${candidate.first}:${candidate.second} $message")
 
@@ -290,7 +289,7 @@ class SstpChainEngine(private val service: TorVpnService) {
                 return Outcome(false, ended.await().ifBlank { "no answer from $host:$port" })
             }
 
-            setChain { it.copy(status = ChainStatus.CONNECTED, host = host, port = port, message = "") }
+            setChain { it.copy(status = AppState.ChainStatus.CONNECTED, host = host, port = port, message = "") }
             service.onChainEstablished(host, port)
 
             // Hold until the tunnel drops for any reason (echo timeout, abort,

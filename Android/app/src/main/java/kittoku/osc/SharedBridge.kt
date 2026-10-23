@@ -8,6 +8,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.net.Socket
 import java.util.UUID
+import kittoku.osc.terminal.IPTerminal
+import kittoku.osc.terminal.SSLTerminal
 
 
 internal enum class Where {
