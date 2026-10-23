@@ -1978,19 +1978,17 @@ private fun ProxyChainCard(
     val failed = chain.status == AppState.ChainStatus.FAILED
 
     val headline = when (chain.status) {
-        AppState.ChainStatus.CONNECTING ->
-            if (chain.message.isNotBlank()) "${chain.host}:${chain.port} \u00b7 ${chain.message}"
-            else "${chain.host}:${chain.port} \u00b7 negotiating\u2026"
-        AppState.ChainStatus.CONNECTED -> {
-            val measured = if (chain.urlMs >= 0) " \u00b7 ${chain.urlMs}ms URL" else ""
-            "through ${chain.host}$measured"
-        }
+        // Negotiation is still running: amber "connecting…", never green, and
+        // the host stays out of the card until the tunnel is actually live.
+        AppState.ChainStatus.CONNECTING -> "connecting\u2026"
+        AppState.ChainStatus.CONNECTED ->
+            if (chain.urlMs >= 0) "on \u00b7 ${chain.urlMs}ms \u2014 tap to disconnect"
+            else "on \u2014 tap to disconnect"
         AppState.ChainStatus.STOPPING -> "stopping the chain\u2026"
         AppState.ChainStatus.FAILED ->
             if (chain.message.isNotBlank()) chain.message else "failed \u00b7 back on Tor"
         else -> if (connected) "tap to choose a VPN Gate server" else "connect with Tor first"
     }
-
     Row(
         modifier
             .height(60.dp)
@@ -2006,18 +2004,24 @@ private fun ProxyChainCard(
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Column(Modifier.weight(1f)) {
+            // Position and size swap on request: the big bold words read
+            // "PROXY CHAIN", the small muted line carries the status.
             Text(
                 "PROXY CHAIN",
-                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
-                color = DeltaTor.Muted
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = DeltaTor.Text
             )
             Text(
                 headline,
-                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 0.6.sp
+                ),
                 color = when {
                     failed -> DeltaTor.Red
+                    chain.status == AppState.ChainStatus.CONNECTING -> DeltaTor.Amber
                     chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
-                    else -> DeltaTor.Text
+                    else -> DeltaTor.Muted
                 },
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -2026,7 +2030,8 @@ private fun ProxyChainCard(
 
         Text(
             when {
-                active -> if (chain.status == AppState.ChainStatus.CONNECTED) "ON" else "\u2026"
+                chain.status == AppState.ChainStatus.CONNECTED -> "\u25CF"
+                active -> "\u2026"
                 else -> "\u25B8"
             },
             style = MaterialTheme.typography.labelLarge.copy(
@@ -2034,6 +2039,7 @@ private fun ProxyChainCard(
                 letterSpacing = 1.2.sp
             ),
             color = when {
+                chain.status == AppState.ChainStatus.CONNECTING -> DeltaTor.Amber
                 chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
                 failed -> DeltaTor.Red
                 else -> DeltaTor.Accent
