@@ -51,19 +51,37 @@ private const val NO_DELAY = -1L
  */
 object ProxyChainManager {
 
-    data class Server(val host: String, val port: Int, val delayMs: Long = NO_DELAY) {
+    /** A section header found in the host list: one country, any count. */
+    data class Country(val code: String, val name: String)
+
+    data class Server(
+        val host: String,
+        val port: Int,
+        val delayMs: Long = NO_DELAY,
+        /** Where the host sits, straight from the file's section headers. */
+        val countryCode: String = "",
+        val countryName: String = ""
+    ) {
         val key: String get() = "$host:$port"
         val tested: Boolean get() = delayMs >= 0
     }
 
-    /** Published for the config sheet, newest ranking first already applied. */
-    data class ListState(val servers: List<Server> = emptyList(), val updatedAtMillis: Long = 0L)
+    /** Published for the config sheet, grouped by country and already ranked. */
+    data class ListState(
+        val servers: List<Server> = emptyList(),
+        val updatedAtMillis: Long = 0L,
+        val countries: List<Country> = emptyList()
+    )
 
     @Volatile
     private var appContext: Context? = null
 
     @Volatile
     private var updatedAtMillis = 0L
+
+    /** Section order of the last fetch: countries in exactly the file's order. */
+    @Volatile
+    private var countries: List<Country> = emptyList()
 
     @Volatile
     private var servers: List<Server> = emptyList()
@@ -106,11 +124,26 @@ object ProxyChainManager {
             val raw = file(context).takeIf { it.exists() }?.readText() ?: return
             val root = JSONObject(raw)
             updatedAtMillis = root.optLong("updated", 0L)
+            val countryArray = root.optJSONArray("countries")
+            if (countryArray != null) {
+                countries = (0 until countryArray.length()).map {
+                    val o = countryArray.getJSONObject(it)
+                    Country(o.getString("c"), o.getString("n"))
+                }
+            }
             val array = root.optJSONArray("servers") ?: return
             val parsed = ArrayList<Server>(array.length())
             for (i in 0 until array.length()) {
                 val o = array.getJSONObject(i)
-                parsed.add(Server(o.getString("h"), o.getInt("p"), o.optLong("ms", NO_DELAY)))
+                parsed.add(
+                    Server(
+                        o.getString("h"),
+                        o.getInt("p"),
+                        o.optLong("ms", NO_DELAY),
+                        o.optString("cc", ""),
+                        o.optString("cn", "")
+                    )
+                )
             }
             servers = parsed.sorted()
             publish()
@@ -123,12 +156,22 @@ object ProxyChainManager {
         try {
             val root = JSONObject()
             root.put("updated", updatedAtMillis)
+            val countryArray = JSONArray()
+            countries.forEach {
+                val o = JSONObject()
+                o.put("c", it.code)
+                o.put("n", it.name)
+                countryArray.put(o)
+            }
+            root.put("countries", countryArray)
             val array = JSONArray()
             servers.forEach {
                 val o = JSONObject()
                 o.put("h", it.host)
                 o.put("p", it.port)
                 o.put("ms", it.delayMs)
+                o.put("cc", it.countryCode)
+                o.put("cn", it.countryName)
                 array.put(o)
             }
             root.put("servers", array)
@@ -139,12 +182,27 @@ object ProxyChainManager {
     }
 
     private fun publish() {
-        _listState.value = ListState(servers, updatedAtMillis)
+        _listState.value = ListState(servers, updatedAtMillis, countries)
     }
 
-    /** Sorted list view: fastest measured first, servers never probed last. */
+    /**
+     * Sorted list view: countries first, in the order the host file declared
+     * them, then measured delay inside each country, then whatever the file
+     * itself put last. Unknown countries (an older list without headers) sink
+     * below every declared one, so a fetch with sections always wins.
+     */
     private fun List<Server>.sorted(): List<Server> =
-        sortedWith(compareBy { if (it.delayMs < 0) Long.MAX_VALUE else it.delayMs })
+        sortedWith(
+            compareBy<Server> { countryIndex(it.countryCode) }
+                .thenBy { if (it.delayMs < 0) Long.MAX_VALUE else it.delayMs }
+        )
+
+    /** List position of a country code: everything undeclared trails the declared. */
+    private fun countryIndex(code: String): Int {
+        if (code.isBlank()) return Int.MAX_VALUE
+        val index = countries.indexOfFirst { it.code == code }
+        return if (index < 0) Int.MAX_VALUE - 1 else index
+    }
 
     // ------------------------------------------------------------------ daily
 
@@ -176,13 +234,27 @@ object ProxyChainManager {
             return
         }
 
+        // Country sections: however many, in whatever order this fetch brought
+        // them. The sheet mirrors this order exactly, so a new country tomorrow
+        // (or a missing one) is picked up with no code change.
+        val orderedCountries = linkedMapOf<String, String>()
+        parsed.forEach {
+            if (it.countryCode.isNotBlank()) orderedCountries.putIfAbsent(it.countryCode, it.countryName)
+        }
+        countries = orderedCountries.map { Country(it.key, it.value) }
+
         val previous = servers.associateBy({ it.key }, { it })
-        val merged = parsed.map { previous[it.key] ?: it }
+        // Fresh country facts always win; only the delay measurement survives
+        // from the previous list.
+        val merged = parsed.map { fresh ->
+            val prior = previous[fresh.key]
+            if (prior != null) fresh.copy(delayMs = prior.delayMs) else fresh
+        }
         updatedAtMillis = System.currentTimeMillis()
         servers = merged.sorted()
         save(context.applicationContext)
         publish()
-        Log.i(TAG, "host list updated: ${merged.size} servers")
+        Log.i(TAG, "host list updated: ${merged.size} servers, ${countries.size} countries")
     }
 
     private fun fetchDirect(): String? = fetch(viaTor = false)
@@ -210,13 +282,29 @@ object ProxyChainManager {
         }
     }
 
+    /**
+     * Parses the host list. Lines under a `=== Country (CC) ===` section header
+     * inherit that country; every header is discovered at fetch time, so the
+     * country set can freely change day to day. Hosts before any header get no
+     * country and render in an "unknown" group.
+     */
     private fun parse(text: String): List<Server> {
         val defaultPort = Config.sstpPort
+        val section = Regex("""^===\s*(.+?)\s*\(([A-Za-z]{2})\)""")
         val seen = HashSet<String>()
         val out = ArrayList<Server>()
+        var currentName = ""
+        var currentCode = ""
         text.lines().forEach { raw ->
             val line = raw.trim()
             if (line.isEmpty() || line.startsWith("#")) return@forEach
+
+            val header = section.find(line)
+            if (header != null) {
+                currentName = header.groupValues[1].trim()
+                currentCode = header.groupValues[2].uppercase(Locale.ROOT)
+                return@forEach
+            }
 
             val colon = line.lastIndexOf(':')
             val suffix = if (colon > 0) line.substring(colon + 1) else ""
@@ -229,7 +317,7 @@ object ProxyChainManager {
 
             val normalized = host.lowercase(Locale.ROOT)
             if (seen.add("$normalized:$port")) {
-                out.add(Server(normalized, port))
+                out.add(Server(normalized, port, NO_DELAY, currentCode, currentName))
             }
         }
         return out

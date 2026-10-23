@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
+import java.util.Locale
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -2117,8 +2118,14 @@ private fun ProxyChainSheet(
                         color = DeltaTor.Text
                     )
                     Text(
-                        if (list.servers.isEmpty()) "list updates automatically, once a day"
-                        else "${list.servers.size} servers \u00b7 fastest on top",
+                        when {
+                            list.servers.isEmpty() -> "list updates automatically, once a day"
+                            list.countries.isEmpty() ->
+                                "${list.servers.size} servers \u00b7 fastest on top"
+                            else ->
+                                "${list.servers.size} servers \u00b7 ${list.countries.size} countries" +
+                                    " \u00b7 fastest first in each"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = DeltaTor.Muted
                     )
@@ -2160,20 +2167,33 @@ private fun ProxyChainSheet(
             Spacer(Modifier.height(8.dp))
 
             val filtered = list.servers.filter {
-                search.isBlank() || it.host.contains(search.trim(), ignoreCase = true)
+                search.isBlank() ||
+                    it.host.contains(search.trim(), ignoreCase = true) ||
+                    it.countryName.contains(search.trim(), ignoreCase = true)
             }
 
+            // Country groups, driven by whatever the last fetch declared: each
+            // group keeps the file's own order, the fastest servers first, and
+            // the header is drawn from the country facts still attached to the
+            // rows themselves.
+            val groups = filtered.groupBy { it.countryCode }
             LazyColumn(
                 Modifier
                     .fillMaxWidth()
                     .height(380.dp)
             ) {
-                items(filtered, key = { it.key }) { server ->
-                    ChainServerRow(
-                        server = server,
-                        testRunning = running,
-                        onClick = { onPick(server.host, server.port) }
-                    )
+                groups.forEach { (code, group) ->
+                    item(key = "section:$code") {
+                        val name = group.first().countryName
+                        ChainCountryHeader(code = code, name = name, count = group.size)
+                    }
+                    items(group, key = { it.key }) { server ->
+                        ChainServerRow(
+                            server = server,
+                            testRunning = running,
+                            onClick = { onPick(server.host, server.port) }
+                        )
+                    }
                 }
             }
         }
@@ -2218,6 +2238,31 @@ private fun ChainServerRow(
             color = if (server.tested) DeltaTor.Green else DeltaTor.Muted
         )
     }
+}
+
+@Composable
+private fun ChainCountryHeader(code: String, name: String, count: Int) {
+    // The section names come straight from the host file, so any country the
+    // generator adds tomorrow renders here with no code change.
+    val title = when {
+        name.isNotBlank() -> name
+        code.isNotBlank() -> code
+        else -> "unknown"
+    }
+    val flag = flagEmoji(code)
+    Text(
+        text = if (flag.isEmpty()) "$title \u00b7 $count" else "$flag $title \u00b7 $count",
+        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+        color = DeltaTor.Text,
+        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
+    )
+}
+
+fun flagEmoji(code: String): String {
+    // A flag is the two ISO letters shifted into the regional-indicator block.
+    val upper = code.take(2).uppercase(Locale.ROOT)
+    if (upper.length != 2 || upper.any { it !in 'A'..'Z' }) return ""
+    return upper.map { String(Character.toChars(0x1F1E6 + (it - 'A'))) }.joinToString("")
 }
 
 /** Proxy mode gives the chain nothing to chain onto; switching is the user's call. */
