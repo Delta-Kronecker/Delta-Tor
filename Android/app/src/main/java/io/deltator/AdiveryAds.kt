@@ -1,6 +1,6 @@
 package io.deltator
 
-import android.content.Context
+import android.app.Application
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,8 +47,11 @@ object AdiveryAds {
      * off the SDK. Called exactly once from the Application's onCreate; the
      * banner itself is loaded by its composable when the slot composes.
      */
-    fun init(context: Context) {
-        Adivery.configure(context, APP_ID)
+    fun init(app: Application) {
+        // The SDK's own diagnostics go to Logcat on debug builds only, the
+        // same gating the official sample uses.
+        Adivery.setLoggingEnabled(BuildConfig.DEBUG)
+        Adivery.configure(app, APP_ID)
 
         Adivery.addGlobalListener(object : AdiveryListener() {
             override fun onInterstitialAdLoaded(placementId: String) {
@@ -63,16 +66,17 @@ object AdiveryAds {
                 Log.i(TAG, "interstitial closed")
             }
 
-            override fun onError(placementId: String, reason: String) {
-                // Log only: the SDK fires this per failing network while other
-                // networks may still fill the slot, so it is not a verdict.
-                Log.w(TAG, "placement error: $reason")
+            override fun log(placementId: String, message: String) {
+                // Load failures and other diagnostics: log only, the SDK may
+                // report a network that failed while another one still fills
+                // the slot, so this is not a verdict.
+                Log.d(TAG, "sdk: $message")
             }
         })
 
         // One prepare. The SDK refills the slot itself after every show, per
         // its auto-caching model.
-        Adivery.prepareInterstitialAd(context, INTERSTITIAL_PLACEMENT)
+        Adivery.prepareInterstitialAd(app, INTERSTITIAL_PLACEMENT)
     }
 
     /**
