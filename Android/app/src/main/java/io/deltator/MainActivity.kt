@@ -190,14 +190,9 @@ class MainActivity : ComponentActivity() {
                             // is no VPN to start. Must be checked before torRunning,
                             // which is also true in this state and would otherwise
                             // send a start the service declines to act on.
-                            s.socksEndpoint.isNotEmpty() -> {
-                                AdiveryAds.showInterstitialIfReady()
+                            s.socksEndpoint.isNotEmpty() ->
                                 sendAction(TorVpnService.ACTION_DISCONNECT)
-                            }
-                            s.connecting || s.connected -> {
-                                AdiveryAds.showInterstitialIfReady()
-                                sendAction(TorVpnService.ACTION_DISCONNECT)
-                            }
+                            s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.torRunning -> {
                                 ConnectCounter.countConnect(applicationContext)
                                 sendAction(TorVpnService.ACTION_START_VPN)
@@ -209,12 +204,7 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onStopVpn = { sendAction(TorVpnService.ACTION_STOP_VPN) },
-                    onDisconnect = {
-                        // The teardown keeps running underneath the ad; when it
-                        // closes the screen is already back to its idle state.
-                        AdiveryAds.showInterstitialIfReady()
-                        sendAction(TorVpnService.ACTION_DISCONNECT)
-                    },
+                    onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) },
                     onChainPick = { host, port -> sendActionChain(host, port) },
                     onUpdateBridges = { BridgeStore.update(applicationContext) }
                 )
@@ -546,6 +536,10 @@ private fun MainScreen(
                 .windowInsetsPadding(WindowInsets.systemBars)
         ) {
             AirBackground(glow = scAnimated, connecting = connecting)
+
+            // Watches the bootstrap and opens the interstitial at the quarter
+            // mark; composes nothing itself.
+            InterstitialAtQuarter(state)
 
             Header(
                 statusColor = scAnimated,
@@ -1535,6 +1529,29 @@ private fun peakPct(connecting: Boolean, torRunning: Boolean, transports: Map<St
 private fun ringProgressOf(state: AppState.VpnState): Float? {
     val peak = peakPct(state.connecting, state.torRunning, state.transports)
     return if (state.connecting && !state.torRunning && peak > 0) peak / 100f else null
+}
+
+/**
+ * The interstitial's trigger point: it opens once per connect, when the
+ * leading racer first reaches a quarter of the bootstrap. The bootstrap keeps
+ * running underneath the ad, so the connection is usually live by the time
+ * the ad closes. The shown flag resets only when the connect ends, so the
+ * percentage wobbling around 25 -- or the lead swapping racers -- cannot
+ * fire it twice, and a connect that never reaches a quarter shows nothing.
+ */
+@Composable
+private fun InterstitialAtQuarter(state: AppState.VpnState) {
+    val peak = peakPct(state.connecting, state.torRunning, state.transports)
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(state.connecting) {
+        if (!state.connecting) shown = false
+    }
+    LaunchedEffect(state.connecting, peak >= 25) {
+        if (state.connecting && peak >= 25 && !shown) {
+            shown = true
+            AdiveryAds.showInterstitialIfReady()
+        }
+    }
 }
 
 // ---- background -------------------------------------------------------------
