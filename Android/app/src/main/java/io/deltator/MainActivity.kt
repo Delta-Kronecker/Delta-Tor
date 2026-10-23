@@ -64,6 +64,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
@@ -2140,9 +2141,18 @@ private fun ProxyChainSheet(
     onPick: (host: String, port: Int) -> Unit
 ) {
     val list by ProxyChainManager.listState.collectAsStateWithLifecycle()
+    val fetching by ProxyChainManager.fetching.collectAsStateWithLifecycle()
     val chain by AppState.chainState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var search by remember { mutableStateOf("") }
+
+    // The sheet is composed fresh on every open: an empty list means no fetch
+    // has landed yet (first run, or the background one failed), so one is
+    // kicked off right here instead of leaving the user with an empty sheet.
+    LaunchedEffect(Unit) {
+        if (list.servers.isEmpty()) ProxyChainManager.updateNow(context)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -2209,22 +2219,71 @@ private fun ProxyChainSheet(
             // the header is drawn from the country facts still attached to the
             // rows themselves.
             val groups = list.servers.groupBy { it.countryCode }
-            LazyColumn(
-                Modifier
-                    .fillMaxWidth()
-                    .height(380.dp)
-            ) {
-                groups.forEach { (code, group) ->
-                    item(key = "section:$code") {
-                        val name = group.first().countryName
-                        ChainCountryHeader(code = code, name = name, count = group.size)
+            if (list.servers.isEmpty()) {
+                // Fetch states, in the space the list itself will occupy once
+                // it lands: a spinner while the request is in flight, and a
+                // retry line once both routes (direct and behind Tor) failed.
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(380.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (fetching) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(28.dp),
+                                color = DeltaTor.Accent,
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            Text(
+                                "در حال دریافت سرورها\u2026",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = DeltaTor.Muted
+                            )
+                        } else {
+                            Text(
+                                "دریافت لیست سرورها ناموفق بود",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = DeltaTor.Muted
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "تلاش دوباره",
+                                // No letterSpacing here: spacing breaks the
+                                // joined letterforms of Persian script.
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = DeltaTor.Accent,
+                                modifier = Modifier
+                                    .clickable {
+                                        scope.launch { ProxyChainManager.updateNow(context) }
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
-                    items(group, key = { it.key }) { server ->
-                        ChainServerRow(
-                            server = server,
-                            testRunning = running,
-                            onClick = { onPick(server.host, server.port) }
-                        )
+                }
+            } else {
+                LazyColumn(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(380.dp)
+                ) {
+                    groups.forEach { (code, group) ->
+                        item(key = "section:$code") {
+                            val name = group.first().countryName
+                            ChainCountryHeader(code = code, name = name, count = group.size)
+                        }
+                        items(group, key = { it.key }) { server ->
+                            ChainServerRow(
+                                server = server,
+                                testRunning = running,
+                                onClick = { onPick(server.host, server.port) }
+                            )
+                        }
                     }
                 }
             }
