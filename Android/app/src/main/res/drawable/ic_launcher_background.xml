@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Background layer of the adaptive launcher icon: the same deep-navy radial
+     glow as the original artwork. Only a thin sliver beyond the foreground
+     artwork is ever visible through aggressive launcher masks. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient
+        android:type="radial"
+        android:centerX="0.5"
+        android:centerY="0.5"
+        android:gradientRadius="76dp"
+        android:startColor="#0A1731"
+        android:endColor="#05081A" />
+</shape>
