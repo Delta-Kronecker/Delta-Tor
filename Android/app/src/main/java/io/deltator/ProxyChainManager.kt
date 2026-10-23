@@ -81,6 +81,22 @@ object ProxyChainManager {
         if (appContext != null) return
         appContext = context.applicationContext
         load(context.applicationContext)
+        clearMeasurements(context.applicationContext)
+    }
+
+    // -------------------------------------------------------------- freshness
+
+    /**
+     * Drop every stored probe delay once per process. A ping from yesterday is
+     * not a ping from today; the sheet shows all servers untested until the
+     * user (or a fresh probe run) measures them again in this run.
+     */
+    private fun clearMeasurements(context: Context) {
+        if (servers.none { it.delayMs >= 0 }) return
+        servers = servers.map { it.copy(delayMs = NO_DELAY) }
+        save(context)
+        publish()
+        Log.i(TAG, "probe delays cleared for this run")
     }
 
     // ------------------------------------------------------------------ store

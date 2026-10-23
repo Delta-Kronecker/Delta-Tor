@@ -371,7 +371,7 @@ private fun MainScreen(
     val state by AppState.state.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
     val chain by AppState.chainState.collectAsStateWithLifecycle()
-    val sc = stateColor(state)
+    val sc = stateColor(state, chain)
     val context = LocalContext.current
 
     // The chain sheet is main-screen scope: the config list lives over the ring,
@@ -413,8 +413,11 @@ private fun MainScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    val connecting = state.connecting
-    val connected = state.connected
+    val connecting = state.connecting || chain.status == AppState.ChainStatus.CONNECTING
+    // While the chain is in flight the plain VPN state is empty on purpose --
+    // its interface was torn down before the SSTP negotiation -- so without
+    // folding the chain in here the ring would read OFFLINE over a live chain.
+    val connected = state.connected || chain.status == AppState.ChainStatus.CONNECTED
     val torRunning = state.torRunning
     val scAnimated by animateColorAsState(sc, tween(450), label = "stateColor")
 
@@ -508,7 +511,7 @@ private fun MainScreen(
 
             Header(
                 statusColor = scAnimated,
-                statusLabel = statusLabel(state),
+                statusLabel = statusLabel(state, chain),
                 onOpenDrawer = openDrawer,
                 modifier = Modifier.align(Alignment.TopCenter)
             )
@@ -543,7 +546,7 @@ private fun MainScreen(
                 transport = state.transport,
                 peak = peakPct(state.connecting, state.torRunning, state.transports),
                 sc = scAnimated,
-                hasError = state.error != null,
+                hasError = state.error != null || chain.status == AppState.ChainStatus.FAILED,
                 modifier = Modifier.align(Alignment.Center).offset(y = (-112).dp)
             )
 
@@ -559,7 +562,7 @@ private fun MainScreen(
             )
 
             Text(
-                labelText(state),
+                labelText(state, chain),
                 modifier = Modifier
                     .align(Alignment.Center)
                     .offset(y = 106.dp)
@@ -1341,21 +1344,46 @@ private fun ChevronIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.T
 
 // ---- state helpers ----------------------------------------------------------
 
-private fun stateColor(state: AppState.VpnState): Color = when {
-    state.stopping -> DeltaTor.Amber
-    state.connecting -> DeltaTor.Amber
-    state.reconnecting -> DeltaTor.AmberLight
-    state.connected -> DeltaTor.Green
-    state.torRunning -> DeltaTor.Amber
-    else -> DeltaTor.Muted
+private fun stateColor(
+    state: AppState.VpnState,
+    chain: AppState.ChainState? = null
+): Color {
+    // The chain drives the ring whenever it is in flight: the plain VPN state
+    // sits empty behind it, because its interface was the one torn down.
+    when (chain?.status) {
+        AppState.ChainStatus.CONNECTING -> return DeltaTor.Amber
+        AppState.ChainStatus.STOPPING -> return DeltaTor.Amber
+        AppState.ChainStatus.CONNECTED -> return DeltaTor.Green
+        AppState.ChainStatus.FAILED -> return DeltaTor.Red
+        else -> {}
+    }
+    return when {
+        state.stopping -> DeltaTor.Amber
+        state.connecting -> DeltaTor.Amber
+        state.reconnecting -> DeltaTor.AmberLight
+        state.connected -> DeltaTor.Green
+        state.torRunning -> DeltaTor.Amber
+        else -> DeltaTor.Muted
+    }
 }
 
-private fun statusLabel(state: AppState.VpnState): String = when {
-    state.stopping -> ""
-    state.connecting -> "CONNECTING"
-    state.connected -> "CONNECTED"
-    state.torRunning -> "READY"
-    else -> "OFFLINE"
+private fun statusLabel(
+    state: AppState.VpnState,
+    chain: AppState.ChainState? = null
+): String {
+    when (chain?.status) {
+        AppState.ChainStatus.CONNECTING -> return "CHAIN CONNECTING"
+        AppState.ChainStatus.CONNECTED -> return "CONNECTED"
+        AppState.ChainStatus.STOPPING -> return ""
+        else -> {}
+    }
+    return when {
+        state.stopping -> ""
+        state.connecting -> "CONNECTING"
+        state.connected -> "CONNECTED"
+        state.torRunning -> "READY"
+        else -> "OFFLINE"
+    }
 }
 
 private fun glyphColor(connecting: Boolean, connected: Boolean, stopping: Boolean): Color = when {
@@ -1365,19 +1393,32 @@ private fun glyphColor(connecting: Boolean, connected: Boolean, stopping: Boolea
     else -> DeltaTor.Text
 }
 
-private fun labelText(state: AppState.VpnState): String = when {
-    // Nothing here. The only STOPPING the user sees is the big word at the top.
-    state.stopping -> ""
-    state.error != null -> state.error
-    state.connecting -> "CANCEL"
-    state.connected -> "DISCONNECT"
-    // Proxy mode is a live state of its own, not a half-finished VPN. Without
-    // this the ring reads START VPN, because Tor is up but no tunnel exists, and
-    // pressing it would do nothing: the service refuses a start when proxy mode
-    // is on. Offering DISCONNECT is the only action that actually stops anything.
-    state.socksEndpoint.isNotEmpty() -> "DISCONNECT"
-    state.torRunning -> "START VPN"
-    else -> "CONNECT"
+private fun labelText(
+    state: AppState.VpnState,
+    chain: AppState.ChainState? = null
+): String {
+    // The ring ends the chain while it is in flight, so its label has to say
+    // that instead of offering a start that would be ignored anyway.
+    when (chain?.status) {
+        AppState.ChainStatus.CONNECTING -> return "CANCEL"
+        AppState.ChainStatus.CONNECTED -> return "DISCONNECT"
+        AppState.ChainStatus.STOPPING -> return ""
+        else -> {}
+    }
+    return when {
+        // Nothing here either. The only STOPPING the user sees is the big word.
+        state.stopping -> ""
+        state.error != null -> state.error
+        state.connecting -> "CANCEL"
+        state.connected -> "DISCONNECT"
+        // Proxy mode is a live state of its own, not a half-finished VPN. Without
+        // this the ring reads START VPN, because Tor is up but no tunnel exists, and
+        // pressing it would do nothing: the service refuses a start when proxy mode
+        // is on. Offering DISCONNECT is the only action that actually stops anything.
+        state.socksEndpoint.isNotEmpty() -> "DISCONNECT"
+        state.torRunning -> "START VPN"
+        else -> "CONNECT"
+    }
 }
 
 private fun wordFor(
