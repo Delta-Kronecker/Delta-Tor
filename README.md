@@ -252,7 +252,7 @@ release workflow fails closed until it matches. Never commit the pfx.
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `android-build.yml` | push to `main`/`android`/`test`/`ad`, manual | debug APK, sources and native symbols as artifacts |
+| `android-build.yml` | push to `main`/`android`/`test`, manual | debug APK, sources and native symbols as artifacts |
 | `windows-build.yml` | push to `main`/`test`, PRs, manual | portable Windows zip, sources and native symbols as artifacts |
 | `release.yml` | tag `v*`, manual with a tag input | signed APKs, signature verification, GitHub release |
 | `windows-release.yml` | tag `v*`, manual with a tag input | signed Windows zip (Authenticode + signer pin), GitHub release |
@@ -267,10 +267,6 @@ needed. One `v*` tag publishes both platforms' assets to the same GitHub release
   update check, and a single one-time request per installation used to count installs.
 - All traffic goes through Tor once the tunnel is up; the app's own requests (bridges,
   updates, host list) go direct, never through the tunnel.
-- The ad-supported build (the `ad` branch) additionally includes the Adivery ad SDK, which
-  collects advertising identifiers and ad-interaction data under
-  [Adivery's privacy policy](https://docs.adivery.com/privacy-policy); the main builds
-  carry no such SDK.
 
 ## License
 
