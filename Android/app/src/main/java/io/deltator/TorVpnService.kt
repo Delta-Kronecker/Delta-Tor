@@ -851,13 +851,15 @@ class TorVpnService : VpnService() {
             Log.i(TAG, "Ignoring stop: proxy mode is on, use Disconnect to shut the proxy down")
             return
         }
-        // In chain mode the tunnel to stop is the chain's: end it silently - the
-        // SAVE of a user cancel would put a plain-Tor tunnel back up that this
-        // very action is asking to remove - and let the flow below clear the rest.
+        // In chain mode the tunnel to stop is the chain's: end it the way a
+        // user cancel does - which also puts a plain-Tor tunnel back up - and
+        // skip the TUN teardown meant for Tor's own interface, which the chain
+        // never owned.
         val chain = chainEngine
         if (chain != null && chain.isActive) {
-            Log.i(TAG, "Stopping the chain (VPN only); Tor stays running")
-            chain.stopWithoutRestore()
+            Log.i(TAG, "Stopping the chain; the plain Tor VPN comes back")
+            chain.stop()
+            return
         }
         val s = AppState.state.value
         if (!s.connected && !s.connecting && !s.reconnecting) {
@@ -1360,10 +1362,16 @@ class TorVpnService : VpnService() {
         // act on: startVpn and stopVpn both refuse while Config.proxyOnlyMode is
         // set. Shipping them anyway put a live-looking button in the shade that
         // did nothing when tapped. Disconnect is the only action that still works.
-        if (s.connected) {
-            builder.addAction(R.drawable.ic_notification_stop, "Stop VPN", stopVpnPendingIntent)
-        } else if (s.torRunning && !Config.proxyOnlyMode) {
-            builder.addAction(R.drawable.ic_notification_start, "Start VPN", startVpnPendingIntent)
+        // The chain reads the same way here -- VpnState is empty all through it --
+        // so its gate is on the chain's own state, and its route is the chain
+        // disconnect, which stops the chain and brings the plain Tor VPN back.
+        when {
+            AppState.chainState.value.status == AppState.ChainStatus.CONNECTING ||
+                AppState.chainState.value.status == AppState.ChainStatus.CONNECTED ->
+                builder.addAction(R.drawable.ic_notification_stop, "Stop VPN", chainDisconnectPendingIntent)
+            s.connected -> builder.addAction(R.drawable.ic_notification_stop, "Stop VPN", stopVpnPendingIntent)
+            s.torRunning && !Config.proxyOnlyMode ->
+                builder.addAction(R.drawable.ic_notification_start, "Start VPN", startVpnPendingIntent)
         }
         return builder
     }
@@ -1804,8 +1812,14 @@ class TorVpnService : VpnService() {
             Log.i(TAG, "Ignoring disconnect: a stop is already tearing the cores down")
             return
         }
+        // The chain is a second VPN on top of Tor, but it never shows up in
+        // VpnState -- its interface was torn down before it negotiated. Without
+        // counting it a tap on the notification's Disconnect landed in this
+        // guard and dropped, leaving the shade's button staring back dead while
+        // the tunnel carried on.
+        val chainLive = chainEngine?.isActive == true
         val s = AppState.state.value
-        if (!s.connected && !s.connecting && !s.reconnecting && !s.torRunning && s.socksEndpoint.isEmpty()) {
+        if (!chainLive && !s.connected && !s.connecting && !s.reconnecting && !s.torRunning && s.socksEndpoint.isEmpty()) {
             Log.i(TAG, "Nothing to disconnect")
             return
         }
@@ -1959,6 +1973,19 @@ class TorVpnService : VpnService() {
         PendingIntent.getService(
             this,
             4,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Ends the chain and restores the plain Tor VPN — the shade's second key while it is up. */
+    private val chainDisconnectPendingIntent: PendingIntent by lazy {
+        val intent = Intent(this, TorVpnService::class.java).apply {
+            action = ACTION_CHAIN_DISCONNECT
+        }
+        PendingIntent.getService(
+            this,
+            5,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
