@@ -28,11 +28,14 @@ val releaseKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
 // said another, and neither the filename nor the archive could catch it.
 //
 // The release workflow passes the tag as -PdeltatorVersion (or DELTATOR_VERSION).
-// A plain `assembleDebug` here, and the debug CI, get the fallback below, which
-// is the last published version.
+// A plain `assembleDebug` here, and the debug CI, get the fallback below. It is
+// deliberately a major above every published 2.x release: ReleaseChecker compares
+// the latest published version against its own, so a debug build that claims 3.0.0
+// reports nothing newer and never opens the self-update flow while the app is
+// being tested.
 val appVersion: String = (findProperty("deltatorVersion") as String?)?.trim()?.takeIf { it.isNotEmpty() }
     ?: System.getenv("DELTATOR_VERSION")?.trim()?.takeIf { it.isNotEmpty() }
-    ?: "2.0.0"
+    ?: "3.0.0"
 
 // major*10000 + minor*100 + patch, so it grows with the version and stays an
 // integer for the whole 1.x and 2.x range. Play only accepts a versionCode
@@ -172,6 +175,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.10.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+
+    // WorkManager: the daily auto-update of the VPN Gate proxy-chain pool
+    implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")

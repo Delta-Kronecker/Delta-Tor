@@ -1,0 +1,28 @@
+SSTP core attribution
+=====================
+
+The files under kittoku/osc are derived from kittoku's Open-SSTP-Client, an
+MIT-licensed SSTP (Secure Socket Tunneling Protocol) client for Android:
+
+    https://github.com/kittoku/Open-SSTP-Client
+    Copyright (c) 2024 kittoku
+    (the MIT license text ships alongside this file: LICENSE)
+
+DeltaTor's use of it
+--------------------
+
+This tree is the vendored core, reduced to what a tunnel needs:
+
+- no in-app settings are read: every checkpoint of the original client
+  (SharedPreferences, the floating logger, the certificate picker, app-based
+  routing rules) was replaced by kittoku/osc/SstpParams + SharedBridge, driven by
+  DeltaTor's own configuration and owned by io.deltator.TorVpnService;
+- the terminal was re-pointed: every connection is dialled as a raw SOCKS5
+  client through Tor's local bridge (127.0.0.1, per Config.proxyPort) instead
+  of the original HTTP CONNECT proxy support, so the whole chain is
+  Tor-first;
+- the pool it connects to is VPN Gate's public server hub, fetched, probed and
+  ranked by io.deltator.ProxyChainManager, and driven by the Proxy Chain UI.
+
+Behaviour covered by the code lives in the engine:
+io.deltator.tunnel.SstpChainEngine.

@@ -30,11 +30,34 @@ class DeltaTorApp : Application() {
         appScope.launch { BridgeStore.autoUpdateIfStale(this@DeltaTorApp) }
         appScope.launch { ReleaseChecker.check(this@DeltaTorApp) }
         appScope.launch { InstallCounter.countInstall(this@DeltaTorApp) }
+        // Proxy chain: restore the persisted pool, then refresh it if the day
+        // has turned and demand the daily worker keeps it turning.
+        ProxyChainManager.init(this)
+        appScope.launch { ProxyChainManager.updateIfNeeded(this@DeltaTorApp) }
+        scheduleProxyChainDailyUpdate()
         // A fresh install only: the first-run flag is still unset here, and
         // MainActivity sets it as soon as the screen is up, so an upgrading
         // install -- which set it long ago -- never reaches this branch.
         if (!Config.firstRunNoticeShown) {
             appScope.launch { CombinedMemorySeed.seedIfFresh(this@DeltaTorApp) }
+        }
+    }
+
+    /**
+     * One update of the VPN Gate pool per day, surviving the app being swiped
+     * away. KEEP so every launch does not replace the 24-hour rhythm with a
+     * fresh timer.
+     */
+    private fun scheduleProxyChainDailyUpdate() {
+        try {
+            androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+                "proxy_chain_daily_update",
+                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                androidx.work.PeriodicWorkRequestBuilder<ProxyChainWorker>(24, java.util.concurrent.TimeUnit.HOURS)
+                    .build()
+            )
+        } catch (e: Exception) {
+            AppLog.w("App", "daily chain update scheduling failed: ${e.message}")
         }
     }
 
@@ -81,6 +104,45 @@ object Config {
     var proxyPort: Int
         get() = prefs.getInt("proxy_port", DEFAULT_PROXY_PORT)
         set(value) = prefs.edit().putInt("proxy_port", value.coerceIn(1024, 65535)).apply()
+
+    /**
+     * The port an SSTP server line opens on when the host list carries none of
+     * its own. VPN Gate's default is 443, and the list honours that: a line may
+     * still override it with an explicit `host:port`.
+     */
+    const val DEFAULT_SSTP_PORT = 443
+
+    var sstpPort: Int
+        get() = prefs.getInt("sstp_default_port", DEFAULT_SSTP_PORT)
+        set(value) = prefs.edit().putInt("sstp_default_port", value.coerceIn(1, 65535)).apply()
+
+    /**
+     * Whether the chain checks the server's certificate against the system
+     * trust store. Off by default: VPN Gate hands out self-signed certificates,
+     * so verification on would refuse almost every server in the pool. The
+     * tunnel is authenticated by the PPP layer either way.
+     */
+    var chainVerifyTlsCert: Boolean
+        get() = prefs.getBoolean("chain_verify_tls_cert", false)
+        set(value) = prefs.edit().putBoolean("chain_verify_tls_cert", value).apply()
+
+    /** What the live chain is measured with once it exists. */
+    var chainTestUrl: String
+        get() = prefs.getString("chain_test_url", ProxyChainManager.DEFAULT_TEST_URL)
+            ?: ProxyChainManager.DEFAULT_TEST_URL
+        set(value) = prefs.edit().putString(
+            "chain_test_url",
+            value.ifBlank { ProxyChainManager.DEFAULT_TEST_URL }
+        ).apply()
+
+    /**
+     * Whether a dying chain is allowed to pick its own next server. Off, and a
+     * failure reports back instead of silently moving the device to another
+     * country.
+     */
+    var chainAutoFallback: Boolean
+        get() = prefs.getBoolean("chain_auto_fallback", true)
+        set(value) = prefs.edit().putBoolean("chain_auto_fallback", value).apply()
 
     var debugMode: Boolean
         get() = prefs.getBoolean("debug_mode", false)

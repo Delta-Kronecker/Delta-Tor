@@ -65,11 +65,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
@@ -77,6 +79,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -167,6 +170,16 @@ class MainActivity : ComponentActivity() {
                 DeltaTorScreen(
                     onPrimary = {
                         val s = AppState.state.value
+                        // A chain in flight owns the ring: pressing it ends the
+                        // chain, and the plain Tor VPN it interrupted comes back
+                        // by itself afterwards.
+                        val chain = AppState.chainState.value
+                        if (chain.status == AppState.ChainStatus.CONNECTING ||
+                            chain.status == AppState.ChainStatus.CONNECTED
+                        ) {
+                            sendAction(TorVpnService.ACTION_CHAIN_DISCONNECT)
+                            return@DeltaTorScreen
+                        }
                         when {
                             // The cores are being killed right now; a start here
                             // would race the teardown for the ports.
@@ -190,6 +203,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onStopVpn = { sendAction(TorVpnService.ACTION_STOP_VPN) },
                     onDisconnect = { sendAction(TorVpnService.ACTION_DISCONNECT) },
+                    onChainPick = { host, port -> sendActionChain(host, port) },
                     onUpdateBridges = { BridgeStore.update(applicationContext) }
                 )
             }
@@ -291,6 +305,15 @@ class MainActivity : ComponentActivity() {
         val intent = Intent(this, TorVpnService::class.java).apply { this.action = action }
         ContextCompat.startForegroundService(this, intent)
     }
+
+    private fun sendActionChain(host: String, port: Int) {
+        val intent = Intent(this, TorVpnService::class.java).apply {
+            action = TorVpnService.ACTION_CHAIN_CONNECT
+            putExtra(TorVpnService.EXTRA_CHAIN_HOST, host)
+            putExtra(TorVpnService.EXTRA_CHAIN_PORT, port)
+        }
+        ContextCompat.startForegroundService(this, intent)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -306,6 +329,7 @@ fun DeltaTorScreen(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
+    onChainPick: (host: String, port: Int) -> Unit,
     onUpdateBridges: () -> Unit
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
@@ -323,6 +347,7 @@ fun DeltaTorScreen(
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
+                onChainPick = onChainPick,
                 onUpdateBridges = onUpdateBridges,
                 onOpenLog = goLog,
                 onOpenSplitTunnel = goSplit
@@ -338,14 +363,21 @@ private fun MainScreen(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
+    onChainPick: (host: String, port: Int) -> Unit,
     onUpdateBridges: () -> Unit,
     onOpenLog: () -> Unit,
     onOpenSplitTunnel: () -> Unit
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
+    val chain by AppState.chainState.collectAsStateWithLifecycle()
     val sc = stateColor(state)
     val context = LocalContext.current
+
+    // The chain sheet is main-screen scope: the config list lives over the ring,
+    // dismissed by a swipe or by picking a server.
+    var showChainSheet by remember { mutableStateOf(false) }
+    var chainWarningFor by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
     // An APK downloaded in an earlier run opens the installer by itself as soon
     // as this screen is up. The latch matters: without it a cancel would bring
@@ -418,6 +450,35 @@ private fun MainScreen(
             onOpenSettings = {
                 awaitingInstallPermission = true
                 ReleaseChecker.openUnknownSources(context)
+            }
+        )
+    }
+
+    if (showChainSheet) {
+        ProxyChainSheet(
+            onClose = { showChainSheet = false },
+            onPick = { host, port ->
+                showChainSheet = false
+                if (Config.proxyOnlyMode) {
+                    // Proxy mode holds no VPN interface, and the chain is a
+                    // VPN. Rather than running one underneath the other and
+                    // calling that a chain, ask: switching modes is a change
+                    // the user makes, not one the app makes.
+                    chainWarningFor = host to port
+                } else {
+                    onChainPick(host, port)
+                }
+            }
+        )
+    }
+
+    chainWarningFor?.let { picked ->
+        ChainProxyModeWarning(
+            onKeep = { chainWarningFor = null },
+            onSwitch = {
+                chainWarningFor = null
+                Config.proxyOnlyMode = false
+                onChainPick(picked.first, picked.second)
             }
         )
     }
@@ -511,9 +572,11 @@ private fun MainScreen(
 
             BottomPanel(
                 state = state,
+                chain = chain,
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
+                onOpenChain = { showChainSheet = true },
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
@@ -1754,9 +1817,11 @@ private fun RingButton(
 @Composable
 private fun BottomPanel(
     state: AppState.VpnState,
+    chain: AppState.ChainState,
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenChain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -1766,6 +1831,28 @@ private fun BottomPanel(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // The chain card sits first, right where the finger already is: it is
+        // only meaningful once Tor is connected, and its own state decides what
+        // a tap does - open the sheet while idle, end the chain while in flight.
+        if (chain.status != AppState.ChainStatus.IDLE || state.connected) {
+            ProxyChainCard(
+                chain = chain,
+                connected = state.connected,
+                onClick = {
+                    if (chain.status == AppState.ChainStatus.CONNECTING ||
+                        chain.status == AppState.ChainStatus.CONNECTED
+                    ) {
+                        // Same dispatch the ring already resolves: ending the
+                        // chain, with the plain Tor VPN restored afterwards.
+                        onPrimary()
+                    } else {
+                        onOpenChain()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+        }
         // The row is never removed. During teardown the left pill keeps its slot
         // and just relabels to START VPN, dimmed until the cores are gone: a
         // start click there would race the teardown for the ports, but hiding
@@ -1875,6 +1962,248 @@ private fun BottomPanel(
 
         Spacer(Modifier.height(9.dp))
     }
+}
+
+@Composable
+private fun ProxyChainCard(
+    chain: AppState.ChainState,
+    connected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val shape = RoundedCornerShape(14.dp)
+    val active = chain.status == AppState.ChainStatus.CONNECTING ||
+        chain.status == AppState.ChainStatus.CONNECTED ||
+        chain.status == AppState.ChainStatus.STOPPING
+    val failed = chain.status == AppState.ChainStatus.FAILED
+
+    val headline = when (chain.status) {
+        AppState.ChainStatus.CONNECTING ->
+            if (chain.message.isNotBlank()) "${chain.host}:${chain.port} \u00b7 ${chain.message}"
+            else "${chain.host}:${chain.port} \u00b7 negotiating\u2026"
+        AppState.ChainStatus.CONNECTED -> {
+            val measured = if (chain.urlMs >= 0) " \u00b7 ${chain.urlMs}ms URL" else ""
+            "through ${chain.host}$measured"
+        }
+        AppState.ChainStatus.STOPPING -> "stopping the chain\u2026"
+        AppState.ChainStatus.FAILED ->
+            if (chain.message.isNotBlank()) chain.message else "failed \u00b7 back on Tor"
+        else -> if (connected) "tap to choose a VPN Gate server" else "connect with Tor first"
+    }
+
+    Row(
+        modifier
+            .height(60.dp)
+            .clip(shape)
+            .background(
+                Brush.horizontalGradient(listOf(DeltaTor.Surface, DeltaTor.SurfaceAlt)),
+                shape
+            )
+            .border(1.dp, DeltaTor.BorderLight, shape)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                "PROXY CHAIN",
+                style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.6.sp),
+                color = DeltaTor.Muted
+            )
+            Text(
+                headline,
+                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                color = when {
+                    failed -> DeltaTor.Red
+                    chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
+                    else -> DeltaTor.Text
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Text(
+            when {
+                active -> if (chain.status == AppState.ChainStatus.CONNECTED) "ON" else "\u2026"
+                else -> "\u25B8"
+            },
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            ),
+            color = when {
+                chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
+                failed -> DeltaTor.Red
+                else -> DeltaTor.Accent
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProxyChainSheet(
+    onClose: () -> Unit,
+    onPick: (host: String, port: Int) -> Unit
+) {
+    val list by ProxyChainManager.listState.collectAsStateWithLifecycle()
+    val chain by AppState.chainState.collectAsStateWithLifecycle()
+    val scope = rememberCoroutineScope()
+    var search by remember { mutableStateOf("") }
+
+    ModalBottomSheet(
+        onDismissRequest = onClose,
+        containerColor = Color(0xFF14171F)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "PROXY CHAIN",
+                        style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 1.6.sp),
+                        color = DeltaTor.Text
+                    )
+                    Text(
+                        if (list.servers.isEmpty()) "list updates automatically, once a day"
+                        else "${list.servers.size} servers \u00b7 fastest on top",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DeltaTor.Muted
+                    )
+                }
+
+                GradientPill(
+                    label = if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
+                    filled = false,
+                    enabled = !ProxyChainManager.testing && list.servers.isNotEmpty(),
+                    onClick = { scope.launch { ProxyChainManager.testAll() } }
+                )
+            }
+
+            val running = chain.testTotal >= 0
+            if (running) {
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { chain.tested.coerceAtLeast(0) / chain.testTotal.toFloat() },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Text(
+                    "real SSTP session per server, 10 at a time \u00b7 ${chain.tested}/${chain.testTotal}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DeltaTor.Muted
+                )
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                singleLine = true,
+                placeholder = { Text("search", style = MaterialTheme.typography.bodyMedium, color = DeltaTor.Muted) },
+                modifier = Modifier.fillMaxWidth(),
+                colors = AdvancedFieldColors()
+            )
+
+            Spacer(Modifier.height(8.dp))
+
+            val filtered = list.servers.filter {
+                search.isBlank() || it.host.contains(search.trim(), ignoreCase = true)
+            }
+
+            LazyColumn(
+                Modifier
+                    .fillMaxWidth()
+                    .height(380.dp)
+            ) {
+                items(filtered, key = { it.key }) { server ->
+                    ChainServerRow(
+                        server = server,
+                        testRunning = running,
+                        onClick = { onPick(server.host, server.port) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChainServerRow(
+    server: ProxyChainManager.Server,
+    testRunning: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                server.host,
+                style = MaterialTheme.typography.bodyMedium,
+                color = DeltaTor.Text,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                "port ${server.port}",
+                style = MaterialTheme.typography.labelSmall,
+                color = DeltaTor.Muted
+            )
+        }
+
+        Text(
+            when {
+                server.tested -> "${server.delayMs} ms"
+                testRunning -> "\u2026"
+                else -> "\u2014"
+            },
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = if (server.tested) DeltaTor.Green else DeltaTor.Muted
+        )
+    }
+}
+
+/** Proxy mode gives the chain nothing to chain onto; switching is the user's call. */
+@Composable
+private fun ChainProxyModeWarning(
+    onKeep: () -> Unit,
+    onSwitch: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onKeep,
+        containerColor = Color(0xFF14171F),
+        title = { Text("The chain needs the VPN", color = DeltaTor.Text) },
+        text = {
+            Text(
+                "No-VPN proxy mode captures no traffic and opens no tunnel, so " +
+                    "there is nothing a chain can chain onto. Choosing a server " +
+                    "turns the VPN back on: the chain will run on top of Tor, " +
+                    "exactly like it would in the normal mode.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = DeltaTor.Text
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onSwitch) {
+                Text("Turn proxy mode off", color = DeltaTor.Accent)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onKeep) {
+                Text("Keep proxy mode", color = DeltaTor.Muted)
+            }
+        }
+    )
 }
 
 @Composable

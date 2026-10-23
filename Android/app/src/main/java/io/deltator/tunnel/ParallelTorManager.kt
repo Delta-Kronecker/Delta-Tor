@@ -208,6 +208,17 @@ object ParallelTorManager {
     private const val MAX_PORT_OFFSET = 19
 
     /**
+     * The whole port reservation of a connect: [basePort] itself, the app's
+     * TUN<->Tor bridge port, plus the nineteen runner offsets [runnerPorts]
+     * maps onto it. Every single source that asserts this range -- the
+     * teardown wait in [stopAllAndWait] and the pre-connect sweep in
+     * [ConnectCleanup] -- reads it from here, so a change to
+     * [MAX_PORT_OFFSET] cannot leave a second copy of the range behind.
+     */
+    fun reservedPorts(basePort: Int): List<Int> =
+        (basePort..basePort + MAX_PORT_OFFSET).toList()
+
+    /**
      * The same lines in a new order.
      *
      * Blank lines are dropped instead of being shuffled about, since nothing reads
@@ -795,7 +806,7 @@ object ParallelTorManager {
      */
     fun stopAllAndWait(basePort: Int, host: String = "127.0.0.1"): Boolean {
         // basePort itself is the app's own TUN bridge; runners take +1 .. +MAX_PORT_OFFSET.
-        val ports = (basePort..basePort + MAX_PORT_OFFSET).toList()
+        val ports = reservedPorts(basePort)
         val list = detachRunners()
         list.forEach { it.stop() }
         val survivors = list.filter { !it.confirmedStopped }
