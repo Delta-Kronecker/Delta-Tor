@@ -112,10 +112,9 @@ object AdiveryAds {
             }
         })
 
-        // One prepare each. The SDK refills every slot itself after each
-        // show, per its auto-caching model.
+        // One prepare. The SDK refills the slot itself after every show, per
+        // its auto-caching model.
         Adivery.prepareInterstitialAd(app, INTERSTITIAL_PLACEMENT)
-        Adivery.prepareAppOpenAd(app, APP_OPEN_PLACEMENT)
 
         // The return-to-app pattern Adivery recommends, watching the
         // activity lifecycle from the process root.
@@ -127,6 +126,15 @@ object AdiveryAds {
      * the teardown keeps running underneath, and by the time the ad closes
      * the screen is already back to its disconnected state.
      */
+    /**
+     * Warm the app open slot. The SDK wants an Activity here, not a Context
+     * (unlike the interstitial), so this runs from the main activity's
+     * onCreate rather than from [init]; the SDK refills by itself afterwards.
+     */
+    fun prepareAppOpenAd(activity: Activity) {
+        Adivery.prepareAppOpenAd(activity, APP_OPEN_PLACEMENT)
+    }
+
     /**
      * Show the app open ad for a return from [awayMillis] of absence, when
      * both the away threshold and the full-screen suppression window allow
