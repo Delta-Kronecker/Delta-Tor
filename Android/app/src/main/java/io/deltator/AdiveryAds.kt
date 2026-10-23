@@ -143,11 +143,23 @@ object AdiveryAds {
      * ad closing, not another return.
      */
     fun maybeShowAppOpenAd(activity: Activity, awayMillis: Long) {
-        if (awayMillis <= AWAY_THRESHOLD_MILLIS) return
-        if (fullScreenSuppressed()) return
+        if (awayMillis <= AWAY_THRESHOLD_MILLIS) {
+            Log.d(TAG, "app open skipped: back after ${awayMillis}ms away")
+            return
+        }
+        if (fullScreenSuppressed()) {
+            Log.d(TAG, "app open skipped: a full screen ad played recently")
+            return
+        }
         if (Adivery.isLoaded(APP_OPEN_PLACEMENT)) {
             Adivery.showAppOpenAd(activity, APP_OPEN_PLACEMENT)
             noteFullScreenShown()
+        } else {
+            // The slot is empty. A first load that failed never retries on
+            // its own, so every empty-handed return re-arms it for the next
+            // one instead of leaving the placement dead for the session.
+            Log.i(TAG, "app open not loaded; re-warming the slot")
+            Adivery.prepareAppOpenAd(activity, APP_OPEN_PLACEMENT)
         }
     }
 
