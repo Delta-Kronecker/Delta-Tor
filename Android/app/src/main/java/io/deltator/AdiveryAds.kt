@@ -1,6 +1,8 @@
 package io.deltator
 
+import android.app.Activity
 import android.app.Application
+import android.os.Bundle
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,6 +38,30 @@ object AdiveryAds {
     /** The full-screen slot shown on VPN disconnect. */
     const val INTERSTITIAL_PLACEMENT = "a7785856-e7ba-4203-b898-6191e394ddf3"
 
+    /** The slot shown when the user returns to the app after a pause. */
+    const val APP_OPEN_PLACEMENT = "b4250c54-1a08-455c-9813-b8ac79c3f062"
+
+    /** Coming back sooner than this does not count as returning to the app. */
+    private const val AWAY_THRESHOLD_MILLIS = 5_000L
+
+    /**
+     * A full-screen ad just played pushes the app-open ad back for this long,
+     * so an interstitial never has an app-open ad stacked right behind it
+     * (disconnect, then home, then back is the most common path), and closing
+     * a slow full-screen ad does not immediately trigger the next one.
+     */
+    private const val FULL_SCREEN_SUPPRESS_MILLIS = 30_000L
+
+    @Volatile
+    private var lastFullScreenShownAt = 0L
+
+    private fun noteFullScreenShown() {
+        lastFullScreenShownAt = System.currentTimeMillis()
+    }
+
+    private fun fullScreenSuppressed(): Boolean =
+        System.currentTimeMillis() - lastFullScreenShownAt < FULL_SCREEN_SUPPRESS_MILLIS
+
     /** Set once the network refused the slot; the UI then lets it go. */
     val bannerFailed = mutableStateOf(false)
 
@@ -66,6 +92,18 @@ object AdiveryAds {
                 Log.i(TAG, "interstitial closed")
             }
 
+            override fun onAppOpenAdLoaded(placementId: String) {
+                Log.i(TAG, "app open loaded")
+            }
+
+            override fun onAppOpenAdShown(placementId: String) {
+                Log.i(TAG, "app open shown")
+            }
+
+            override fun onAppOpenAdClosed(placementId: String) {
+                Log.i(TAG, "app open closed")
+            }
+
             override fun log(placementId: String, message: String) {
                 // Load failures and other diagnostics: log only, the SDK may
                 // report a network that failed while another one still fills
@@ -74,9 +112,14 @@ object AdiveryAds {
             }
         })
 
-        // One prepare. The SDK refills the slot itself after every show, per
-        // its auto-caching model.
+        // One prepare each. The SDK refills every slot itself after each
+        // show, per its auto-caching model.
         Adivery.prepareInterstitialAd(app, INTERSTITIAL_PLACEMENT)
+        Adivery.prepareAppOpenAd(app, APP_OPEN_PLACEMENT)
+
+        // The return-to-app pattern Adivery recommends, watching the
+        // activity lifecycle from the process root.
+        app.registerActivityLifecycleCallbacks(AppOpenAdManager())
     }
 
     /**
@@ -84,9 +127,26 @@ object AdiveryAds {
      * the teardown keeps running underneath, and by the time the ad closes
      * the screen is already back to its disconnected state.
      */
+    /**
+     * Show the app open ad for a return from [awayMillis] of absence, when
+     * both the away threshold and the full-screen suppression window allow
+     * it. The suppression stamp is renewed here too: closing a slow app open
+     * ad resumes the activity with a large away time, and that resume is the
+     * ad closing, not another return.
+     */
+    fun maybeShowAppOpenAd(activity: Activity, awayMillis: Long) {
+        if (awayMillis <= AWAY_THRESHOLD_MILLIS) return
+        if (fullScreenSuppressed()) return
+        if (Adivery.isLoaded(APP_OPEN_PLACEMENT)) {
+            Adivery.showAppOpenAd(activity, APP_OPEN_PLACEMENT)
+            noteFullScreenShown()
+        }
+    }
+
     fun showInterstitialIfReady() {
         if (Adivery.isLoaded(INTERSTITIAL_PLACEMENT)) {
             Adivery.showAd(INTERSTITIAL_PLACEMENT)
+            noteFullScreenShown()
         }
     }
 
@@ -133,4 +193,35 @@ fun AdiveryBanner(modifier: Modifier = Modifier) {
             }
         }
     )
+}
+
+/**
+ * The return-to-app pattern Adivery recommends: whenever the user comes back
+ * after more than [AdiveryAds.AWAY_THRESHOLD_MILLIS] away, the app open ad
+ * shows on the activity being resumed. Registered once from
+ * [AdiveryAds.init]; the SDK refills the slot after every show by itself.
+ */
+private class AppOpenAdManager : Application.ActivityLifecycleCallbacks {
+
+    // Seeded at process start, not zero: the very first resume of a cold
+    // launch is the app opening, not the user returning to it, and must not
+    // open an ad over the first frame.
+    private var lastPauseTime = System.currentTimeMillis()
+
+    override fun onActivityResumed(activity: Activity) {
+        AdiveryAds.maybeShowAppOpenAd(
+            activity,
+            System.currentTimeMillis() - lastPauseTime
+        )
+    }
+
+    override fun onActivityPaused(activity: Activity) {
+        lastPauseTime = System.currentTimeMillis()
+    }
+
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+    override fun onActivityStarted(activity: Activity) = Unit
+    override fun onActivityStopped(activity: Activity) = Unit
+    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+    override fun onActivityDestroyed(activity: Activity) = Unit
 }
