@@ -16,10 +16,12 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import io.deltator.tunnel.BridgeCountries
 import io.deltator.tunnel.BridgeMemory
+import io.deltator.tunnel.ConnectCleanup
 import io.deltator.tunnel.ExitLocator
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
+import io.deltator.tunnel.SstpChainEngine
 import io.deltator.tunnel.TorRunner
 import io.deltator.tunnel.TorSocksBridge
 import io.deltator.tunnel.TorrcSettings
@@ -57,6 +59,10 @@ class TorVpnService : VpnService() {
         const val ACTION_DISCONNECT = "io.deltator.DISCONNECT"
         const val ACTION_START_VPN = "io.deltator.START_VPN"
         const val ACTION_STOP_VPN = "io.deltator.STOP_VPN"
+        const val ACTION_CHAIN_CONNECT = "io.deltator.CHAIN_CONNECT"
+        const val ACTION_CHAIN_DISCONNECT = "io.deltator.CHAIN_DISCONNECT"
+        internal const val EXTRA_CHAIN_HOST = "io.deltator.extra.chain_host"
+        internal const val EXTRA_CHAIN_PORT = "io.deltator.extra.chain_port"
         const val CHANNEL_VPN_STATUS = "vpn_status"
         const val CHANNEL_UPDATES = "deltator_updates"
         const val NOTIFICATION_ID = 1
@@ -302,6 +308,12 @@ class TorVpnService : VpnService() {
             ACTION_DISCONNECT -> disconnect()
             ACTION_START_VPN -> startVpn()
             ACTION_STOP_VPN -> stopVpn()
+            ACTION_CHAIN_CONNECT -> {
+                val host = intent.getStringExtra(EXTRA_CHAIN_HOST) ?: ""
+                val port = intent.getIntExtra(EXTRA_CHAIN_PORT, Config.sstpPort)
+                chainConnect(host, port)
+            }
+            ACTION_CHAIN_DISCONNECT -> chainDisconnect()
         }
         return START_STICKY
     }
@@ -386,6 +398,42 @@ class TorVpnService : VpnService() {
     private suspend fun runConnectAttempt(): AppState.NoticeKind? {
         val proxyPort = Config.proxyPort
         val proxyHost = "127.0.0.1"
+
+        // Step 0: before anything new is created, everything a previous run may
+        // have left behind is dealt with. Known runners are waited out, orphan
+        // Tor/lyrebird cores of earlier app instances are killed, and every port
+        // this connect is about to bind is verified free. A base port that is
+        // still held here is fatal: the bridge cannot bind it, and an error
+        // pointing at the holder is better than Tor racing a bind that lost.
+        // A runner port held by another app is not fatal: that one transport
+        // fails its bind and the race reports it, as it would for any dead
+        // bridge list -- the other transports can still win.
+        Log.i(TAG, "Checking for leftovers of previous runs")
+        val leftovers = withContext(Dispatchers.IO) {
+            ConnectCleanup.run(applicationContext, proxyPort)
+        }
+        Log.i(
+            TAG,
+            "Pre-connect cleanup: ${leftovers.orphanCoresKilled} orphan core(s) killed, " +
+                "${leftovers.ownHoldersKilled} own port holder(s) freed, " +
+                "${leftovers.blocked.size} port(s) blocked"
+        )
+        leftovers.blocked.firstOrNull { it.port == proxyPort }?.let { holder ->
+            val what = when {
+                holder.ours == true ->
+                    "a leftover DeltaTor process that would not exit"
+                holder.pid != null ->
+                    "another app (${holder.describe()})"
+                else -> "an unknown process"
+            }
+            val advice = if (holder.ours == true) "Force-stop DeltaTor from the system " +
+                "app info, or" else "Close that app, or"
+            fail(
+                "SOCKS5 port $proxyPort on 127.0.0.1 is held by $what and could not be " +
+                    "freed. $advice pick a different port in the app settings."
+            )
+            return null
+        }
 
         TorSocksBridge.debugLogging = Config.debugMode
         TorSocksBridge.domainRouter = io.deltator.tunnel.DomainRouter.DISABLED
@@ -803,6 +851,14 @@ class TorVpnService : VpnService() {
             Log.i(TAG, "Ignoring stop: proxy mode is on, use Disconnect to shut the proxy down")
             return
         }
+        // In chain mode the tunnel to stop is the chain's: end it silently - the
+        // SAVE of a user cancel would put a plain-Tor tunnel back up that this
+        // very action is asking to remove - and let the flow below clear the rest.
+        val chain = chainEngine
+        if (chain != null && chain.isActive) {
+            Log.i(TAG, "Stopping the chain (VPN only); Tor stays running")
+            chain.stopWithoutRestore()
+        }
         val s = AppState.state.value
         if (!s.connected && !s.connecting && !s.reconnecting) {
             Log.i(TAG, "Nothing to stop: the VPN is not up")
@@ -840,6 +896,165 @@ class TorVpnService : VpnService() {
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Proxy chain: Tor → SOCKS → SSTP → VPN Gate → internet
+    // ------------------------------------------------------------------
+
+    /** Live when a chain engine exists; [SstpChainEngine.isActive] is the truth. */
+    private var chainEngine: SstpChainEngine? = null
+
+    private fun getChainEngine(): SstpChainEngine {
+        var engine = chainEngine
+        if (engine == null) {
+            engine = SstpChainEngine(this)
+            chainEngine = engine
+        }
+        return engine
+    }
+
+    /**
+     * A config was tapped in the sheet.
+     *
+     * Whatever VPN interface the service currently holds - Tor's tun2socks one
+     * or an older chain - is given up first, because Android allows only one.
+     * Tor itself is deliberately untouched: the chain dials through its SOCKS
+     * bridge, so the engines underneath stay exactly as bootstrapped.
+     */
+    private fun chainConnect(host: String, port: Int) {
+        if (host.isBlank()) {
+            Log.w(TAG, "chain connect without a host; ignoring")
+            return
+        }
+        if (AppState.state.value.stopping) {
+            Log.i(TAG, "Ignoring chain connect: a stop is tearing the cores down")
+            return
+        }
+        if (!TorSocksBridge.isRunning()) {
+            Log.w(TAG, "chain connect without a Tor bridge; ignoring")
+            return
+        }
+        serviceScope.launch {
+            val engine = getChainEngine()
+            if (engine.isActive) {
+                // Another config tapped while connected: a switch, not a stop.
+                engine.switchTo(host, port)
+                return@launch
+            }
+            Log.i(TAG, "chain connect: $host:$port via SOCKS 127.0.0.1:${Config.proxyPort}")
+            teardownVpn()
+            engine.start(host, port)
+        }
+    }
+
+    private fun chainDisconnect() {
+        val engine = chainEngine
+        if (engine == null || !engine.isActive) {
+            Log.i(TAG, "chain disconnect: nothing running")
+            return
+        }
+        Log.i(TAG, "chain disconnect requested")
+        engine.stop()
+    }
+
+    /** The fresh interface the chain session builds on. */
+    fun chainBuilderForSstp(): android.net.VpnService.Builder = Builder().also {
+        it.setSession("DeltaTor SSTP")
+    }
+
+    /** The chain's tunnel is carrying packets: the interface is ours now. */
+    fun onChainEstablished(host: String, port: Int) {
+        if (!AppState.vpnStarted) AppState.markStarted()
+        Log.i(TAG, "chain established: $host:$port")
+        // The one number a probe cannot predict: what the live chain does with
+        // a real HTTP request. Best effort; -1 means it was not measurable.
+        serviceScope.launch {
+            val ms = ProxyChainManager.measureChainUrl()
+            AppState.updateChain { it.copy(urlMs = ms) }
+            onChainStateChanged()
+        }
+    }
+
+    /**
+     * Every server and every retry is spent. Put the device back where it was
+     * before the chain was opened: the plain Tor VPN, whose engines never
+     * stopped running.
+     */
+    fun onChainExhausted(reason: String) {
+        Log.w(TAG, "chain exhausted: $reason — restoring plain Tor VPN")
+        AppState.updateChain {
+            it.copy(status = AppState.ChainStatus.FAILED, message = "back to Tor: $reason")
+        }
+        restoreTorVpn()
+    }
+
+    /** The user cancelled the chain: back to the plain Tor VPN as well. */
+    fun onChainStoppedByUser() {
+        Log.i(TAG, "chain stopped by user — restoring plain Tor VPN")
+        AppState.updateChain { AppState.ChainState() }
+        restoreTorVpn()
+    }
+
+    /**
+     * Give the interface back to Tor without paying for a re-bootstrap: the
+     * bridge and the surviving runner are still alive, so the VPN is established
+     * straight over them, the way [startVpn] does after a plain stop. Only when
+     * nothing survived does a full connect run again.
+     */
+    private fun restoreTorVpn() {
+        serviceScope.launch {
+            if (AppState.vpnStarted) AppState.markStopped()
+            val w = activeRunner
+            if (w == null || !w.isReady() || !TorSocksBridge.isRunning()) {
+                Log.i(TAG, "chain restore: engines not reusable, running a full connect")
+                connect()
+            } else {
+                Log.i(TAG, "chain restore: establishing the VPN on the live engines")
+                AppState.update {
+                    it.copy(
+                        stopping = false,
+                        connecting = false,
+                        reconnecting = false,
+                        torRunning = true,
+                        connected = false,
+                        error = null,
+                        socksEndpoint = ""
+                    )
+                }
+                lastRenderedText = ""
+                updateNotification("Tor running \u00b7 VPN on", progress = false, progressValue = 0)
+                try {
+                    establishTunnel(w, "127.0.0.1", Config.proxyPort)
+                } catch (e: Exception) {
+                    Log.e(TAG, "chain restore failed", e)
+                    fail("Restore failed: ${e.message}")
+                }
+            }
+        }
+    }
+
+    /** Ambient keep: mirror the chain state into the notification. */
+    fun onChainStateChanged() {
+        val chain = AppState.chainState.value
+        when (chain.status) {
+            AppState.ChainStatus.CONNECTING -> updateNotification(
+                "Chain → ${chain.host}:${chain.port}" +
+                    (if (chain.message.isNotBlank()) " · ${chain.message}" else ""),
+                progress = true,
+                progressValue = 0
+            )
+            AppState.ChainStatus.CONNECTED -> updateNotification(
+                "DeltaTor · chain → ${chain.host}" +
+                    (if (chain.urlMs >= 0) " · ${chain.urlMs}ms" else ""),
+                progress = false,
+                progressValue = 0
+            )
+            AppState.ChainStatus.STOPPING -> updateNotification(
+                "Chain stopping…", progress = true, progressValue = 0
+            )
+            else -> Unit
         }
     }
 
@@ -1648,6 +1863,9 @@ class TorVpnService : VpnService() {
     }
 
     private fun teardown() {
+        // A live chain owns the interface teardown is about to replace, and the
+        // chain's engines must not outlive the service that dialled them.
+        chainEngine?.shutdown()
         teardownVpn()
         try { TorSocksBridge.stop() } catch (_: Exception) {}
         // Blocks until every Tor/lyrebird process is really gone and the ports are

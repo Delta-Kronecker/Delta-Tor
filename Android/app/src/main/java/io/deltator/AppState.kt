@@ -108,6 +108,43 @@ object AppState {
         val socksEndpoint: String = ""
     )
 
+    /**
+     * Lifecycle of the proxy chain: Tor → (SOCKS) → SSTP → VPN Gate.
+     *
+     * Kept out of [VpnState] on purpose. The chain is a second VPN interface
+     * that replaces the Tor one while the Tor cores underneath keep running, so
+     * mixing its phases into the connect spinner's state machine would make
+     * every consumer of [VpnState] reason about two connections at once. The UI
+     * collects this flow separately and renders it in its own card.
+     */
+    object ChainStatus {
+        const val IDLE = "idle"
+        const val CONNECTING = "connecting"
+        const val CONNECTED = "connected"
+        const val STOPPING = "stopping"
+        const val FAILED = "failed"
+    }
+
+    data class ChainState(
+        val status: String = ChainStatus.IDLE,
+        val host: String = "",
+        val port: Int = 0,
+        /** Last line worth reading: a retry count, a drop reason, a failure. */
+        val message: String = "",
+        /** URL-test latency measured through the live chain, -1 = not measured. */
+        val urlMs: Int = -1,
+        /** Batch reachability test progress, -1 = not running. */
+        val tested: Int = -1,
+        val testTotal: Int = -1,
+    )
+
+    private val _chainState = MutableStateFlow(ChainState())
+    val chainState: StateFlow<ChainState> = _chainState.asStateFlow()
+
+    fun updateChain(block: (ChainState) -> ChainState) {
+        _chainState.update(block)
+    }
+
     data class BridgeState(
         val updating: Boolean = false,
         val lastUpdateMillis: Long = 0,
