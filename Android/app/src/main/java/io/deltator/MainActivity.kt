@@ -2070,11 +2070,11 @@ private fun ProxyChainCard(
         AppState.ChainStatus.STOPPING -> "stopping the chain\u2026"
         AppState.ChainStatus.FAILED ->
             if (chain.message.isNotBlank()) chain.message else "failed \u00b7 back on Tor"
-        else -> if (connected) "tap to choose a VPN Gate server" else "connect with Tor first"
+        else -> if (connected) null else "connect with Tor first"
     }
     Row(
         modifier
-            .height(60.dp)
+            .height(48.dp)
             .clip(shape)
             .background(
                 Brush.horizontalGradient(listOf(DeltaTor.Surface, DeltaTor.SurfaceAlt)),
@@ -2094,21 +2094,23 @@ private fun ProxyChainCard(
                 style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
                 color = DeltaTor.Text
             )
-            Text(
-                headline,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.6.sp
-                ),
-                color = when {
-                    failed -> DeltaTor.Red
-                    chain.status == AppState.ChainStatus.CONNECTING -> DeltaTor.Amber
-                    chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
-                    else -> DeltaTor.Muted
-                },
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (headline != null) {
+                Text(
+                    headline,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.6.sp
+                    ),
+                    color = when {
+                        failed -> DeltaTor.Red
+                        chain.status == AppState.ChainStatus.CONNECTING -> DeltaTor.Amber
+                        chain.status == AppState.ChainStatus.CONNECTED -> DeltaTor.Green
+                        else -> DeltaTor.Muted
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
 
         Text(
