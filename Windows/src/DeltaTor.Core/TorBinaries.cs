@@ -1,10 +1,13 @@
 namespace DeltaTor.Core;
 
 /// <summary>
-/// Where the official Tor Expert Bundle lives at runtime.
+/// Where the Tor bundle lives at runtime.
 ///
-/// The bundle is fetched (never committed) by Windows/fetch-binaries.ps1;
-/// resolution order:
+/// The bundle is fetched (never committed) by Windows/fetch-binaries.ps1:
+/// the pinned official Tor Expert Bundle provides the layout and
+/// lyrebird.exe, and the Delta-Kronecker/tor fork build overlays
+/// tor/tor.exe (with its own DLLs) and the data/geoip pair.
+/// Resolution order:
 ///   1. the DELTATOR_BUNDLE environment variable (explicit override)
 ///   2. next to the executable (packaged layout: ./tor/tor.exe, or
 ///      ./vendor/&lt;bundle&gt;/tor/tor.exe)
@@ -12,9 +15,9 @@ namespace DeltaTor.Core;
 ///      tor-expert-bundle-* / Windows/vendor/*)
 ///
 /// Layout inside the bundle (official, verified in CI):
-///   &lt;root&gt;/tor/tor.exe
+///   &lt;root&gt;/tor/tor.exe              (the fork core)
 ///   &lt;root&gt;/tor/pluggable_transports/lyrebird.exe
-///   &lt;root&gt;/data/geoip, data/geoip6, data/torrc-defaults
+///   &lt;root&gt;/data/geoip, data/geoip6   (the fork's tables)
 /// </summary>
 public static class TorBinaries
 {

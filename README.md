@@ -210,10 +210,13 @@ fail.
 
 On Android, `libtor` (the fork), `libobfs4proxy` (lyrebird) and `hev-socks5-tunnel`
 (tun2socks) are compiled into the APK with the NDK — no external Tor install, no companion
-app. On Windows, the pinned Tor Expert Bundle binaries and `wintun.dll` are fetched and
-SHA-256 verified at build time (`Windows/fetch-binaries.ps1`), never committed, and
-`hev-socks5-tunnel.dll` is built in CI from the same vendored sources with MinGW. The
-app's own traffic is excluded from its tunnel on both platforms
+app. On Windows, both platforms run the same fork core: the `tor-windows-x86_64` build from
+the [Delta-Kronecker/tor](https://github.com/Delta-Kronecker/tor) releases overlays the
+pinned official Tor Expert Bundle (which still provides lyrebird and the bundle layout),
+verified against the digest the release publishes; `wintun.dll` comes from wintun.net. All
+of it is fetched and SHA-256 verified at build time (`Windows/fetch-binaries.ps1`), never
+committed, and `hev-socks5-tunnel.dll` is built in CI from the same vendored sources with
+MinGW. The app's own traffic is excluded from its tunnel on both platforms
 (`addDisallowedApplication` on Android, per-destination `/32` bypass routes on Windows).
 
 ### Building
@@ -239,7 +242,7 @@ The Windows app builds with the .NET SDK 8 after the binaries and the native tun
 exist:
 
 ```powershell
-./Windows/fetch-binaries.ps1              # Tor Expert Bundle + wintun, SHA-256 verified
+./Windows/fetch-binaries.ps1              # official bundle + fork core + wintun, verified
 bash Windows/native/build-hev.sh          # from an MSYS2 shell: builds hev-socks5-tunnel.dll
 dotnet build Windows/DeltaTor.sln -c Release
 ```
