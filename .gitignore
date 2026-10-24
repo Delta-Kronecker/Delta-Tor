@@ -40,6 +40,10 @@ runs.json
 
 # Windows port: fetched Tor Expert Bundle (extracted dir + archive), never committed
 /tor-expert-bundle-*
+/Windows/vendor/
+
+# Windows port: fetched fork core archive (moving 'latest' tag), never committed
+/tor-windows-x86_64.zip
 
 # Windows port: fetched Se7enTun engine (extracted dir + archive), never committed
 /Windows/libs/se7entun/
