@@ -239,9 +239,16 @@ function Get-ForkDigest {
     try {
         $rel = Invoke-RestMethod -Uri $script:ForkApi -Headers $headers -TimeoutSec 30
     }
-    catch { return $null }
+    catch {
+        Write-Warning "Fork release API call failed: $($_.Exception.Message)"
+        return $null
+    }
     $asset = $rel.assets | Where-Object { $_.name -eq $script:ForkArchive } | Select-Object -First 1
-    if ($asset -and $asset.digest -like 'sha256:*') { return $asset.digest.Substring(7).ToLowerInvariant() }
+    if (-not $asset -or -not $asset.digest) {
+        Write-Warning "Fork release lists no digest for $script:ForkArchive."
+        return $null
+    }
+    if ($asset.digest -like 'sha256:*') { return $asset.digest.Substring(7).ToLowerInvariant() }
     return $null
 }
 

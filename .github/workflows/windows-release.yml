@@ -140,6 +140,10 @@ jobs:
 
       - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
         run: ./Windows/fetch-binaries.ps1 -CI
+        env:
+          # The fork-core digest lookup calls the GitHub API; the runner's
+          # token keeps it off the shared-IP rate limit.
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build signed release app
         # The exe version comes from the tag-derived property; the check below
