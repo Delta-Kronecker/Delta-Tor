@@ -11,6 +11,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import ir.tapsell.mediation.Tapsell
 import ir.tapsell.mediation.ad.AdStateListener
 import ir.tapsell.mediation.ad.request.RequestResultListener
+import ir.tapsell.mediation.ad.show.AdShowCompletionState
+import ir.tapsell.mediation.ad.views.ntv.NativeAdView
 import ir.tapsell.mediation.ad.views.ntv.NativeAdViewContainer
 
 /**
@@ -44,6 +46,18 @@ object TapsellAds {
     /** Set on the first successful impression, for layouts that make room. */
     val nativeLoaded = mutableStateOf(false)
 
+    /** The response id of the ad currently bound to the banner, for destroy. */
+    private var responseId: String? = null
+
+    /** Release the loaded ad; called when the banner leaves the composition. */
+    fun destroy() {
+        responseId?.let {
+            Tapsell.destroyNativeAd(it)
+            Log.i(TAG, "native banner destroyed")
+        }
+        responseId = null
+    }
+
     /**
      * One request, then one show into the inflated container. A failed
      * request is terminal for the slot this session -- the composable
@@ -60,6 +74,7 @@ object TapsellAds {
         Tapsell.requestNativeAd(NATIVE_ZONE, object : RequestResultListener {
             override fun onSuccess(adId: String) {
                 Log.i(TAG, "native banner loaded")
+                responseId = adId
                 val view = NativeAdView.Builder(container)
                     .withTitle(title)
                     .withDescription(description)
@@ -80,6 +95,10 @@ object TapsellAds {
                         // Log only; the collapse is a state write afterwards.
                         Log.w(TAG, "native banner show failed: $message")
                         nativeFailed.value = true
+                    }
+
+                    override fun onAdClosed(completionState: AdShowCompletionState) {
+                        Log.i(TAG, "native banner closed: ${completionState.name}")
                     }
                 })
             }
@@ -102,6 +121,12 @@ fun TapsellNativeBanner(modifier: Modifier = Modifier) {
     val failed by TapsellAds.nativeFailed
     val activity = androidx.compose.ui.platform.LocalContext.current as? Activity
     if (failed || activity == null) return
+
+    // The official sample's cleanup: the loaded ad is released when the
+    // banner leaves the composition.
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { TapsellAds.destroy() }
+    }
 
     AndroidView(
         modifier = modifier,
