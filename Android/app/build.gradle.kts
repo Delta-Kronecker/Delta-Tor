@@ -78,11 +78,11 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersion
-        // The SDK auto-initializes through its own provider and reads the app
-        // key from here. The publisher dashboard key replaces the test key
-        // before any release; the NativeBanner zone id lives in TapsellAds.kt.
+        // The SDK auto-initializes through its own provider and reads the
+        // publisher app key from here; the NativeBanner zone id lives in
+        // TapsellAds.kt next to it.
         addManifestPlaceholders(
-            mapOf("TapsellMediationAppKey" to "76798342-99a7-4a5f-bf5a-60a088d5dcfb")
+            mapOf("TapsellMediationAppKey" to "nmrromgranhdtrshhmdbrjqdhtmsgmjfetmohqlknqoigkdkplihfhdbjgftnsmhjnlplj")
         )
     }
 
