@@ -255,8 +255,8 @@ release workflow fails closed until it matches. Never commit the pfx.
 
 | Workflow | Trigger | Does |
 |---|---|---|
-| `android-build.yml` | push to `main`/`android`/`test`, manual | debug APK, sources and native symbols as artifacts |
-| `windows-build.yml` | push to `main`/`test`, PRs, manual | portable Windows zip, sources and native symbols as artifacts |
+| `android-build.yml` | push to `main`, manual | debug APK, sources and native symbols as artifacts |
+| `windows-build.yml` | push to `main`, PRs, manual | portable Windows zip, sources and native symbols as artifacts |
 | `release.yml` | tag `v*`, manual with a tag input | signed APKs, signature verification, GitHub release |
 | `windows-release.yml` | tag `v*`, manual with a tag input | signed Windows zip (Authenticode + signer pin), GitHub release |
 
