@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Card background for the Tapsell native banner row, matching the
+     app's surface color with its standard 14dp corner radius. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#1A1D26" />
+    <corners android:radius="14dp" />
+</shape>

@@ -78,6 +78,12 @@ android {
         targetSdk = 35
         versionCode = appVersionCode
         versionName = appVersion
+        // The SDK auto-initializes through its own provider and reads the app
+        // key from here. The publisher dashboard key replaces the test key
+        // before any release; the NativeBanner zone id lives in TapsellAds.kt.
+        addManifestPlaceholders(
+            mapOf("TapsellMediationAppKey" to "76798342-99a7-4a5f-bf5a-60a088d5dcfb")
+        )
     }
 
     signingConfigs {
@@ -184,4 +190,9 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.17.0")
+
+    // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts)
+    // plus its Tapsell-network adapter; the version is shared with the core.
+    implementation("ir.tapsell:tapsell:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
 }

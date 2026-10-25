@@ -1915,6 +1915,14 @@ private fun BottomPanel(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // The Tapsell native banner: the first row of the panel, directly
+        // above whatever action the user is about to take. It stays
+        // zero-tall until the network answers and vanishes for good if the
+        // request is refused, so an ad-less install sees exactly the old
+        // panel.
+        TapsellNativeBanner(modifier = Modifier.fillMaxWidth())
+        Spacer(Modifier.height(8.dp))
+
         // The chain card sits first, right where the finger already is: it is
         // only meaningful once Tor is connected, and its own state decides what
         // a tap does - open the sheet while idle, end the chain while in flight.

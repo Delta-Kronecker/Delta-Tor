@@ -20,6 +20,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Tapsell Mediation SDK and its adapters (only resolved for their groups)
+        maven("https://maven.tapsell.ir") {
+            content { includeGroupByRegex("ir\.tapsell.*") }
+        }
     }
 }
 
