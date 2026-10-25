@@ -19,26 +19,16 @@ import ir.tapsell.mediation.ad.views.ntv.NativeAdViewContainer
  * Tapsell Mediation, native banner only for now.
  *
  * The SDK initializes itself through its own ContentProvider using the
- * TapsellMediationAppKey manifest placeholder set in app/build.gradle.kts,
- * so there is no init call here. The ids stay in this one object: the app
- * key swap lives in the gradle placeholder, the zone id lives below, and
- * both are the Tapsell test values until the dashboard's real ones are in.
+ * TapsellMediationAppKey manifest placeholder set in app/build.gradle.kts
+ * (the publisher app key), so there is no init call here. The zone id
+ * stays in this one object: swap it for the dashboard's next zone without
+ * touching any other file.
  */
 object TapsellAds {
     private const val TAG = "Tapsell"
 
-    /** The Tapsell test app key; the gradle placeholder carries the same value. */
-    const val TEST_APP_KEY = "76798342-99a7-4a5f-bf5a-60a088d5dcfb"
-
-    /**
-     * The publisher's real NativeBanner zone (their dashboard), parked here
-     * until the real app key lands in the gradle placeholder -- a real zone
-     * under the test app key fills nothing.
-     */
-    const val REAL_NATIVE_ZONE = "6ade1f5f4e86a816eeb924d3"
-
-    /** The Tapsell Legacy test zone for native ads, shown while testing. */
-    const val NATIVE_ZONE = "b1b92bca-8a54-4b82-9f53-90ea2b1a912c"
+    /** The publisher's NativeBanner zone from the Tapsell dashboard. */
+    const val NATIVE_ZONE = "6ade1f5f4e86a816eeb924d3"
 
     /** Set once the network refused the slot; the UI then lets it go. */
     val nativeFailed = mutableStateOf(false)
