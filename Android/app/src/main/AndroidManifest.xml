@@ -13,6 +13,10 @@
     <!-- Notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Advertising ID (Android 13+): the Tapsell docs require this declared
+         explicitly or the SDK cannot read the GAID. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
+
     <!-- The in-app updater installs the APK it downloaded; without this the
          system refuses to open the installer for a package that is not a
          package manager. -->
