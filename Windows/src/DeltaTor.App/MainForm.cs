@@ -78,6 +78,13 @@ public sealed class MainForm : Form
         KeyPreview = true;
         DoubleBuffered = true;
         AutoScaleMode = AutoScaleMode.Dpi;
+        // Every painted region is laid out from the client size on each paint,
+        // so a resize must invalidate the whole surface: without ResizeRedraw
+        // only the strip Windows newly exposed repaints and the ring, cards
+        // and pills stay at their old coordinates while the window changes
+        // shape — the scrambled content seen while dragging an edge.
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
 
         _scCurrent = _scFrom = _scTo = UiHelpers.StateColor(_state);
         _subCurrent = _subFrom = _subTo = SubColor(_state);
@@ -158,6 +165,10 @@ public sealed class MainForm : Form
     {
         base.OnResize(e);
         _drawer.SetBounds(0, 0, ClientSize.Width, ClientSize.Height);
+        // ResizeRedraw covers the live-drag case; this also re-lays the
+        // screen (and the pill bounds set during PaintBottomPanel) on
+        // maximize/restore and programmatic size changes.
+        Invalidate();
     }
 
     // ---- state plumbing -----------------------------------------------------
