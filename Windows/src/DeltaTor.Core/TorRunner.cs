@@ -861,17 +861,21 @@ public sealed partial class TorRunner
     }
 
     /// <summary>
-    /// Format a filesystem path for torrc. Always forward slashes: inside a
-    /// quoted value tor treats a backslash as an escape character, so
-    /// `C:\Users\...` fails parsing with "Invalid escape sequence in quoted
-    /// string" and Tor exits ("Reading config failed"). Windows APIs accept
-    /// `C:/...` unchanged. Quoted only when it contains spaces (an extracted
-    /// folder name like "Program Files (x86)").
+    /// Format a filesystem path for torrc. Always quoted, with doubled
+    /// backslashes: inside a quoted torrc value a backslash is an escape
+    /// character (a raw "C:\Users\..." fails with "Invalid escape sequence in
+    /// quoted string" and Tor exits with "Reading config failed"), and "\\"
+    /// unescapes back to "\". The fork's Tor only recognizes a drive path as
+    /// absolute with a backslash after the colon, so the forward-slash
+    /// "C:/..." form this method used to emit was read as a relative path and
+    /// joined onto Tor's working directory — the "Couldn't create private data
+    /// directory ... Invalid argument" config failure. Quoting also keeps a
+    /// path with spaces (an extracted folder like "Program Files (x86)") in
+    /// one token.
     /// </summary>
     private static string Quote(string path)
     {
-        var p = path.Replace('\\', '/');
-        return p.Contains(' ') ? $"\"{p}\"" : p;
+        return "\"" + path.Replace("\\", "\\\\") + "\"";
     }
 
     // --- Helpers ---
