@@ -124,6 +124,10 @@ public sealed class MainForm : Form
             // onto a drawer still covering the screen.
             _drawer.Close();
             _modalChildOpen = true;
+            // The log screen replaces the main screen (Android push-over).
+            // With the owner hidden, exactly one DeltaTor window is visible
+            // at a time — not the main window and the log side by side.
+            Hide();
             try
             {
                 using var log = new LogForm();
@@ -131,6 +135,8 @@ public sealed class MainForm : Form
             }
             finally
             {
+                Show();
+                Activate();
                 _modalChildOpen = false;
                 // A notice that arrived while the log was up was held; it
                 // shows now that the screen is ours again.
