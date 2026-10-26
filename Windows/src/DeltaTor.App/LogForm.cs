@@ -70,6 +70,15 @@ public sealed class LogForm : Form
     private float _scroll;
     private bool _follow = true;
 
+    // The first build is deferred to the first timer tick: measuring a full
+    // 4500-line buffer takes seconds of GDI word-break work, and doing that
+    // in the constructor freezes the whole app before the window even shows.
+    // Dirty rebuilds are throttled so a live bootstrap cannot saturate the
+    // message loop with five full re-measures a second.
+    private bool _built;
+    private bool _pendingRebuild;
+    private long _lastRebuildAt;
+
     public LogForm()
     {
         Text = "DeltaTor — Connection Log";
@@ -85,7 +94,7 @@ public sealed class LogForm : Form
         AppLog.AddObserver();
         _tick.Tick += (_, _) => Pump();
         _tick.Start();
-        Rebuild();
+        // No Rebuild() here — see the note on the fields above.
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
@@ -110,6 +119,9 @@ public sealed class LogForm : Form
         base.OnResize(e);
         if (!IsHandleCreated || Width == _lastWidth) return;
         // Wrapped heights depend on the content width: one resize re-measures.
+        // Before the first build nothing is measured yet; the deferred build
+        // reads the live width itself, so there is nothing to redo here.
+        if (!_built) return;
         _measure.Clear();
         Rebuild();
         Invalidate();
@@ -118,18 +130,22 @@ public sealed class LogForm : Form
     // ---- data plumbing ------------------------------------------------------
 
     /// <summary>Flush the producer, then repaint only when the snapshot,
-    /// the enabled flag or the width actually moved.</summary>
+    /// the enabled flag or the width actually moved. The first build runs
+    /// on this tick (never in the constructor); afterwards dirty rebuilds
+    /// are throttled so a live bootstrap cannot own the message loop.</summary>
     private void Pump()
     {
         AppLog.FlushIfDirty();
         var lines = AppLog.Lines;
         var sessions = AppLog.Sessions;
-        var widthChanged = Width != _lastWidth;
-        if (widthChanged || AppLog.Enabled != _lastEnabled ||
+        var changed = Width != _lastWidth || AppLog.Enabled != _lastEnabled ||
             !ReferenceEquals(lines, _lastLines) ||
-            !ReferenceEquals(sessions, _lastSessions))
+            !ReferenceEquals(sessions, _lastSessions);
+        if (changed) _pendingRebuild = true;
+
+        if (!_built || (_pendingRebuild && Environment.TickCount64 - _lastRebuildAt >= 400))
         {
-            if (widthChanged) _measure.Clear();
+            if (Width != _lastWidth) _measure.Clear();
             Rebuild();
             Invalidate();
             return;
@@ -173,6 +189,9 @@ public sealed class LogForm : Form
         _lastWidth = Width;
         _tCounts = TransportCounts(lines);
         _scroll = _follow ? MaxScroll : Math.Clamp(_scroll, 0f, MaxScroll);
+        _built = true;
+        _pendingRebuild = false;
+        _lastRebuildAt = Environment.TickCount64;
     }
 
     /// <summary>Wrapped height of one raw line, cached: bootstrap output
@@ -429,6 +448,15 @@ public sealed class LogForm : Form
         y += 6f;
         _viewTop = y;
         _viewBottom = Height - 20f;
+
+        if (!_built)
+        {
+            // The window is up before the first (heavy) build has run.
+            using (var br = new SolidBrush(DeltaTorTheme.Muted))
+                DrawUtil.DrawSpacedCentered(g, "Loading log…", DeltaTorTheme.Body, br,
+                    new RectangleF(20f, _viewTop, w - 40f, _viewBottom - _viewTop), 0.4f);
+            return;
+        }
 
         if (_placed.Length == 0)
         {

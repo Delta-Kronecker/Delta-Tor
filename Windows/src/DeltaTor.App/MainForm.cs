@@ -58,6 +58,12 @@ public sealed class MainForm : Form
     { Label = "DISCONNECT", Filled = false, ShowBorder = false };
     private bool _proxyLive;
 
+    // A modal child (the log screen) owns the message loop while it is up:
+    // the 60fps animation pauses and state notices are held until it closes,
+    // so the modal loop is not crowded out and no second modal can open
+    // under the first one.
+    private bool _modalChildOpen;
+
     // The control drawer sits over everything, pills included.
     private readonly DrawerPanel _drawer = new();
 
@@ -112,8 +118,24 @@ public sealed class MainForm : Form
         _pillDisconnect.Clicked += (_, _) => Task.Run(BridgeRace.Disconnect);
         _drawer.OpenLog += () =>
         {
-            using var log = new LogForm();
-            log.ShowDialog(this);
+            // The drawer slides away first (Android navigates out of the
+            // drawer before the log screen): otherwise its 1s rebuild timer
+            // keeps running under the modal, and the log would close back
+            // onto a drawer still covering the screen.
+            _drawer.Close();
+            _modalChildOpen = true;
+            try
+            {
+                using var log = new LogForm();
+                log.ShowDialog(this);
+            }
+            finally
+            {
+                _modalChildOpen = false;
+                // A notice that arrived while the log was up was held; it
+                // shows now that the screen is ours again.
+                RefreshFromState();
+            }
         };
         // The bottom pills step aside while the drawer owns the screen and
         // come back on the first paint after it has slid away.
@@ -298,6 +320,10 @@ public sealed class MainForm : Form
     {
         while (!_noticeOpen)
         {
+            // A modal child (the log screen) is up: hold the notice. Showing
+            // it now would stack a second modal loop under the first and can
+            // strand the dialog behind the log window, eating every click.
+            if (_modalChildOpen) return;
             var notice = _state.Notice;
             if (notice is null) return;
             _noticeOpen = true;
@@ -324,6 +350,10 @@ public sealed class MainForm : Form
 
     private void AnimationFrame()
     {
+        // A modal child owns the message loop; the 16ms repaint loop would
+        // only steal the cycles the modal needs to stay responsive.
+        if (_modalChildOpen) return;
+
         var invalidate = false;
 
         if (_tweening)
