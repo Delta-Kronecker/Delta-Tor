@@ -543,12 +543,14 @@ public static class BridgeRace
             _quietProbes = 0;
             _bytesAtLastProbe = 0;
             StartExitLocator(proxyHost, proxyPort);
+            // No tunnel to count bytes here; the poller falls back to Tor's
+            // own accounting over the winning runner's control port.
+            StartStatsPolling();
             AppLog.I(TAG, $"Proxy mode ready. Winner: {w.Name}, SOCKS5 at {endpoint}");
             AppLog.EndSession($"proxy ready via {w.Name}");
-            // No stats poller and no link watch: both read bytes off the tunnel,
-            // which does not exist here, so they would spin on a null handle and
-            // paint nothing. The exit lookup above still works, because it talks
-            // to Tor over SOCKS rather than through the tunnel.
+            // No link watch: it reads link state off the tunnel, which does
+            // not exist here. The exit lookup above still works, because it
+            // talks to Tor over SOCKS rather than through the tunnel.
             return;
         }
 
@@ -1111,6 +1113,15 @@ public static class BridgeRace
             while (!ct.IsCancellationRequested)
             {
                 var stats = TunnelEngine.GetStats();
+                // No tunnel in the proxy modes: the traffic flows through Tor's
+                // own ports, so the winning Tor's byte accounting over its
+                // control port is the counter source (read = download,
+                // written = upload, from the app's point of view).
+                if (stats == null && (Config.SystemProxyMode || Config.ProxyOnlyMode))
+                {
+                    var t = _activeRunner?.QueryTraffic();
+                    stats = t != null ? new TunnelStats(t.Value.Written, t.Value.Read) : null;
+                }
                 if (stats == null)
                 {
                     await Task.Delay((int)StatsIntervalIdleMs, ct);
@@ -1214,7 +1225,14 @@ public static class BridgeRace
                 AppLog.I("ExitNode", $"waiting for live exit switch before locating (selected: {string.Join(",", selected)})");
                 await Task.Delay(5_000, ct);
             }
-            var tries = selected.Count == 0 ? 1 : 6;
+            // With a country selection the loop retries up to six times
+            // because circuits have to rotate until one lands on a chosen
+            // country. Without one, a single probe used to be enough only in
+            // tunnel mode, where the tunnel's own traffic has already built
+            // circuits by the time the lookup runs; in the proxy modes there
+            // is no such traffic yet, and the first circuit can take longer
+            // than the probe timeout — so a plain locate also retries.
+            var tries = selected.Count == 0 ? 3 : 6;
             for (var attempt = 1; attempt <= tries; attempt++)
             {
                 var info = ExitLocator.Locate(proxyHost, proxyPort, timeoutMs: 8_000);

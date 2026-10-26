@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -257,6 +258,62 @@ public sealed partial class TorRunner
         }
         return outLines;
     }
+
+    /// <summary>
+    /// Tor's own byte accounting since this process started, read over the
+    /// control port (GETINFO traffic/read, traffic/written). Null when the
+    /// runner bound no control port or Tor did not answer. Deliberately quiet:
+    /// the stats poller calls this every second, so nothing here may log.
+    /// </summary>
+    public (long Read, long Written)? QueryTraffic()
+    {
+        var port = Volatile.Read(ref _controlPort);
+        if (port <= 0) return null;
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+        try
+        {
+            if (!socket.ConnectAsync(IPAddress.Loopback, port).Wait(2_000))
+                return null;
+            socket.ReceiveTimeout = 2_000;
+            socket.SendTimeout = 2_000;
+            using var stream = new NetworkStream(socket, ownsSocket: false);
+            using var reader = new StreamReader(stream, Encoding.Latin1,
+                detectEncodingFromByteOrderMarks: false);
+            stream.Write(Encoding.Latin1.GetBytes("AUTHENTICATE\r\n"));
+            stream.Flush();
+            ReadReply(reader);
+            stream.Write(Encoding.Latin1.GetBytes("GETINFO traffic/read\r\n"));
+            stream.Flush();
+            var readReply = ReadReply(reader);
+            stream.Write(Encoding.Latin1.GetBytes("GETINFO traffic/written\r\n"));
+            stream.Flush();
+            var writtenReply = ReadReply(reader);
+            var read = ParseTraffic(readReply);
+            var written = ParseTraffic(writtenReply);
+            if (read == null || written == null) return null;
+            return (read.Value, written.Value);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>The counter out of a "traffic/read=123" control reply line.</summary>
+    private static long? ParseTraffic(List<string> reply)
+    {
+        foreach (var line in reply)
+        {
+            var i = line.IndexOf("traffic/", StringComparison.Ordinal);
+            if (i < 0) continue;
+            var m = TrafficValueRegex().Match(line[(i + "traffic/".Length)..]);
+            if (m.Success) return long.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+        }
+        return null;
+    }
+
+    [GeneratedRegex(@"^(?:read|written)=(\d+)")]
+    private static partial Regex TrafficValueRegex();
 
     /// <summary>
     /// A free loopback port for the control listener. Port 0 picks one from the
@@ -773,7 +830,12 @@ public sealed partial class TorRunner
             .Where(c => c.Length == 2 && c.All(ch => ch is >= 'A' and <= 'Z'))
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        if (exitCodes.Count > 0)
+        // Exit steering needs the control port (see ApplyExitNodesLater), and
+        // so does traffic accounting: in the proxy modes there is no tunnel to
+        // count bytes, so Tor's own GETINFO accounting is the only source. The
+        // port is loopback-only, so the extra listener is the same exposure as
+        // the SOCKS port beside it.
+        if (exitCodes.Count > 0 || Config.SystemProxyMode || Config.ProxyOnlyMode)
         {
             _controlPort = FreeEphemeralPort();
         }
@@ -781,7 +843,7 @@ public sealed partial class TorRunner
         var templateLines = TorrcSettings.TemplateLines();
         var torrcContent =
             $"{commonStr}\n{string.Join("\n", templateLines)}\n{pluginDirectives.ToString().Trim()}\n{bridgeDirectives.ToString().Trim()}\n" +
-            (exitCodes.Count > 0 ? $"ControlPort {_listenHost}:{_controlPort}\n" : "");
+            (_controlPort > 0 ? $"ControlPort {_listenHost}:{_controlPort}\n" : "");
         File.WriteAllText(torrcFile, torrcContent);
         try
         {

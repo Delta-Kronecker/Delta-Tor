@@ -931,11 +931,15 @@ public sealed class MainForm : Form
         }
 
         // Speed: live on the home screen itself, not only in a notification.
+        // The proxy modes count bytes through Tor's own accounting, so they are
+        // just as live as a tunnel connection — the gate is "a live data path
+        // exists", not "a TUN adapter exists".
+        var live = s.Connected || _proxyLive;
         DrawStatCard(g, padX, y, statW, statH, "SPEED DOWN",
-            s.Connected ? UiHelpers.FormatBytes((long)s.RxSpeed) + "/s" : "--",
+            live ? UiHelpers.FormatBytes((long)s.RxSpeed) + "/s" : "--",
             DeltaTorTheme.Green, false, capBold, valueBold);
         DrawStatCard(g, padX + statW + 8f, y, statW, statH, "SPEED UP",
-            s.Connected ? UiHelpers.FormatBytes((long)s.TxSpeed) + "/s" : "--",
+            live ? UiHelpers.FormatBytes((long)s.TxSpeed) + "/s" : "--",
             DeltaTorTheme.Accent, true, capBold, valueBold);
         y += statH + 6f;
 
@@ -945,13 +949,13 @@ public sealed class MainForm : Form
             UiHelpers.FormatBytes(s.TxBytes), DeltaTorTheme.Accent, true, capBold, valueBold);
         y += statH + 6f;
 
-        var uptime = s.Connected
+        var uptime = live
             ? UiHelpers.FormatDuration(
                 DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - s.ConnectedAtMillis)
             : "--";
         var exit = s.ExitCode.Length > 0
             ? $"{UiHelpers.FlagEmoji(s.ExitCode)} {s.ExitName}".Trim()
-            : s.Connected
+            : live
                 ? "Locating …"
                 : "--";
         DrawInfoPill(g, padX, y, statW, infoH, "UP TIME", uptime, capBold, valueBold);
