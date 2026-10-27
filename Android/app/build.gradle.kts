@@ -191,11 +191,12 @@ dependencies {
     // Core
     implementation("androidx.core:core-ktx:1.17.0")
 
-    // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts)
-    // plus its Tapsell-network adapter; the version is shared with the core.
+    // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts);
+    // the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
-    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
-    // Yandex network adapter (same version as the core SDK). The network is
-    // chosen/prioritized in the Tapsell dashboard; no extra setup is needed here.
+    // Only the Yandex adapter is included. No other ad-network adapter is on
+    // the classpath, so Tapsell Mediation can only serve Yandex; the legacy
+    // (Tapsell-network) adapter is deliberately absent. Network choice is
+    // determined by the adapters present in the build, not by dashboard config.
     implementation("ir.tapsell.mediation.adapter:yandex:1.4.0-alpha04")
 }
