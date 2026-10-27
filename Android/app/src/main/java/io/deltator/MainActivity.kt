@@ -166,9 +166,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
-        // Warm the interstitial slot so it is already caching for the first
-        // connect's half mark; the SDK refills it after every show.
-        TapsellAds.prepareInterstitialAd()
         maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
@@ -539,10 +536,6 @@ private fun MainScreen(
                 .windowInsetsPadding(WindowInsets.systemBars)
         ) {
             AirBackground(glow = scAnimated, connecting = connecting)
-
-            // Watches the bootstrap and opens the interstitial at the half
-            // mark; composes nothing itself.
-            InterstitialAtHalf(state)
 
             Header(
                 statusColor = scAnimated,
@@ -1530,30 +1523,6 @@ private fun peakPct(connecting: Boolean, torRunning: Boolean, transports: Map<St
 private fun ringProgressOf(state: AppState.VpnState): Float? {
     val peak = peakPct(state.connecting, state.torRunning, state.transports)
     return if (state.connecting && !state.torRunning && peak > 0) peak / 100f else null
-}
-
-/**
- * The interstitial's trigger point: it opens once per connect, when the
- * leading racer reaches half of the bootstrap. The connect keeps running
- * underneath the ad, so the connection is usually live by the time the ad
- * closes. The shown flag resets only when the connect ends, so the percentage
- * wobbling around 50 -- or the lead swapping racers -- cannot fire it twice,
- * and a connect that never reaches half shows nothing.
- */
-@Composable
-private fun InterstitialAtHalf(state: AppState.VpnState) {
-    val peak = peakPct(state.connecting, state.torRunning, state.transports)
-    val activity = LocalContext.current as? Activity
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(state.connecting) {
-        if (!state.connecting) shown = false
-    }
-    LaunchedEffect(state.connecting, peak >= 50) {
-        if (state.connecting && peak >= 50 && !shown && activity != null) {
-            shown = true
-            TapsellAds.showInterstitialIfReady(activity)
-        }
-    }
 }
 
 // ---- background -------------------------------------------------------------

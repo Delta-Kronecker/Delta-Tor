@@ -16,8 +16,7 @@ import ir.tapsell.mediation.ad.views.ntv.NativeAdView
 import ir.tapsell.mediation.ad.views.ntv.NativeAdViewContainer
 
 /**
- * Tapsell Mediation: one native banner at the top of the app plus one
- * interstitial video that opens halfway through a connect.
+ * Tapsell Mediation: one native banner at the top of the app.
  *
  * The SDK initializes itself through its own ContentProvider using the
  * TapsellMediationAppKey manifest placeholder set in app/build.gradle.kts
@@ -29,10 +28,7 @@ object TapsellAds {
     private const val TAG = "Tapsell"
 
     /** The publisher's NativeBanner zone from the Tapsell dashboard. */
-    const val NATIVE_ZONE = "6ade1f5f4e86a816eeb924d3"
-
-    /** The publisher's interstitial-video zone from the Tapsell dashboard. */
-    const val INTERSTITIAL_ZONE = "6ade55a24e86a816eeb924dd"
+    const val NATIVE_ZONE = "6ae134251db76a692bf150b4"
 
     /** Set once the network refused the slot; the UI then lets it go. */
     val nativeFailed = mutableStateOf(false)
@@ -42,61 +38,6 @@ object TapsellAds {
 
     /** The response id of the ad currently bound to the banner, for destroy. */
     private var responseId: String? = null
-
-    /** The interstitial response id, set on a successful request. */
-    @Volatile
-    private var interstitialId: String? = null
-
-    /**
-     * Warm the interstitial slot; the SDK refills it itself after every
-     * show. Call once from the main activity's onCreate, and again whenever
-     * a trigger finds the slot empty, because a first load that failed
-     * never retries on its own.
-     */
-    fun prepareInterstitialAd() {
-        Tapsell.requestInterstitialAd(INTERSTITIAL_ZONE, object : RequestResultListener {
-            override fun onSuccess(adId: String) {
-                Log.i(TAG, "interstitial loaded")
-                interstitialId = adId
-            }
-
-            override fun onFailure(message: String) {
-                Log.w(TAG, "interstitial request failed: $message")
-            }
-        })
-    }
-
-    /**
-     * Show the interstitial if one is cached. The connect keeps running
-     * underneath, so it is usually live by the time the ad closes. An
-     * empty-handed call re-arms the slot for the next trigger.
-     */
-    fun showInterstitialIfReady(activity: Activity) {
-        val id = interstitialId
-        if (id == null) {
-            Log.i(TAG, "interstitial not loaded; re-warming the slot")
-            prepareInterstitialAd()
-            return
-        }
-        interstitialId = null
-        Tapsell.showInterstitialAd(id, activity, object : AdStateListener.Interstitial {
-            override fun onAdImpression() {
-                Log.i(TAG, "interstitial impression")
-            }
-
-            override fun onAdClicked() {
-                Log.i(TAG, "interstitial clicked")
-            }
-
-            override fun onAdFailed(message: String) {
-                Log.w(TAG, "interstitial show failed: $message")
-            }
-
-            override fun onAdClosed(completionState: AdShowCompletionState) {
-                Log.i(TAG, "interstitial closed: ${completionState.name}")
-            }
-        })
-    }
 
     /** Release the loaded banner ad; called when the banner leaves the composition. */
     fun destroy() {
