@@ -282,6 +282,13 @@ public static class TorSocksBridge
 
                     if (ver != 0x05 || (cmd != 0x01 && cmd != 0x05))
                     {
+                        // Standard tun2socks speaks SOCKS5 UDP ASSOCIATE (0x03)
+                        // for UDP traffic; the bridge only carries CONNECT and
+                        // the hev-style FWD_UDP, so log the attempt — it is the
+                        // one signature that tells a broken tunneled path apart
+                        // in the log.
+                        AppLog.W(TAG,
+                            $"SOCKS: unsupported request dropped (ver={ver}, cmd=0x{cmd:x2})");
                         WriteAll(output, new byte[] { 0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0 });
                         return;
                     }

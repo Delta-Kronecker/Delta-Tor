@@ -72,8 +72,16 @@ public static class BridgeRace
      * anyway. A transport that has answered nothing at all for this many
      * probes in a row is not merely busy building a circuit, so waiting out
      * the grace window would only delay an already obvious answer.
+     *
+     * Sized for the tun-mode connect flood: the moment the tunnel comes up,
+     * the whole machine's background traffic (Windows services, NCSI,
+     * telemetry, updates) hits Tor at once, and a probe can sit behind that
+     * queue for longer than its timeout several times in a row. Six probes
+     * (~30s) used to read that flood as a dead transport and rebuilt a
+     * perfectly healthy Tor — killing the connection for another full
+     * bootstrap. Fifteen (~75s) lets the queue drain first.
      */
-    private const int ProbesToIgnoreGrace = 6;
+    private const int ProbesToIgnoreGrace = 15;
 
     /**
      * Slack on top of the Tor-derived grace in ProbeGraceMs(). A circuit being
@@ -184,6 +192,9 @@ public static class BridgeRace
     private static long _deadSince;
     private static long _lastRecoveryAt;
     private static long _bytesAtLastProbe;
+
+    /// <summary>Generation counter that invalidates pending availability-loss verdicts.</summary>
+    private static int _availabilityProbe;
 
     /** 1 while a transport rebuild is in flight (AtomicBoolean on Android). */
     private static int _recovering;
@@ -1111,6 +1122,8 @@ public static class BridgeRace
     {
         if (e.IsAvailable)
         {
+            // Any pending "down" verdict is superseded by the link coming back.
+            Interlocked.Increment(ref _availabilityProbe);
             if (_linkUp) return;
             _linkUp = true;
             _failedProbes = 0;
@@ -1119,11 +1132,24 @@ public static class BridgeRace
         }
         else
         {
-            // Losing one network is routine when the system moves between
-            // interfaces, so only a real absence of any counts.
-            _linkUp = false;
-            AppLog.W(TAG, "Network lost");
-            if (AppState.State.Connected) MarkReconnecting("network down");
+            // The Wintun adapter coming up raises a transient "unavailable"
+            // while Windows re-scores the interfaces, and the tunnel's own
+            // reconcile (routes, DNS, split rules) fires the same event —
+            // the physical link is fine both times. A real loss is
+            // indistinguishable at this instant, so the verdict waits a few
+            // seconds and re-checks the actual interface state; acting on
+            // the flap used to wedge every tun connect in a false
+            // "network down" reconnecting loop.
+            var gen = Interlocked.Increment(ref _availabilityProbe);
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(3000);
+                if (gen != Volatile.Read(ref _availabilityProbe)) return; // superseded
+                if (NetworkInterface.GetIsNetworkAvailable()) return;     // flap: link is fine
+                _linkUp = false;
+                AppLog.W(TAG, "Network lost");
+                if (AppState.State.Connected) MarkReconnecting("network down");
+            });
         }
     }
 
