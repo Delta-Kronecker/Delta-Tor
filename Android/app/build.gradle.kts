@@ -195,4 +195,7 @@ dependencies {
     // plus its Tapsell-network adapter; the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
+    // Yandex network adapter (same version as the core SDK). The network is
+    // chosen/prioritized in the Tapsell dashboard; no extra setup is needed here.
+    implementation("ir.tapsell.mediation.adapter:yandex:1.4.0-alpha04")
 }
