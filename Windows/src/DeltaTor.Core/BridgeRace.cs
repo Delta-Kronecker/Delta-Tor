@@ -556,6 +556,14 @@ public static class BridgeRace
 
         Notify("DeltaTor", "Establishing VPN \u2026", progress: true, progressValue: 0);
 
+        // Kick Tor's first circuit build now, in parallel with the adapter
+        // bring-up. The tunnel routes the machine's DNS through the SOCKS
+        // bridge, so until Tor has its first circuit the very first query
+        // stalls — which used to read as "green, but no traffic for twenty
+        // seconds". Waiting for the circuit here makes green mean "traffic
+        // flows now" instead.
+        var circuitReady = WarmFirstCircuitAsync();
+
         await Task.Delay(200);
 
         var tunnelError = TunnelEngine.Start(proxyHost, proxyPort);
@@ -564,6 +572,11 @@ public static class BridgeRace
             Fail(tunnelError.Message.Length > 0 ? tunnelError.Message : "Failed to start tunnel");
             return;
         }
+
+        await circuitReady;
+        // A disconnect landed while the circuit was warming: the teardown
+        // owns the state now, and posting Connected here would race it.
+        if (AppState.State.Stopping) return;
 
         AppState.Update(s => s with
         {
@@ -898,6 +911,38 @@ public static class BridgeRace
         AppLog.D(TAG, $"probe ({detail})");
         return result;
     }
+
+    /// <summary>
+    /// Wait until Tor can complete a SOCKS CONNECT — i.e. its first circuit
+    /// exists — for at most <see cref="FirstCircuitWaitMs"/>. Both "Ok" and
+    /// "Live" probes mean a circuit answered (Live is a rejection by the
+    /// destination, not by Tor); only Dead keeps the loop going. The first
+    /// probe also kicks the circuit build, so the wait measures the real
+    /// build time and nothing else. Called during a tun connect, in parallel
+    /// with the adapter bring-up: without it, the first tunneled DNS query
+    /// waits for the same circuit and the screen reads connected while no
+    /// traffic moves.
+    /// </summary>
+    private static async Task WarmFirstCircuitAsync()
+    {
+        // The first probe blocks on Tor's SOCKS reply for up to
+        // ProbeTimeoutMs; yielding keeps that wait off the caller's thread so
+        // the adapter bring-up runs alongside it.
+        await Task.Yield();
+
+        var deadline = Environment.TickCount64 + FirstCircuitWaitMs;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (AppState.State.Stopping) return; // teardown owns the state now
+            if (ProbeTunnelUsable() != ProbeResult.Dead) return;
+            await Task.Delay(400);
+        }
+        // A slow network must not hold the connect hostage; the screen goes
+        // green anyway and traffic flows when the circuit finally arrives.
+        AppLog.W(TAG, $"first circuit not ready after {FirstCircuitWaitMs}ms; connecting anyway");
+    }
+
+    private const long FirstCircuitWaitMs = 20_000L;
 
     /**
      * Grace before a rebuild follows the Tor that has to build the circuit the
