@@ -82,11 +82,7 @@ android {
         // publisher app key from here; the NativeBanner zone id lives in
         // TapsellAds.kt next to it.
         addManifestPlaceholders(
-            mapOf(
-                "TapsellMediationAppKey" to "nmrromgranhdtrshhmdbrjqdhtmsgmjfetmohqlknqoigkdkplihfhdbjgftnsmhjnlplj",
-                // Test AdMob app id; replace with your own AdMob app id in production.
-                "TapsellMediationAdmobAdapterSignature" to "ca-app-pub-3940256099942544~3347511713"
-            )
+            mapOf("TapsellMediationAppKey" to "nmrromgranhdtrshhmdbrjqdhtmsgmjfetmohqlknqoigkdkplihfhdbjgftnsmhjnlplj")
         )
     }
 
@@ -198,7 +194,6 @@ dependencies {
     // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts);
     // the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
-    // AdMob is the only ad network in this build. The legacy (Tapsell-network)
-    // and Yandex adapters are deliberately absent.
-    implementation("ir.tapsell.mediation.adapter:admob:1.4.0-alpha04")
+    // Only the Tapsell (legacy) network is used.
+    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
 }
