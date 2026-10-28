@@ -28,7 +28,7 @@ object TapsellAds {
     private const val TAG = "Tapsell"
 
     /** The publisher's NativeBanner zone from the Tapsell dashboard. */
-    const val NATIVE_ZONE = "6ade1f5f4e86a816eeb924d3"
+    const val NATIVE_ZONE = "6ae134251db76a692bf150b4"
 
     /** Set once the network refused the slot; the UI then lets it go. */
     val nativeFailed = mutableStateOf(false)
