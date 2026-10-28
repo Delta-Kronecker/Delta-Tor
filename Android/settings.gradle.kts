@@ -22,7 +22,14 @@ dependencyResolutionManagement {
         mavenCentral()
         // Tapsell Mediation SDK and its adapters (only resolved for their groups)
         maven("https://maven.tapsell.ir") {
-            content { includeGroupByRegex("ir\\.tapsell.*") }
+            content {
+                includeGroupByRegex("ir\\.tapsell.*")
+                // Transitive dependencies of the Chartboost / Mintegral / Wortise
+                // adapters are mirrored on the Tapsell Maven repository.
+                includeGroupByRegex("com\\.chartboost.*")
+                includeGroupByRegex("com\\.mbridge.*")
+                includeGroupByRegex("com\\.wortise.*")
+            }
         }
     }
 }
