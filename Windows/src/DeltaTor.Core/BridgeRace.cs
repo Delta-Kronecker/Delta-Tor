@@ -1093,7 +1093,7 @@ public static class BridgeRace
         if (_netHandler != null) return;
         try
         {
-            _linkUp = NetworkInterface.GetIsNetworkAvailable();
+            _linkUp = NetworkHealth.IsPhysicalLinkUp();
             _netHandler = OnNetworkAvailabilityChanged;
             NetworkChange.NetworkAvailabilityChanged += _netHandler;
         }
@@ -1145,7 +1145,7 @@ public static class BridgeRace
             {
                 await Task.Delay(3000);
                 if (gen != Volatile.Read(ref _availabilityProbe)) return; // superseded
-                if (NetworkInterface.GetIsNetworkAvailable()) return;     // flap: link is fine
+                if (NetworkHealth.IsPhysicalLinkUp()) return;     // flap: link is fine
                 _linkUp = false;
                 AppLog.W(TAG, "Network lost");
                 if (AppState.State.Connected) MarkReconnecting("network down");

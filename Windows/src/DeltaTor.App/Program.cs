@@ -32,13 +32,17 @@ internal static class Program
         Task.Run(InstallCounter.CountInstall);
         MaybeShowFirstRunNotice();
 
-        // The tun2socks engine behind TunnelEngine: Se7enTun owns the Wintun
-        // adapter, its catch-all routes, adapter DNS and split rules, and tears
-        // them down on a clean exit. A hard kill is recovered by Se7enTun's own
-        // reconcile on the next start (it caches and restarts its data plane).
-        TunnelEngine.Impl = new Se7enTunnel();
+        // The tun2socks engine behind TunnelEngine: hev-socks5-tunnel owns the
+        // Wintun adapter data plane; RouteManager owns the catch-all routes,
+        // adapter DNS, bypass routes and their crash-recovery ledger. Teardown
+        // is driven explicitly on process exit.
+        TunnelEngine.Impl = new TunEngine();
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TunnelEngine.Stop();
         AppDomain.CurrentDomain.UnhandledException += (_, _) => TunnelEngine.Stop();
+
+        // Remove routes an earlier (crashed/killed) run left behind before the
+        // first connect can install its own.
+        RouteManager.CleanupLeftovers();
 
         Application.Run(new MainForm());
     }
