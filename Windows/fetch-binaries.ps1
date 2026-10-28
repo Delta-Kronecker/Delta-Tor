@@ -1,4 +1,4 @@
-# fetch-binaries.ps1 — fetch the pinned official Tor Expert Bundle for Windows
+# fetch-binaries.ps1 G�� fetch the pinned official Tor Expert Bundle for Windows
 # and overlay its core with the Delta-Kronecker/tor fork build.
 #
 #   Base archive (official, pinned):
@@ -34,7 +34,83 @@
 # it); a mismatch always fails. A marker file (<bundle>/.fork-core) records
 # the applied digest so unchanged re-runs skip the download; an offline
 # machine with a marker keeps its existing core.
+#
+# hev-socks5-tunnel (WinTUN + tun2socks engine): built by
+# Windows/native/build-hev.sh from the vendored source. No fetch needed.
 
+[CmdletBinding()]
+param(
+    [switch]$CI,
+    [string]$CacheRoot = (Split-Path -Parent $PSScriptRoot)
+)
+
+$ErrorActionPreference = 'Stop'
+
+$Version   = '15.0.25'
+$BaseName  = "tor-expert-bundle-windows-x86_64-$Version"
+$Archive   = "$BaseName.tar.gz"
+$Url       = "https://dist.torproject.org/torbrowser/$Version/$Archive"
+$VendorDir = Join-Path $PSScriptRoot 'vendor'
+$TargetDir = Join-Path $VendorDir $BaseName
+
+# SHA-256 from the official signed checksums:
+# https://dist.torproject.org/torbrowser/15.0.25/sha256sums-signed-build.txt
+$ExpectedSha256 = 'c1988c701de2f24f7d098d1d6d7f507b58f27740d097f29c246e0524d639b252'
+
+function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
+
+function Test-Extraction([string]$Root) {
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+    # Layout inside the official archive:
+    #   <root>/tor/tor.exe
+    #   <root>/tor/pluggable_transports/lyrebird.exe
+    #   <root>/data/geoip, data/geoip6, data/torrc-defaults
+    $tor      = Join-Path $Root 'tor/tor.exe'
+    $lyrebird = Join-Path $Root 'tor/pluggable_transports/lyrebird.exe'
+    $geoip    = Join-Path $Root 'data/geoip'
+    return (Test-Path $tor) -and (Test-Path $lyrebird) -and (Test-Path $geoip)
+}
+
+# Locate an already-extracted bundle root regardless of top-level layout:
+# preferred target first, then any child of vendor, then vendor itself.
+function Find-BundleRoot {
+    if (Test-Extraction $TargetDir) { return $TargetDir }
+    if (Test-Path $VendorDir) {
+        foreach ($d in (Get-ChildItem -Directory $VendorDir | Sort-Object Name)) {
+            if (Test-Extraction $d.FullName) { return $d.FullName }
+        }
+        if (Test-Extraction $VendorDir) { return $VendorDir }
+    }
+    return $null
+}
+
+function Show-BundleLayout {
+    Write-Step "Actual layout under ${VendorDir}:"
+    if (Test-Path $VendorDir) {
+        Get-ChildItem -Recurse -File $VendorDir | Select-Object -First 40 | ForEach-Object {
+            Write-Step ("  " + $_.FullName.Substring($VendorDir.Length))
+        }
+    }
+    else {
+        Write-Step "  (vendor directory does not exist)"
+    }
+}
+
+function Assert-Hash([string]$Path) {
+    $actual = (Get-FileHash -Algorithm SHA256 -Path $Path).Hash.ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        if ($CI) {
+            throw "Archive hash is not pinned in fetch-binaries.ps1 (computed: $actual). Refusing to run unpinned in CI."
+        }
+        Write-Warning "Archive hash NOT pinned yet. Computed SHA-256: $actual. Set ExpectedSha256 in this script."
+    }
+    elseif ($actual -ne $ExpectedSha256.ToLowerInvariant()) {
+        throw "SHA-256 mismatch for $Path. Expected $ExpectedSha256 but got $actual"
+    }
+    else {
+        Write-Step "SHA-256 verified: $actual"
+    }
+}
 # ---------------------------------------------------------------------------
 # Official bundle: resolve to an extracted root on one of the cached paths,
 # download + verify + extract only when nothing is there yet.
