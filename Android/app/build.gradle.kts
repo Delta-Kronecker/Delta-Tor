@@ -194,9 +194,8 @@ dependencies {
     // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts);
     // the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
-    // Only the Yandex adapter is included. No other ad-network adapter is on
-    // the classpath, so Tapsell Mediation can only serve Yandex; the legacy
-    // (Tapsell-network) adapter is deliberately absent. Network choice is
-    // determined by the adapters present in the build, not by dashboard config.
+    // Tapsell network adapter (restored) plus Yandex. Both may serve depending
+    // on dashboard/network availability.
+    implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:yandex:1.4.0-alpha04")
 }
