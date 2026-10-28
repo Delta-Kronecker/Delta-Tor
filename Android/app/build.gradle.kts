@@ -194,6 +194,17 @@ dependencies {
     // Tapsell Mediation (maven.tapsell.ir is registered in settings.gradle.kts);
     // the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
-    // Only the Tapsell (legacy) network is used.
+    // Networks that need no separate publisher registration/credentials:
+    // Tapsell (legacy) + all third-party adapters except AdMob, which requires
+    // an AdMob app id. Tapsell Mediation picks among the adapters present here.
     implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:yandex:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:applovin:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:chartboost:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:fyber:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:ironsource:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:liftoff:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:mintegral:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:unityads:1.4.0-alpha04")
+    implementation("ir.tapsell.mediation.adapter:wortise:1.4.0-alpha04")
 }
