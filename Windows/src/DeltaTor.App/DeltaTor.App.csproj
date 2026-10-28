@@ -71,6 +71,14 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <!-- wintun.dll: hev-wintun.c does LoadLibraryExW(L"wintun.dll", ...) at
+         runtime. Without it, the Wintun adapter never opens and tunnel init
+         returns -5. Downloaded + SHA-256 verified by build-hev.sh. -->
+    <Content Include="..\..\native\hev-socks5-tunnel\wintun.dll">
+      <Link>wintun.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

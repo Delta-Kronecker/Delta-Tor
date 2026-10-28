@@ -74,5 +74,24 @@ gcc -shared -o "$OUT/hev-socks5-tunnel.dll" \
     -lws2_32 -lIphlpapi -ladvapi32
 
 test -f "$OUT/hev-socks5-tunnel.dll"
+
+# Fetch the signed wintun.dll that hev-wintun.c LoadLibraryEx's at runtime.
+# Pinned 0.14.1, SHA-256 verified. Without this file, hev_wintun_open()
+# returns NULL, tunnel_init() fails, and the whole init chain returns -5.
+WINTUN_VER=0.14.1
+WINTUN_ZIP="wintun-${WINTUN_VER}.zip"
+WINTUN_URL="https://www.wintun.net/builds/${WINTUN_ZIP}"
+WINTUN_SHA256=07c256185d6ee3652e09fa55c0b673e2624b565e02c4b9091c79ca7d2f24ef51
+
+TMPZIP=$(mktemp /tmp/wintun-XXXXXX.zip)
+curl -sSL -o "$TMPZIP" "$WINTUN_URL"
+echo "$WINTUN_SHA256  $TMPZIP" | sha256sum -c - || {
+    echo "[build-hev] FATAL: wintun.dll SHA-256 mismatch" >&2; exit 1;
+}
+unzip -o -j "$TMPZIP" "wintun/bin/amd64/wintun.dll" -d "$OUT" >/dev/null 2>&1
+unzip -o -j "$TMPZIP" "wintun/LICENSE.txt" -d "$OUT" >/dev/null 2>&1
+rm -f "$TMPZIP"
+test -f "$OUT/wintun.dll"
+
 echo "[build-hev] OK:"
 ls -l "$OUT"
