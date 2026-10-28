@@ -138,11 +138,20 @@ jobs:
             [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
           Write-Host "Certificate opens: subject=$($cert.Subject), thumbprint=$($cert.Thumbprint)"
 
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
+      - name: Set up MSYS2 (MinGW-w64 native tunnel toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads make curl
+
+      - name: Build hev-socks5-tunnel.dll
+        shell: msys2 {0}
+        run: ./Windows/native/build-hev.sh
+
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25)
         run: ./Windows/fetch-binaries.ps1 -CI
         env:
-          # The fork-core digest lookup calls the GitHub API; the runner's
-          # token keeps it off the shared-IP rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build signed release app
@@ -152,19 +161,15 @@ jobs:
           dotnet build Windows/DeltaTor.sln -c Release --nologo
           -p:Version=${{ steps.version.outputs.version }}
 
-      # Se7enTun resolves its data plane from the exe folder's Resources
-      # subfolder, never from its own folder. A missing copy there only
-      # surfaces at the first tunnel start on a user's machine, so gate it here.
-      - name: Verify the Se7enTun data plane shipped next to the exe
+      # hev data plane must ship next to the exe.
+      - name: Verify the hev data plane shipped next to the exe
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows"
           foreach ($f in @(
             "$out/DeltaTor.exe",
-            "$out/Se7enTun.dll",
-            "$out/Resources/tun2socks/tun2socks.exe",
-            "$out/Resources/tun2socks/wintun.dll",
+            "$out/hev-socks5-tunnel.dll",
             "$out/flags/de.png")) {
             if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
             Write-Host "ok $f"
@@ -180,7 +185,7 @@ jobs:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows"
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) {
@@ -209,7 +214,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/DeltaTor.exe"
           $vi = (Get-Item $exe).VersionInfo
           $fv = "$($vi.FileVersion)"
           $tri = (($fv -split '\.') | Select-Object -First 3) -join '.'
@@ -231,7 +236,7 @@ jobs:
           PIN_FILE: Windows/release-signing-cert.sha256
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/DeltaTor.exe"
           $sig = Get-AuthenticodeSignature -FilePath $exe
           if (-not $sig.SignerCertificate) {
             Write-Host "::error::$exe has no signer certificate"
@@ -281,7 +286,7 @@ jobs:
           # over whatever directory the user happened to be in.
           $stage = "dist/stage/DeltaTor"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
+          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
           Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
           Compress-Archive -Path "dist/stage/DeltaTor" -DestinationPath "dist/deltator-$($env:TAG_NAME)-windows-x64.zip" -Force
           Get-ChildItem dist/*.zip

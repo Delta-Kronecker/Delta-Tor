@@ -6,9 +6,8 @@ public sealed record TunnelStats(long TxBytes, long RxBytes);
 /// <summary>
 /// The tun2socks data path behind the local SOCKS listener — the Windows
 /// counterpart of Android's HevSocks5Tunnel JNI surface. On Windows this is
-/// Se7enTun (a Wintun adapter plus a separate tun2socks.exe), which creates
-/// the adapter and manages its routes, DNS and split rules itself, so there is
-/// no file descriptor or route bookkeeping on this side of the boundary.
+/// hev-socks5-tunnel over a Wintun adapter; route/DNS/bypass bookkeeping is
+/// owned by RouteManager, not by the data plane.
 /// </summary>
 public interface ISocksTunnel
 {

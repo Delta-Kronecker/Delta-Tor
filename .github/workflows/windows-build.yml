@@ -20,32 +20,37 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
-      # Tor Expert Bundle (tor/lyrebird/geoip) plus Se7enTun (the WinTUN +
-      # tun2socks engine). Both are pinned and SHA-256 verified by the script;
-      # it must run before dotnet build, which copies them into the app output.
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
+      # Stage 4: hev-socks5-tunnel.dll (tun2socks with the Wintun backend) is
+      # built from the vendored source with the MinGW-w64 toolchain.
+      - name: Set up MSYS2 (MinGW-w64 native tunnel toolchain)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-winpthreads make curl
+
+      - name: Build hev-socks5-tunnel.dll
+        shell: msys2 {0}
+        run: ./Windows/native/build-hev.sh
+
+      # Tor Expert Bundle (tor/lyrebird/geoip). Pinned and SHA-256 verified.
+      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25)
         run: ./Windows/fetch-binaries.ps1 -CI
         env:
-          # The fork-core digest lookup calls the GitHub API; the runner's
-          # token keeps it off the shared-IP rate limit.
           GITHUB_TOKEN: ${{ github.token }}
 
       - name: Build
         run: dotnet build Windows/DeltaTor.sln -c Release --nologo
 
-      # Se7enTun resolves its data plane from <exe folder>\Resources\tun2socks\,
-      # never from its own folder. A missing copy there only surfaces at the
-      # first tunnel start on a user's machine, so gate it here instead.
-      - name: Verify the Se7enTun data plane shipped next to the exe
+      # hev data plane must ship next to the exe.
+      - name: Verify the hev data plane shipped next to the exe
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows"
           foreach ($f in @(
             "$out/DeltaTor.exe",
-            "$out/Se7enTun.dll",
-            "$out/Resources/tun2socks/tun2socks.exe",
-            "$out/Resources/tun2socks/wintun.dll",
+            "$out/hev-socks5-tunnel.dll",
             "$out/flags/de.png")) {
             if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
             Write-Host "ok $f"
@@ -64,7 +69,7 @@ jobs:
           #    inside folder).
           $stage = "dist/stage/deltator-debug-windows"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
+          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows/*" $stage
           Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
 
           # 2. The sources of the commit that was built, so the zip and the
