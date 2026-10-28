@@ -195,16 +195,14 @@ dependencies {
     // the version is shared with the core.
     implementation("ir.tapsell:tapsell:1.4.0-alpha04")
     // Networks that need no separate publisher registration/credentials:
-    // Tapsell (legacy) + all third-party adapters except AdMob, which requires
-    // an AdMob app id. Tapsell Mediation picks among the adapters present here.
+    // Tapsell (legacy) + third-party adapters whose transitive dependencies
+    // resolve in this build environment. Chartboost/Mintegral/Wortise were
+    // removed because their mirrored dependencies are not resolvable here.
     implementation("ir.tapsell.mediation.adapter:legacy:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:yandex:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:applovin:1.4.0-alpha04")
-    implementation("ir.tapsell.mediation.adapter:chartboost:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:fyber:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:ironsource:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:liftoff:1.4.0-alpha04")
-    implementation("ir.tapsell.mediation.adapter:mintegral:1.4.0-alpha04")
     implementation("ir.tapsell.mediation.adapter:unityads:1.4.0-alpha04")
-    implementation("ir.tapsell.mediation.adapter:wortise:1.4.0-alpha04")
 }
