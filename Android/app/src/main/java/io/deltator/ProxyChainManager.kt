@@ -95,11 +95,6 @@ object ProxyChainManager {
     private val _listState = MutableStateFlow(ListState())
     val listState: StateFlow<ListState> = _listState.asStateFlow()
 
-    private val _fetching = MutableStateFlow(false)
-
-    /** True while a host-list fetch is in flight; the sheet shows it over an empty list. */
-    val fetching: StateFlow<Boolean> = _fetching.asStateFlow()
-
     private fun file(context: Context) = java.io.File(context.filesDir, "proxy_chain.json")
 
     fun init(context: Context) {
@@ -230,55 +225,43 @@ object ProxyChainManager {
         updateNow(context)
     }
 
-    /**
-     * Fetch, parse, dedupe, keep previous measurements where the key survives.
-     *
-     * Returns false when both routes failed or the list came back empty — and
-     * when a fetch is already running — so the sheet knows to offer a retry
-     * instead of assuming the empty list is final.
-     */
-    suspend fun updateNow(context: Context): Boolean {
-        if (!_fetching.compareAndSet(false, true)) return false
-        try {
-            val text = withContext(Dispatchers.IO) { fetchDirect() } ?: run {
-                Log.i(TAG, "direct fetch failed, retrying behind Tor")
-                withContext(Dispatchers.IO) { fetchBehindTor() }
-            } ?: run {
-                Log.w(TAG, "host list fetch failed on both routes")
-                return false
-            }
-
-            val parsed = parse(text)
-            if (parsed.isEmpty()) {
-                Log.w(TAG, "host list came back empty")
-                return false
-            }
-
-            // Country sections: however many, in whatever order this fetch brought
-            // them. The sheet mirrors this order exactly, so a new country tomorrow
-            // (or a missing one) is picked up with no code change.
-            val orderedCountries = linkedMapOf<String, String>()
-            parsed.forEach {
-                if (it.countryCode.isNotBlank()) orderedCountries.putIfAbsent(it.countryCode, it.countryName)
-            }
-            countries = orderedCountries.map { Country(it.key, it.value) }
-
-            val previous = servers.associateBy({ it.key }, { it })
-            // Fresh country facts always win; only the delay measurement survives
-            // from the previous list.
-            val merged = parsed.map { fresh ->
-                val prior = previous[fresh.key]
-                if (prior != null) fresh.copy(delayMs = prior.delayMs) else fresh
-            }
-            updatedAtMillis = System.currentTimeMillis()
-            servers = merged.sorted()
-            save(context.applicationContext)
-            publish()
-            Log.i(TAG, "host list updated: ${merged.size} servers, ${countries.size} countries")
-            return true
-        } finally {
-            _fetching.value = false
+    /** Fetch, parse, dedupe, keep previous measurements where the key survives. */
+    suspend fun updateNow(context: Context) {
+        val text = withContext(Dispatchers.IO) { fetchDirect() } ?: run {
+            Log.i(TAG, "direct fetch failed, retrying behind Tor")
+            withContext(Dispatchers.IO) { fetchBehindTor() }
+        } ?: run {
+            Log.w(TAG, "host list fetch failed on both routes")
+            return
         }
+
+        val parsed = parse(text)
+        if (parsed.isEmpty()) {
+            Log.w(TAG, "host list came back empty")
+            return
+        }
+
+        // Country sections: however many, in whatever order this fetch brought
+        // them. The sheet mirrors this order exactly, so a new country tomorrow
+        // (or a missing one) is picked up with no code change.
+        val orderedCountries = linkedMapOf<String, String>()
+        parsed.forEach {
+            if (it.countryCode.isNotBlank()) orderedCountries.putIfAbsent(it.countryCode, it.countryName)
+        }
+        countries = orderedCountries.map { Country(it.key, it.value) }
+
+        val previous = servers.associateBy({ it.key }, { it })
+        // Fresh country facts always win; only the delay measurement survives
+        // from the previous list.
+        val merged = parsed.map { fresh ->
+            val prior = previous[fresh.key]
+            if (prior != null) fresh.copy(delayMs = prior.delayMs) else fresh
+        }
+        updatedAtMillis = System.currentTimeMillis()
+        servers = merged.sorted()
+        save(context.applicationContext)
+        publish()
+        Log.i(TAG, "host list updated: ${merged.size} servers, ${countries.size} countries")
     }
 
     private fun fetchDirect(): String? = fetch(viaTor = false)
