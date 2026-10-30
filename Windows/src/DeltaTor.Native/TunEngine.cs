@@ -50,7 +50,9 @@ public sealed class TunEngine : ISocksTunnel
                 Thread.Sleep(500);
             }
 
-            _config = Encoding.UTF8.GetBytes(BuildConfig(socksAddress, socksPort, enableUdpTunneling, mtu, ipv4Address));
+            var yamlConfig = BuildConfig(socksAddress, socksPort, enableUdpTunneling, mtu, ipv4Address);
+            TunLog.Write(Tag, $"YAML Config:\n{yamlConfig}");
+            _config = Encoding.UTF8.GetBytes(yamlConfig);
 
             HevTunnelApi.SetRejectQuic(DisableQuic);
             HevTunnelApi.SetRejectNonDnsUdp(RejectNonDnsUdp);
@@ -162,7 +164,8 @@ public sealed class TunEngine : ISocksTunnel
         sb.AppendLine("  connect-timeout: 8000");
         sb.AppendLine("  tcp-read-write-timeout: 120000");
         sb.AppendLine("  udp-read-write-timeout: 60000");
-        sb.AppendLine("  log-level: warning");
+        sb.AppendLine("  log-level: debug");
+        sb.AppendLine($"  log-file: '{TunLog.LogPath.Replace("\\", "/")}'");
 
         return sb.ToString();
     }

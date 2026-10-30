@@ -256,6 +256,12 @@ public static class AppLog
     {
         if (!ShouldRedact(tag)) Append(level, tag, msg);
         Trace.WriteLine($"{level}/{tag}: {msg}");
+
+        // Automatically log any TUN-related diagnostic tags straight to tunlog.txt
+        if (tag is "TunEngine" or "RouteManager" or "HevTunnelApi" or "TorVpnService" or "ExitNode")
+        {
+            TunLog.Write(tag, $"[{level}] {msg}");
+        }
     }
 
     public static void Clear()
