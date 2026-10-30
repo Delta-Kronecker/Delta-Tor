@@ -567,16 +567,9 @@ public static class BridgeRace
 
         Notify("DeltaTor", "Establishing VPN \u2026", progress: true, progressValue: 0);
 
-        // Kick Tor's first circuit build now, in parallel with the adapter
-        // bring-up. The tunnel routes the machine's DNS through the SOCKS
-        // bridge, so until Tor has its first circuit the very first query
-        // stalls — which used to read as "green, but no traffic for twenty
-        // seconds". Waiting for the circuit here makes green mean "traffic
-        // flows now" instead.
-        var circuitReady = WarmFirstCircuitAsync();
-
-        await Task.Delay(200);
-
+        // Bring up the tunnel straight away. No blocking probes or circuit
+        // warming pre-checks — Tor is 100% bootstrapped and listening at this
+        // point, so hand traffic over to the tunnel immediately.
         var tunnelError = TunnelEngine.Start(proxyHost, proxyPort);
         if (tunnelError != null)
         {
@@ -584,9 +577,6 @@ public static class BridgeRace
             return;
         }
 
-        await circuitReady;
-        // A disconnect landed while the circuit was warming: the teardown
-        // owns the state now, and posting Connected here would race it.
         if (AppState.State.Stopping) return;
 
         AppState.Update(s => s with
