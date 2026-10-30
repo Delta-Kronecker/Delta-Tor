@@ -7,7 +7,7 @@
          needs at runtime flows here transitively from DeltaTor.Native (which
          sets UseWPF); this project stays pure WinForms so its implicit usings
          and the WinForms/WPF type sets never collide. -->
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -63,19 +63,18 @@
     </Content>
   </ItemGroup>
 
-  <!-- hev-socks5-tunnel: the data-plane DLL must sit next to DeltaTor.exe so
-       P/Invoke can load it. Built by Windows/native/build-hev.sh. -->
+  <!-- Se7enTun: the engine DLL next to DeltaTor.exe, and its data plane
+       (tun2socks.exe + wintun.dll) in exactly Resources\tun2socks\ — the engine
+       resolves those from AppContext.BaseDirectory, never from its own folder.
+       Fetched by Windows/fetch-binaries.ps1 into Windows/libs/se7entun/. -->
   <ItemGroup>
-    <Content Include="..\..\native\hev-socks5-tunnel\hev-socks5-tunnel.dll">
-      <Link>hev-socks5-tunnel.dll</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
-    <!-- wintun.dll: hev-wintun.c does LoadLibraryExW(L"wintun.dll", ...) at
-         runtime. Without it, the Wintun adapter never opens and tunnel init
-         returns -5. Downloaded + SHA-256 verified by build-hev.sh. -->
-    <Content Include="..\..\native\hev-socks5-tunnel\wintun.dll">
-      <Link>wintun.dll</Link>
+    <Reference Include="Se7enTun">
+      <HintPath>..\..\libs\se7entun\Se7enTun.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.1" />
+    <Content Include="..\..\libs\se7entun\Resources\tun2socks\**\*">
+      <Link>Resources\tun2socks\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
