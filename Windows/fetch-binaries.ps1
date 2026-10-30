@@ -35,8 +35,9 @@
 # the applied digest so unchanged re-runs skip the download; an offline
 # machine with a marker keeps its existing core.
 #
-# hev-socks5-tunnel (WinTUN + tun2socks engine): built by
-# Windows/native/build-hev.sh from the vendored source. No fetch needed.
+# Se7enTun (WinTUN + tun2socks engine): pinned GitHub release, verified by
+# SHA-256, extracted to Windows/libs/se7entun/. The app csproj copies
+# Se7enTun.dll and its data plane (Resources\tun2socks\*) into the output.
 
 [CmdletBinding()]
 param(
@@ -111,6 +112,49 @@ function Assert-Hash([string]$Path) {
         Write-Step "SHA-256 verified: $actual"
     }
 }
+
+# ---------------------------------------------------------------------------
+# Se7enTun (WinTUN + tun2socks engine) - pinned GitHub release, verified by
+# SHA-256. Runs before the bundle short-circuit so it is fetched on every path.
+# The zip extracts Se7enTun.dll and Resources\tun2socks\* at its root.
+# ---------------------------------------------------------------------------
+$Se7enVersion = '1.0.0'
+$Se7enArchive = "Se7enTun-$Se7enVersion-win-x64.zip"
+$Se7enUrl     = "https://github.com/Delta-Kronecker/tun/releases/download/v$Se7enVersion/$Se7enArchive"
+# SHA-256 of the release asset above, recorded when it was first pinned.
+$Se7enSha256  = 'cc6a23e5481ec3ac0f123870941e7146dba53595f464bc133edc39e8c6c23f06'
+$Se7enLibDir  = Join-Path $PSScriptRoot 'libs/se7entun'
+$Se7enDll     = Join-Path $Se7enLibDir 'Se7enTun.dll'
+$Se7enPlane   = Join-Path $Se7enLibDir 'Resources/tun2socks/tun2socks.exe'
+
+if ((Test-Path $Se7enDll) -and (Test-Path $Se7enPlane)) {
+    Write-Step "Se7enTun already extracted: $Se7enLibDir"
+}
+else {
+    New-Item -ItemType Directory -Force -Path $Se7enLibDir | Out-Null
+    $se7enArchivePath = $null
+    foreach ($dir in @($CacheRoot, $PSScriptRoot)) {
+        $candidate = Join-Path $dir $Se7enArchive
+        if (Test-Path $candidate) { $se7enArchivePath = $candidate; break }
+    }
+    if (-not $se7enArchivePath) {
+        $se7enArchivePath = Join-Path $CacheRoot $Se7enArchive
+        Write-Step "Downloading $Se7enUrl"
+        curl.exe -fsSL --retry 3 --retry-delay 2 -o $se7enArchivePath $Se7enUrl
+        if ($LASTEXITCODE -ne 0) { throw "Download failed (curl exit $LASTEXITCODE): $Se7enUrl" }
+    }
+    $se7enActual = (Get-FileHash -Algorithm SHA256 -Path $se7enArchivePath).Hash.ToLowerInvariant()
+    if ($se7enActual -ne $Se7enSha256) {
+        throw "SHA-256 mismatch for $se7enArchivePath. Expected $Se7enSha256 but got $se7enActual"
+    }
+    Write-Step "Se7enTun SHA-256 verified: $se7enActual"
+    tar -xf $se7enArchivePath -C $Se7enLibDir
+    if ($LASTEXITCODE -ne 0) { throw "Se7enTun extraction failed (tar exit $LASTEXITCODE)" }
+    if (-not (Test-Path $Se7enDll)) { throw "Se7enTun.dll missing after extraction: $Se7enDll" }
+    if (-not (Test-Path $Se7enPlane)) { throw "tun2socks.exe missing after extraction: $Se7enPlane" }
+    Write-Step "Se7enTun -> $Se7enLibDir"
+}
+
 # ---------------------------------------------------------------------------
 # Official bundle: resolve to an extracted root on one of the cached paths,
 # download + verify + extract only when nothing is there yet.
