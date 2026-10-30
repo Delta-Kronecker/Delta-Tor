@@ -25,17 +25,18 @@ static HevLoggerLevel req_level;
 #if defined(__MINGW32__) && !defined(__MSYS__)
 /* Under MinGW the fd-based path cannot work: close()/writev() are socket
  * redirects (hev-mingw.h). Instead honour "stderr"/"stdout" by writing
- * straight to the console via Win32, so tunnel init failures (LOG_E) are
- * visible in the CI smoke test. Any other path still disables logging. */
+ * straight to the console via Win32, or open a real file via CreateFile. */
 #include <windows.h>
 
-static HANDLE hev_logger_win_handle;
+static HANDLE hev_logger_win_handle = INVALID_HANDLE_VALUE;
+static int hev_logger_win_is_file = 0;
 
 static void
 hev_logger_win_write (const char *buf, int len)
 {
     DWORD written;
-    WriteFile (hev_logger_win_handle, buf, (DWORD)len, &written, NULL);
+    if (hev_logger_win_handle != INVALID_HANDLE_VALUE)
+        WriteFile (hev_logger_win_handle, buf, (DWORD)len, &written, NULL);
 }
 #endif
 
@@ -45,6 +46,9 @@ hev_logger_init (HevLoggerLevel level, const char *path)
     req_level = level;
 
 #if defined(__MINGW32__) && !defined(__MSYS__)
+    if (!path || !path[0])
+        return 0;
+
     if (0 == strcmp (path, "stderr")) {
         hev_logger_win_handle = GetStdHandle (STD_ERROR_HANDLE);
         fd = -2;
@@ -57,7 +61,18 @@ hev_logger_init (HevLoggerLevel level, const char *path)
         active = 1;
         return 0;
     }
-    (void)path;
+
+    /* Open regular file for logging on Windows */
+    hev_logger_win_handle = CreateFileA (path, FILE_APPEND_DATA,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                        NULL, OPEN_ALWAYS,
+                                        FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hev_logger_win_handle != INVALID_HANDLE_VALUE) {
+        hev_logger_win_is_file = 1;
+        fd = -2;
+        active = 1;
+        return 0;
+    }
     return 0;
 #else
     if (0 == strcmp (path, "stdout"))
@@ -78,6 +93,13 @@ hev_logger_init (HevLoggerLevel level, const char *path)
 void
 hev_logger_fini (void)
 {
+#if defined(__MINGW32__) && !defined(__MSYS__)
+    if (hev_logger_win_is_file && hev_logger_win_handle != INVALID_HANDLE_VALUE) {
+        CloseHandle (hev_logger_win_handle);
+        hev_logger_win_handle = INVALID_HANDLE_VALUE;
+        hev_logger_win_is_file = 0;
+    }
+#endif
     close (fd);
 }
 
