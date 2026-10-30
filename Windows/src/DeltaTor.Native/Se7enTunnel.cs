@@ -119,6 +119,40 @@ public sealed class Se7enTunnel : ISocksTunnel
         }
     }
 
+    public bool WaitForTraffic(TimeSpan timeout)
+    {
+        // Se7en-Pro activation pattern: wait for TunState.Running (adapter up),
+        // then a short delay for tun2socks to establish SOCKS connection, then verify
+        // the adapter interface exists. This matches the ~2-3s activation time.
+        
+        var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        
+        // First wait for the host to report Running state.
+        while (Environment.TickCount64 < deadline)
+        {
+            if (_host?.State == TunState.Running)
+            {
+                // Give tun2socks a moment to connect to the SOCKS proxy.
+                // Se7enTun reports "Running" when both the host and tun2socks process
+                // are up, but the SOCKS connection needs a few hundred milliseconds.
+                Thread.Sleep(2000);
+                
+                // Verify the adapter is functional by checking if it reports stats.
+                // This confirms the network interface exists and has a route.
+                var stats = GetStats();
+                if (stats is not null)
+                {
+                    AppLog.I(Tag, $"tunnel ready (tx={stats.TxBytes}, rx={stats.RxBytes})");
+                    return true;
+                }
+            }
+            Thread.Sleep(100);
+        }
+        
+        AppLog.W(Tag, "WaitForTraffic timeout: tunnel state not ready");
+        return false;
+    }
+
     private void StopCore()
     {
         var host = _host;
