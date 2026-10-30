@@ -1,4 +1,5 @@
 using System.Globalization;
+using System;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using DeltaTor.Core.Util;
@@ -576,6 +577,12 @@ public static class BridgeRace
             Fail(tunnelError.Message.Length > 0 ? tunnelError.Message : "Failed to start tunnel");
             return;
         }
+
+        // Wait up to 5s for tun2socks to establish its SOCKS5 connection.
+        // This matches Se7en-Pro's observed 2-3s tunnel activation time.
+        // Without this, the app would report "connected" while the tunnel
+        // was still initializing its data path.
+        TunnelEngine.WaitForTraffic(TimeSpan.FromSeconds(5));
 
         if (AppState.State.Stopping) return;
 

@@ -17,9 +17,15 @@ public interface ISocksTunnel
     /// <summary>Tear the tunnel and its adapter down.</summary>
     void Stop();
 
-    /// <summary>Current traffic counters, or null while the tunnel is down.</summary>
-    TunnelStats? GetStats();
-}
+    /// <summary>
+        /// Current traffic counters, or null while the tunnel is down.
+        TunnelStats? GetStats();
+
+        /// <summary>Wait until the tun2socks data path is actively routing traffic through the TUN interface.
+        /// Returns true if ready within the timeout, false if the tunnel started but is still initializing.
+        /// This is critical for Se7enTun which needs time to establish the SOCKS proxy connection.</summary>
+        bool WaitForTraffic(TimeSpan timeout);
+    }
 
 /// <summary>
 /// Static facade the service state machine calls, mirroring the shape of the
@@ -41,4 +47,7 @@ public static class TunnelEngine
     public static void Stop() => Impl?.Stop();
 
     public static TunnelStats? GetStats() => Impl?.GetStats();
+
+    public static bool WaitForTraffic(TimeSpan timeout) =>
+        Impl?.WaitForTraffic(timeout) ?? false;
 }
