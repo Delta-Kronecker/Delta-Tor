@@ -38,7 +38,7 @@ public sealed class TunEngine : ISocksTunnel
         string socksAddress,
         int socksPort)
     {
-        const bool enableUdpTunneling = false;
+        const bool enableUdpTunneling = true;
         const int mtu = 1280;
         const string ipv4Address = "10.255.255.1";
         try
