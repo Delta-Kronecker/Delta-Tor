@@ -1122,6 +1122,8 @@ class TorVpnService : VpnService() {
         } else {
             AppState.updateChain { AppState.ChainState() }
         }
+        AppState.update { it.copy(exitCode = "", exitName = "") }
+        startExitLocator("127.0.0.1", Config.proxyPort)
         Log.i(TAG, "Switched Tor chain mode to: $mode")
     }
 
@@ -1134,6 +1136,8 @@ class TorVpnService : VpnService() {
         Config.torChainMode = Config.TOR_CHAIN_NONE
         TorSocksBridge.chainMode = TorSocksBridge.ChainMode.NONE
         AppState.updateChain { AppState.ChainState() }
+        AppState.update { it.copy(exitCode = "", exitName = "") }
+        startExitLocator("127.0.0.1", Config.proxyPort)
     }
 
     /** The fresh interface the chain session builds on. */
@@ -1145,6 +1149,7 @@ class TorVpnService : VpnService() {
     fun onChainEstablished(host: String, port: Int) {
         if (!AppState.vpnStarted) AppState.markStarted()
         Log.i(TAG, "chain established: $host:$port")
+        startExitLocator("127.0.0.1", Config.proxyPort)
         // The one number a probe cannot predict: what the live chain does with
         // a real HTTP request. Best effort; -1 means it was not measurable.
         serviceScope.launch {
@@ -1926,47 +1931,79 @@ class TorVpnService : VpnService() {
     }
 
     private fun startExitLocator(proxyHost: String, proxyPort: Int) {
-        // Every recovery starts the locator again, so the previous run is replaced
-        // rather than left to finish: otherwise N recoveries mean N loops of up to
-        // six 8s probes competing for the circuit that was just rebuilt.
         exitLocatorJob?.cancel()
         exitLocatorJob = serviceScope.launch {
-            val selected = ExitNodes.currentCodes()
+            val chainMode = Config.torChainMode
+            val isChained = chainMode != Config.TOR_CHAIN_NONE
+            val selected = if (isChained) emptyList() else ExitNodes.currentCodes()
                 .map { it.trim().uppercase() }
                 .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
                 .distinct()
+
             try {
-                if (selected.isNotEmpty()) {
-                    // The very first circuit of the session is the fast, unrestricted
-                    // one; the post-bootstrap SETCONF + NEWNYM needs a moment to steer
-                    // the next circuits into the selected countries before the reported
-                    // location can match the choice.
+                // Immediate preliminary hint so user immediately sees chain endpoint
+                if (isChained) {
+                    when (chainMode) {
+                        Config.TOR_CHAIN_FREE_NODES -> {
+                            val curHost = AppState.chainState.value.host
+                            val srv = ProxyChainManager.listState.value.servers.find { it.host == curHost }
+                            if (srv != null && srv.countryCode.isNotBlank()) {
+                                AppState.update { it.copy(exitIp = srv.host, exitCode = srv.countryCode, exitName = srv.countryName) }
+                            }
+                        }
+                        Config.TOR_CHAIN_WARP -> {
+                            AppState.update { it.copy(exitCode = "US", exitName = "Cloudflare WARP") }
+                        }
+                        Config.TOR_CHAIN_AMNEZIA -> {
+                            val prof = io.deltator.feature.chain.ChainProfileManager.amneziaProfiles.value.find { it.isSelected }
+                            val epIp = prof?.endpoint?.substringBefore(":") ?: ""
+                            val offline = try { BridgeCountries.countryInfo(this@TorVpnService, epIp) } catch (e: Exception) { null }
+                            val cc = offline?.first ?: ""
+                            val cName = offline?.second ?: if (cc.isNotBlank()) java.util.Locale("", cc).displayCountry else ""
+                            AppState.update { it.copy(exitCode = cc, exitName = "AmneziaWG" + (if (cName.isNotBlank()) " ($cName)" else "")) }
+                        }
+                        Config.TOR_CHAIN_MASQUE -> {
+                            AppState.update { it.copy(exitCode = "US", exitName = "MASQUE H3") }
+                        }
+                    }
+                } else if (selected.isNotEmpty()) {
                     Log.i("ExitNode", "waiting for live exit switch before locating (selected: ${selected.joinToString(",")})")
                     delay(5_000)
                 }
-                val tries = if (selected.isEmpty()) 1 else 6
+
+                // Live network probes for the exact public egress IP and location
+                val tries = if (selected.isEmpty()) 3 else 6
                 for (attempt in 1..tries) {
                     val info = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort, timeoutMs = 8_000)
                     if (info == null) {
-                        Log.w("ExitNode", "location probe attempt $attempt/$tries failed (no traffic yet?)")
+                        Log.w("ExitNode", "location probe attempt $attempt/$tries failed")
                     } else {
+                        val currentChain = Config.torChainMode
+                        val finalName = when {
+                            currentChain == Config.TOR_CHAIN_WARP -> "Cloudflare WARP (${info.countryName.ifBlank { info.countryCode }})"
+                            currentChain == Config.TOR_CHAIN_AMNEZIA -> "AmneziaWG (${info.countryName.ifBlank { info.countryCode }})"
+                            currentChain == Config.TOR_CHAIN_MASQUE -> "MASQUE H3 (${info.countryName.ifBlank { info.countryCode }})"
+                            currentChain == Config.TOR_CHAIN_FREE_NODES -> {
+                                val srv = ProxyChainManager.listState.value.servers.find { it.host == AppState.chainState.value.host }
+                                srv?.countryName?.ifBlank { info.countryName.ifBlank { info.city } } ?: info.countryName.ifBlank { info.city }
+                            }
+                            else -> info.countryName.ifBlank { info.city }
+                        }
                         AppState.update {
                             it.copy(
                                 exitIp = info.ip,
                                 exitCode = info.countryCode,
-                                exitName = info.countryName.ifBlank { info.city }
+                                exitName = finalName
                             )
                         }
                         val match = info.countryCode.uppercase() in selected
                         Log.i(
                             "ExitNode",
-                            "located ${info.ip} \u00b7 ${info.label()}" +
-                                (if (selected.isEmpty()) "" else " \u00b7 ${if (match) "MATCHES ${selected.joinToString(",")}" else "NOT yet ${selected.joinToString(",")}"}") +
-                                (if (info.asn.isNotBlank()) " \u00b7 ${info.asn}" else "")
+                            "located public exit ${info.ip} \u00b7 ${info.countryCode} \u00b7 $finalName"
                         )
                         if (selected.isEmpty() || match) return@launch
                     }
-                    if (attempt < tries) delay(8_000)
+                    if (attempt < tries) delay(4_000)
                 }
                 if (selected.isNotEmpty()) {
                     Log.w("ExitNode", "did not observe a ${selected.joinToString(",")} exit after $tries tries; connection still up")
