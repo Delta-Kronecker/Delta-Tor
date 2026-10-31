@@ -1,6 +1,7 @@
 package io.deltator.tunnel
 
 import android.content.Context
+import io.deltator.Config
 import io.deltator.util.AppLog as Log
 import mobile.DnsttClient
 import mobile.Mobile
@@ -324,7 +325,7 @@ class TorRunner(
             if (malformed.isNotEmpty()) {
                 Log.w(tag, "dropped ${malformed.size} malformed bridge line(s), first: ${malformed.first().take(70)}")
             }
-            val cleanLines = wellFormed.take(MAX_BRIDGE_LINES)
+            val cleanLines = wellFormed.take(Config.bridgeCandidateLimit)
 
             // dnstt lines are rewritten to local vanilla bridges before anything
             // else looks at them: lyrebird does not serve dnstt, and Tor cannot
@@ -464,6 +465,7 @@ class TorRunner(
             put("TOR_PT_CLIENT_TRANSPORTS", transports.joinToString(","))
             put("TOR_PT_STATE_LOCATION", ptStateDir.absolutePath + "/")
             put("TOR_PT_EXIT_ON_STDIN_CLOSE", "1")
+            put("TOR_PT_UTLS_CLIENT_HELLO_ID", Config.uTlsFingerprint)
         }
 
         val process: Process
@@ -665,7 +667,7 @@ class TorRunner(
             controlPort = freeEphemeralPort()
         }
 
-        val templateLines = TorrcSettings.templateLines()
+        val templateLines = TorrcSettings.mobileConfluxLines(TorrcSettings.isMobileData(context))
         val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n" +
             (if (exitCodes.isNotEmpty()) "ControlPort $listenHost:$controlPort\n" else "")
         torrcFile.writeText(torrcContent)

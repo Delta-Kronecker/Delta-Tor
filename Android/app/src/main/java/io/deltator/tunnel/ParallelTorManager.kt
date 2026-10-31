@@ -1,9 +1,11 @@
 package io.deltator.tunnel
 
 import android.content.Context
+import io.deltator.Config
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.Dispatchers
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -455,8 +457,18 @@ object ParallelTorManager {
         // again and again while a bridge that works sits one line further down. A
         // new order each time gives the whole list its turn over a few attempts.
         val preparedPlans = plans.map { (name, bridgeLines) ->
-            if (isMemoryRunner(name)) name to memoryRunnerLines(bridgeLines)
-            else name to shuffled(bridgeLines)
+            val ordered = if (isMemoryRunner(name)) memoryRunnerLines(bridgeLines)
+            else shuffled(bridgeLines)
+            val optimized = if (Config.preFlightPingEnabled && ordered.isNotBlank()) {
+                val pingSorted = PreFlightBridgePing.filterAndSortBridges(
+                    ordered.lines(),
+                    maxCandidates = Config.bridgeCandidateLimit
+                )
+                if (pingSorted.isNotEmpty()) pingSorted.joinToString("\n") else ordered
+            } else {
+                ordered
+            }
+            name to optimized
         }
 
         val planNames = plans.map { it.first }.toSet()
@@ -869,7 +881,13 @@ object ParallelTorManager {
             }
             text.takeIf { it.isNotBlank() }
         }
-        return mergeBridgeLists(bodies)
+        val merged = mergeBridgeLists(bodies)
+        if (merged.isNotBlank()) return merged
+
+        // Out-of-band fallback via DoH TXT records (Proposal #18)
+        Log.i(TAG, "Direct downloads failed/empty; trying out-of-band DoH bridge discovery...")
+        val dohBridges = runBlocking(Dispatchers.IO) { DoHBridgeFetcher.fetchBridgesViaDoH() }
+        return if (dohBridges.isNotEmpty()) dohBridges.joinToString("\n") else ""
     }
 
     /**
