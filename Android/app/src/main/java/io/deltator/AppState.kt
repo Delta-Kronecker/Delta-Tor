@@ -111,7 +111,8 @@ object AppState {
          * told the address somewhere. There is no tunnel to imply it, and the
          * notification is the one surface guaranteed to be on screen.
          */
-        val socksEndpoint: String = ""
+        val socksEndpoint: String = "",
+        val engineMode: String = Config.engineMode
     )
 
     /**
@@ -223,6 +224,11 @@ object AppState {
 
     fun setMode(mode: String) {
         if (_mode.value != mode) _mode.value = mode
+    }
+
+    fun setEngineMode(engineMode: String) {
+        Config.engineMode = engineMode
+        _state.update { it.copy(engineMode = engineMode) }
     }
 
     private val _bridgeState = MutableStateFlow(BridgeState())

@@ -1,5 +1,6 @@
 package io.deltator.tunnel
 
+import io.deltator.core.dns.FakeDns
 import io.deltator.util.AppLog as Log
 import java.io.BufferedOutputStream
 import java.io.ByteArrayInputStream
@@ -293,14 +294,26 @@ object TorSocksBridge {
         clientInput: InputStream,
         clientOutput: OutputStream
     ) {
+        var effectiveHost = destHost
+        var effectiveRawAddr = rawAddr
+        if (FakeDns.enabled && FakeDns.isFakeIp(destHost)) {
+            val domain = FakeDns.getDomain(destHost)
+            if (domain != null) {
+                effectiveHost = domain
+                val dBytes = domain.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: FakeDNS mapped $destHost -> $domain")
+            }
+        }
+
         val router = domainRouter
         if (router.enabled) {
-            handleConnectWithRouting(router, destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput)
+            handleConnectWithRouting(router, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput)
             return
         }
 
         // Original flow — no domain routing
-        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+        connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
     }
 
     private fun handleConnectWithRouting(
@@ -314,11 +327,22 @@ object TorSocksBridge {
         clientOutput: OutputStream
     ) {
         var effectiveHost = destHost
+        var effectiveRawAddr = rawAddr
+        if (FakeDns.enabled && FakeDns.isFakeIp(destHost)) {
+            val domain = FakeDns.getDomain(destHost)
+            if (domain != null) {
+                effectiveHost = domain
+                val dBytes = domain.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: FakeDNS mapped $destHost -> $domain")
+            }
+        }
+
         var sniffBuffer: ByteArray? = null
         var sniffLen = 0
         var wasEarlyReply = false
 
-        if (DomainRouter.isIpAddress(destHost)) {
+        if (DomainRouter.isIpAddress(effectiveHost)) {
             // IP address — sniff to recover domain
             clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             clientOutput.flush()
@@ -328,6 +352,8 @@ object TorSocksBridge {
             val result = ProtocolSniffer.sniff(clientInput)
             if (result.domain != null) {
                 effectiveHost = result.domain
+                val dBytes = effectiveHost.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
                 logd("CONNECT: sniffed domain=$effectiveHost from IP=$destHost")
             }
             sniffBuffer = result.bufferedData
@@ -535,15 +561,22 @@ object TorSocksBridge {
             val payloadCopy = payload.copyOf()
             dnsExecutor.submit {
                 try {
-                    // Check cache first
-                    val cached = getCachedDns(payloadCopy)
-                    val response = if (cached != null) {
-                        logd("DNS: cache hit")
-                        cached
+                    // Check FakeDNS first (0ms synthetic response in 198.18.0.0/15)
+                    val fakeResp = if (FakeDns.enabled) FakeDns.handleDnsQuery(payloadCopy) else null
+                    val response = if (fakeResp != null) {
+                        logd("DNS: answered via FakeDNS synthesizer")
+                        fakeResp
                     } else {
-                        val remote = resolveThroughTor(payloadCopy)
-                        if (remote != null) cacheDnsResponse(payloadCopy, remote)
-                        remote
+                        // Check cache
+                        val cached = getCachedDns(payloadCopy)
+                        if (cached != null) {
+                            logd("DNS: cache hit")
+                            cached
+                        } else {
+                            val remote = resolveThroughTor(payloadCopy)
+                            if (remote != null) cacheDnsResponse(payloadCopy, remote)
+                            remote
+                        }
                     }
 
                     if (response != null && response.isNotEmpty()) {

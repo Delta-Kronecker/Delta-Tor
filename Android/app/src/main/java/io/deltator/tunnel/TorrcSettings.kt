@@ -1,7 +1,10 @@
 package io.deltator.tunnel
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.content.SharedPreferences
+import io.deltator.Config
 
 /**
  * User-editable torrc as a single, ready-made template.
@@ -153,6 +156,34 @@ MaxClientCircuitsPending 128"""
     fun templateLines(): List<String> = template().lines()
         .map { it.trim() }
         .filter { it.isNotBlank() && !it.startsWith("#") }
+
+    /**
+     * Mobile Conflux profile (Proposal #7):
+     * Dynamically adapts ConfluxNumSets, ConfluxNumLinkedSets, and RTT thresholds
+     * when device is on mobile data to save battery and reduce overhead.
+     */
+    fun mobileConfluxLines(isMobile: Boolean): List<String> {
+        val base = templateLines()
+        if (!isMobile || !Config.confluxMobileProfile) return base
+        return base.map { line ->
+            when {
+                line.startsWith("ConfluxNumSets ") -> "ConfluxNumSets 8"
+                line.startsWith("ConfluxNumLinkedSets ") -> "ConfluxNumLinkedSets 8"
+                line.startsWith("ConfluxSetRttPct ") -> "ConfluxSetRttPct 20"
+                line.startsWith("KeepalivePeriod ") -> "KeepalivePeriod 7200"
+                else -> line
+            }
+        }
+    }
+
+    fun isMobileData(context: Context): Boolean = try {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val net = cm?.activeNetwork
+        val caps = cm?.getNetworkCapabilities(net)
+        caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    } catch (_: Exception) {
+        false
+    }
 
     /**
      * Integer value of a directive in the current template, so a caller stays
