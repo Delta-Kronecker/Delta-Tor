@@ -35,14 +35,29 @@ object PreFlightBridgePing {
      * Examples:
      * - "192.0.2.1:9001 1234567890ABCDEF..."
      * - "obfs4 192.0.2.1:443 1234567890ABCDEF cert=..."
-     * - "webtunnel [2001:db8::1]:443 1234567890ABCDEF url=..."
+     * - "webtunnel [2001:db8::1]:443 1234567890ABCDEF url=https://... ver=..."
      */
     fun extractEndpoint(bridgeLine: String): Pair<String, Int>? {
         val trimmed = bridgeLine.trim()
         if (trimmed.isEmpty() || trimmed.startsWith("#")) return null
         val tokens = trimmed.split("\\s+".toRegex())
+        if (tokens.isEmpty()) return null
+
+        // WebTunnel: check for url=https://... parameter
+        val urlToken = tokens.firstOrNull { it.startsWith("url=", ignoreCase = true) }
+        if (urlToken != null) {
+            try {
+                val rawUrl = urlToken.substring(4)
+                val uri = java.net.URI(rawUrl)
+                val host = uri.host
+                if (!host.isNullOrBlank()) {
+                    val port = if (uri.port > 0) uri.port else 443
+                    return host to port
+                }
+            } catch (_: Exception) {}
+        }
+
         val endpointToken = when {
-            tokens.isEmpty() -> return null
             tokens[0].equals("Bridge", ignoreCase = true) -> {
                 if (tokens.size > 2 && !tokens[1].contains(':') && !tokens[1].startsWith("[")) tokens[2]
                 else if (tokens.size > 1) tokens[1]
@@ -61,6 +76,7 @@ object PreFlightBridgePing {
                 val closingBracket = endpointToken.indexOf(']')
                 if (closingBracket == -1) return null
                 val host = endpointToken.substring(1, closingBracket)
+                if (host.startsWith("2001:db8", ignoreCase = true)) return null
                 val port = endpointToken.substring(closingBracket + 2).toInt()
                 host to port
             } else {
@@ -102,8 +118,10 @@ object PreFlightBridgePing {
         maxCandidates: Int = DEFAULT_MAX_CANDIDATES,
         timeoutMs: Int = DEFAULT_TIMEOUT_MS
     ): List<String> = withContext(Dispatchers.IO) {
-        val candidateLines = lines.filter { it.isNotBlank() && !it.trim().startsWith("#") }.take(maxCandidates)
+        val validLines = lines.filter { it.isNotBlank() && !it.trim().startsWith("#") }
+        val candidateLines = validLines.take(maxCandidates)
         if (candidateLines.isEmpty()) return@withContext emptyList()
+        val remainingLines = validLines.drop(maxCandidates)
 
         val results = candidateLines.map { line ->
             async {
@@ -127,10 +145,11 @@ object PreFlightBridgePing {
 
         Log.i(TAG, "Pre-flight test: ${reachable.size} responsive / ${candidateLines.size} tested (fastest: ${reachable.firstOrNull()?.rttMs} ms)")
 
-        // Put responsive bridges first, and keep unreachable ones at the end as fallback
+        // Put responsive bridges first, unreachable second, and the remaining pool after
         buildList {
             reachable.forEach { add(it.line) }
             unreachable.forEach { add(it.line) }
+            addAll(remainingLines)
         }
     }
 }

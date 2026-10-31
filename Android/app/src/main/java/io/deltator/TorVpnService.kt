@@ -1169,23 +1169,20 @@ class TorVpnService : VpnService() {
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
-        // Cleared per attempt so a stale reason from an earlier connect can never
-        // be reported for a later one.
         establishFailureReason = null
-        // Guard, not the feature itself. establishTunnel returns before ever
-        // calling this when proxy mode is on, and it is what makes the proxy
-        // branch a single early return rather than a condition threaded through
-        // the builder below. If it ever were reached, the null it returns is a
-        // clean failure: the caller reports "Failed to establish VPN interface"
-        // and stops, rather than handing a null descriptor to tun2socks.
         if (Config.proxyOnlyMode) {
-            // The listener is the loopback address on the configured port, the
-            // same values connect() passes to establishTunnel. They are local
-            // variables there, not properties, so this repeats them rather than
-            // naming something that does not exist at this scope.
             Log.i(TAG, "Proxy mode: not establishing a TUN, SOCKS5 stays on 127.0.0.1:${Config.proxyPort}")
             return null
         }
+        if (Config.dualStackIpv6) {
+            val tun = tryCreateVpnInterface(enableIpv6 = true)
+            if (tun != null) return tun
+            Log.w(TAG, "Failed to establish Dual-Stack IPv6 TUN; falling back to IPv4-only")
+        }
+        return tryCreateVpnInterface(enableIpv6 = false)
+    }
+
+    private fun tryCreateVpnInterface(enableIpv6: Boolean): ParcelFileDescriptor? {
         return try {
             val builder = Builder()
                 .setSession("DeltaTor")
@@ -1193,12 +1190,12 @@ class TorVpnService : VpnService() {
                 .addAddress(VPN_ADDRESS, 32)
                 .addDnsServer(DEFAULT_DNS)
 
-            if (Config.dualStackIpv6) {
+            if (enableIpv6) {
                 try {
-                    builder.addAddress("fd00::1", 128)
+                    builder.addAddress("fd00::1", 64)
                     builder.addRoute("::", 0)
                     builder.addDnsServer("2001:4860:4860::8888")
-                    Log.i(TAG, "Dual-Stack IPv6 routing enabled (fd00::1/128, route ::/0)")
+                    Log.i(TAG, "Dual-Stack IPv6 configured (fd00::1/64, route ::/0)")
                 } catch (e: Exception) {
                     Log.w(TAG, "Dual-Stack IPv6 not supported or refused: ${e.message}")
                 }
@@ -1351,7 +1348,7 @@ class TorVpnService : VpnService() {
                 TAG,
                 tunSection {
                     line("establish", if (tun == null) "returned null" else "ok fd=${tun.fd}")
-                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS")
+                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS ipv6=$enableIpv6")
                 }
             )
             tun

@@ -168,6 +168,7 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
         maybeShowFirstRunNotice()
+        handleDebugIntent(intent)
         setContent {
             DeltaTorTheme {
                 DeltaTorScreen(
@@ -209,6 +210,38 @@ class MainActivity : ComponentActivity() {
                     onChainPick = { host, port -> sendActionChain(host, port) },
                     onUpdateBridges = { BridgeStore.update(applicationContext) }
                 )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        handleDebugIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDebugIntent(intent)
+    }
+
+    private fun handleDebugIntent(intent: Intent?) {
+        if (intent == null) return
+        when (intent.action) {
+            "io.deltator.ACTION_START_CONNECT" -> {
+                intent.action = null
+                requestVpnPermissionAndConnect()
+            }
+            "io.deltator.ACTION_DISCONNECT" -> {
+                intent.action = null
+                sendAction(TorVpnService.ACTION_DISCONNECT)
+            }
+            "io.deltator.ACTION_SET_ENGINE" -> {
+                val engine = intent.getStringExtra("engine")
+                if (!engine.isNullOrBlank()) {
+                    Config.engineMode = engine
+                }
+                intent.action = null
             }
         }
     }
