@@ -192,10 +192,15 @@ object WarpRegistrar {
 
             Log.i(TAG, "Registering Cloudflare WARP client with public key $pubKey")
             val url = URL(REGISTRATION_URL)
-            val conn = url.openConnection() as HttpURLConnection
+            val proxy = if (io.deltator.AppState.state.value.torRunning) {
+                java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", io.deltator.Config.proxyPort))
+            } else {
+                java.net.Proxy.NO_PROXY
+            }
+            val conn = url.openConnection(proxy) as HttpURLConnection
             conn.requestMethod = "POST"
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
             conn.setRequestProperty("User-Agent", "okhttp/3.12.1")
