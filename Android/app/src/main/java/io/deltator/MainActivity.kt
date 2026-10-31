@@ -138,6 +138,7 @@ import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.ExitCapacityIndex
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
+import io.deltator.core.backend.EngineMode
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
@@ -542,6 +543,16 @@ private fun MainScreen(
                 statusLabel = statusLabel(state, chain),
                 onOpenDrawer = openDrawer,
                 modifier = Modifier.align(Alignment.TopCenter)
+            )
+
+            EngineSelectorBar(
+                selectedMode = state.engineMode,
+                onSelectMode = { newMode ->
+                    AppState.setEngineMode(newMode)
+                },
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .offset(y = 54.dp)
             )
 
             if (release.newer && release.latestVersion.isNotBlank()) {
@@ -1635,6 +1646,60 @@ private fun Header(
                     )
                 )
         )
+    }
+}
+
+@Composable
+private fun EngineSelectorBar(
+    selectedMode: String,
+    onSelectMode: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val modes = listOf(
+        EngineMode.TOR_RACING,
+        EngineMode.AMNEZIA_WG,
+        EngineMode.WARP_ANYCAST,
+        EngineMode.MASQUE
+    )
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(0xFF14171F).copy(alpha = 0.85f))
+            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(20.dp))
+            .padding(3.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        modes.forEach { m ->
+            val isSelected = m.id.equals(selectedMode, ignoreCase = true)
+            val bg = if (isSelected) DeltaTor.Accent.copy(alpha = 0.25f) else Color.Transparent
+            val borderCol = if (isSelected) DeltaTor.Accent else Color.Transparent
+            val textCol = if (isSelected) Color.White else DeltaTor.Muted
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(bg)
+                    .border(if (isSelected) 1.dp else 0.dp, borderCol, RoundedCornerShape(16.dp))
+                    .clickable { onSelectMode(m.id) }
+                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = when (m) {
+                        EngineMode.TOR_RACING -> "Tor"
+                        EngineMode.AMNEZIA_WG -> "Amnezia"
+                        EngineMode.WARP_ANYCAST -> "WARP"
+                        EngineMode.MASQUE -> "MASQUE"
+                    },
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                        letterSpacing = 0.6.sp
+                    ),
+                    color = textCol
+                )
+            }
+        }
     }
 }
 
@@ -3669,6 +3734,13 @@ private class AdvancedForm {
     var splitOn by mutableStateOf(Config.splitTunnelEnabled)
     var splitMode by mutableStateOf(Config.splitTunnelMode)
     var splitPicked by mutableStateOf(Config.splitTunnelSelected)
+    var preFlightPing by mutableStateOf(Config.preFlightPingEnabled)
+    var bridgeLimit by mutableStateOf(Config.bridgeCandidateLimit.toString())
+    var strictKillswitch by mutableStateOf(Config.strictKillswitch)
+    var fakeDns by mutableStateOf(Config.fakeDnsEnabled)
+    var dualStackIpv6 by mutableStateOf(Config.dualStackIpv6)
+    var mobileConflux by mutableStateOf(Config.confluxMobileProfile)
+    var customDoubleHop by mutableStateOf(Config.customProxyChain)
 }
 
 @Composable
@@ -4378,6 +4450,250 @@ private fun LazyListScope.AdvancedItems(
                             Config.loggingEnabled = it
                             AppLog.enabled = it
                         }
+                    )
+                }
+            }
+            Spacer(Modifier.height(20.dp))
+        }
+    }
+    item(key = "adv-hybrid-optimizations") {
+        Column(Modifier.fillMaxWidth()) {
+            SettingsCard {
+                CardTitle("ANTI-CENSORSHIP & DPI SHIELD")
+
+                // Pre-flight socket ping (Proposal #5)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Pre-Flight Bridge Ping",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Tests bridge sockets in parallel (500ms RTT) before launch, dropping dead nodes.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.preFlightPing,
+                        onCheckedChange = {
+                            form.preFlightPing = it
+                            Config.preFlightPingEnabled = it
+                        }
+                    )
+                }
+
+                DividerLine()
+
+                // Candidate limit (Proposal #6)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Bridge Candidate Limit",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Max bridges raced per transport (20-150). Current: ${form.bridgeLimit}",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = form.bridgeLimit,
+                        onValueChange = {
+                            val clean = it.filter(Char::isDigit).take(3)
+                            form.bridgeLimit = clean
+                            val num = clean.toIntOrNull() ?: 50
+                            Config.bridgeCandidateLimit = num.coerceIn(20, 150)
+                        },
+                        modifier = Modifier.width(76.dp),
+                        singleLine = true,
+                        colors = AdvancedFieldColors()
+                    )
+                }
+
+                DividerLine()
+
+                // Strict Killswitch (Proposal #9)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Strict Killswitch",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Blocks non-VPN traffic during reconnects or route changes (setBlocking true).",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.strictKillswitch,
+                        onCheckedChange = {
+                            form.strictKillswitch = it
+                            Config.strictKillswitch = it
+                        }
+                    )
+                }
+
+                DividerLine()
+
+                // FakeDNS Responder (Proposal #10)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "FakeDNS Responder (198.18.0.0/15)",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Synthesizes synthetic IPs for 0ms DNS latency and 100% leak protection.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.fakeDns,
+                        onCheckedChange = {
+                            form.fakeDns = it
+                            Config.fakeDnsEnabled = it
+                            io.deltator.core.dns.FakeDns.enabled = it
+                        }
+                    )
+                }
+
+                DividerLine()
+
+                // Mobile Conflux Profile (Proposal #7)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Mobile Conflux Profile",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Reduces Conflux overhead to 8 sets on cellular networks to conserve battery.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.mobileConflux,
+                        onCheckedChange = {
+                            form.mobileConflux = it
+                            Config.confluxMobileProfile = it
+                        }
+                    )
+                }
+
+                DividerLine()
+
+                // Dual-Stack IPv6 Routing (Proposal #12)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Dual-Stack IPv6 Routing",
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                letterSpacing = 0.3.sp
+                            ),
+                            color = DeltaTor.Text
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            "Routes fd00::/8 & ::/0 through TUN interface to avoid NAT64 drops.",
+                            style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                            color = DeltaTor.Muted
+                        )
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    ToggleSwitch(
+                        checked = form.dualStackIpv6,
+                        onCheckedChange = {
+                            form.dualStackIpv6 = it
+                            Config.dualStackIpv6 = it
+                        }
+                    )
+                }
+
+                DividerLine()
+
+                // Custom Double-Hop / Egress Proxy (Proposals #16 & #17)
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                ) {
+                    Text(
+                        "Custom Double-Hop Egress (Tor \u2192 Proxy)",
+                        style = MaterialTheme.typography.bodyLarge.copy(
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.3.sp
+                        ),
+                        color = DeltaTor.Text
+                    )
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        "Optional second hop (e.g. host:port or socks5://...)",
+                        style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
+                        color = DeltaTor.Muted
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = form.customDoubleHop,
+                        onValueChange = {
+                            form.customDoubleHop = it
+                            Config.customProxyChain = it
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        placeholder = { Text("socks5://user:pass@host:port", fontSize = 12.sp) },
+                        colors = AdvancedFieldColors()
                     )
                 }
             }

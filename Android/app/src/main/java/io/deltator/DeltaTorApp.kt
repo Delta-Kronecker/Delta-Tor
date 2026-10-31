@@ -357,4 +357,54 @@ object Config {
                 .putString("auto_transports", clean.joinToString(","))
                 .apply()
         }
+
+    // --- Hybrid Engine & Proposals Configuration ---
+
+    var engineMode: String
+        get() = prefs.getString("engine_mode", "tor") ?: "tor"
+        set(value) = prefs.edit().putString("engine_mode", value).apply()
+
+    var bridgeCandidateLimit: Int
+        get() = prefs.getInt("bridge_candidate_limit", 50)
+        set(value) = prefs.edit().putInt("bridge_candidate_limit", value.coerceIn(20, 150)).apply()
+
+    var preFlightPingEnabled: Boolean
+        get() = prefs.getBoolean("pre_flight_ping_enabled", true)
+        set(value) = prefs.edit().putBoolean("pre_flight_ping_enabled", value).apply()
+
+    var strictKillswitch: Boolean
+        get() = prefs.getBoolean("strict_killswitch", true)
+        set(value) = prefs.edit().putBoolean("strict_killswitch", value).apply()
+
+    var fakeDnsEnabled: Boolean
+        get() = prefs.getBoolean("fake_dns_enabled", true)
+        set(value) = prefs.edit().putBoolean("fake_dns_enabled", value).apply()
+
+    var dualStackIpv6: Boolean
+        get() = prefs.getBoolean("dual_stack_ipv6", true)
+        set(value) = prefs.edit().putBoolean("dual_stack_ipv6", value).apply()
+
+    var confluxMobileProfile: Boolean
+        get() = prefs.getBoolean("conflux_mobile_profile", true)
+        set(value) = prefs.edit().putBoolean("conflux_mobile_profile", value).apply()
+
+    var uTlsFingerprint: String
+        get() = prefs.getString("utls_fingerprint", "chrome") ?: "chrome"
+        set(value) = prefs.edit().putString("utls_fingerprint", value).apply()
+
+    var warpConfig: String
+        get() = prefs.getString("warp_config", "") ?: ""
+        set(value) = prefs.edit().putString("warp_config", value).apply()
+
+    var amneziaWgConfig: String
+        get() = prefs.getString("amnezia_wg_config", "") ?: ""
+        set(value) = prefs.edit().putString("amnezia_wg_config", value).apply()
+
+    var masqueEndpoint: String
+        get() = prefs.getString("masque_endpoint", "https://masque.example.com:443") ?: "https://masque.example.com:443"
+        set(value) = prefs.edit().putString("masque_endpoint", value).apply()
+
+    var customProxyChain: String
+        get() = prefs.getString("custom_proxy_chain", "") ?: ""
+        set(value) = prefs.edit().putString("custom_proxy_chain", value).apply()
 }
