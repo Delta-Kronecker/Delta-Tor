@@ -360,6 +360,16 @@ object Config {
 
     // --- Hybrid Engine & Proposals Configuration ---
 
+    const val TOR_CHAIN_NONE = "none"
+    const val TOR_CHAIN_FREE_NODES = "free_nodes"
+    const val TOR_CHAIN_WARP = "warp"
+    const val TOR_CHAIN_AMNEZIA = "amnezia"
+    const val TOR_CHAIN_MASQUE = "masque"
+
+    var torChainMode: String
+        get() = prefs.getString("tor_chain_mode", TOR_CHAIN_NONE) ?: TOR_CHAIN_NONE
+        set(value) = prefs.edit().putString("tor_chain_mode", value).apply()
+
     var engineMode: String
         get() = prefs.getString("engine_mode", "tor") ?: "tor"
         set(value) = prefs.edit().putString("engine_mode", value).apply()
@@ -396,6 +406,10 @@ object Config {
         get() = prefs.getString("warp_config", "") ?: ""
         set(value) = prefs.edit().putString("warp_config", value).apply()
 
+    var warpLicenseKey: String
+        get() = prefs.getString("warp_license_key", "") ?: ""
+        set(value) = prefs.edit().putString("warp_license_key", value).apply()
+
     var amneziaWgConfig: String
         get() = prefs.getString("amnezia_wg_config", "") ?: ""
         set(value) = prefs.edit().putString("amnezia_wg_config", value).apply()
@@ -403,6 +417,10 @@ object Config {
     var masqueEndpoint: String
         get() = prefs.getString("masque_endpoint", "https://masque.example.com:443") ?: "https://masque.example.com:443"
         set(value) = prefs.edit().putString("masque_endpoint", value).apply()
+
+    var masqueToken: String
+        get() = prefs.getString("masque_token", "") ?: ""
+        set(value) = prefs.edit().putString("masque_token", value).apply()
 
     var customProxyChain: String
         get() = prefs.getString("custom_proxy_chain", "") ?: ""

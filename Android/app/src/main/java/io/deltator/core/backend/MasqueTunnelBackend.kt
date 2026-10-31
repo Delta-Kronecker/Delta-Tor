@@ -40,7 +40,21 @@ class MasqueTunnelBackend(
     override suspend fun start(tunFd: ParcelFileDescriptor): Boolean = withContext(Dispatchers.IO) {
         Log.i(TAG, "Starting MasqueTunnelBackend connecting to HTTP/3 Datagram target: $serverUri")
 
-        // Start hev-socks5-tunnel bridging TUN to MASQUE local adapter
+        // 1. Start TorSocksBridge in standalone MASQUE upstream mode
+        io.deltator.tunnel.TorSocksBridge.upstreamMode = io.deltator.tunnel.TorSocksBridge.UpstreamMode.MASQUE
+        io.deltator.tunnel.TorSocksBridge.masqueEndpoint = serverUri
+        val bridgeRes = io.deltator.tunnel.TorSocksBridge.start(
+            torSocksPort = 0,
+            torHost = "127.0.0.1",
+            listenPort = Config.proxyPort,
+            listenHost = "127.0.0.1"
+        )
+        if (bridgeRes.isFailure) {
+            Log.e(TAG, "Failed to start TorSocksBridge for MASQUE: ${bridgeRes.exceptionOrNull()?.message}")
+            return@withContext false
+        }
+
+        // 2. Start hev-socks5-tunnel bridging TUN to MASQUE local adapter
         val res = HevSocks5Tunnel.start(
             tunFd = tunFd,
             socksAddress = "127.0.0.1",
@@ -59,6 +73,7 @@ class MasqueTunnelBackend(
     override fun stop() {
         running = false
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
+        try { io.deltator.tunnel.TorSocksBridge.stop() } catch (_: Exception) {}
         Log.i(TAG, "MasqueTunnelBackend stopped")
     }
 

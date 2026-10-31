@@ -60,6 +60,14 @@ class TorTunnelBackend(
         activeRunner = winner
 
         // 2. Start TorSocksBridge with FakeDNS on proxyPort -> winner.torSocksPort
+        TorSocksBridge.upstreamMode = TorSocksBridge.UpstreamMode.TOR
+        TorSocksBridge.chainMode = when (Config.torChainMode) {
+            Config.TOR_CHAIN_WARP -> TorSocksBridge.ChainMode.WARP
+            Config.TOR_CHAIN_AMNEZIA -> TorSocksBridge.ChainMode.AMNEZIA
+            Config.TOR_CHAIN_MASQUE -> TorSocksBridge.ChainMode.MASQUE
+            Config.TOR_CHAIN_FREE_NODES -> TorSocksBridge.ChainMode.FREE_NODES
+            else -> TorSocksBridge.ChainMode.NONE
+        }
         val bridgeResult = TorSocksBridge.start(
             torSocksPort = winner.torSocksPort,
             torHost = "127.0.0.1",

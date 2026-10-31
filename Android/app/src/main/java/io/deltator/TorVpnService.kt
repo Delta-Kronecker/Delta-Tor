@@ -70,6 +70,7 @@ class TorVpnService : VpnService() {
         const val ACTION_CHAIN_DISCONNECT = "io.deltator.CHAIN_DISCONNECT"
         internal const val EXTRA_CHAIN_HOST = "io.deltator.extra.chain_host"
         internal const val EXTRA_CHAIN_PORT = "io.deltator.extra.chain_port"
+        internal const val EXTRA_CHAIN_MODE = "io.deltator.extra.chain_mode"
         const val CHANNEL_VPN_STATUS = "vpn_status"
         const val CHANNEL_UPDATES = "deltator_updates"
         const val NOTIFICATION_ID = 1
@@ -350,9 +351,15 @@ class TorVpnService : VpnService() {
             ACTION_START_VPN -> startVpn()
             ACTION_STOP_VPN -> stopVpn()
             ACTION_CHAIN_CONNECT -> {
+                val mode = intent.getStringExtra(EXTRA_CHAIN_MODE)
                 val host = intent.getStringExtra(EXTRA_CHAIN_HOST) ?: ""
                 val port = intent.getIntExtra(EXTRA_CHAIN_PORT, Config.sstpPort)
-                chainConnect(host, port)
+                if (mode != null && mode != Config.TOR_CHAIN_FREE_NODES) {
+                    switchTorChainMode(mode)
+                } else {
+                    Config.torChainMode = Config.TOR_CHAIN_FREE_NODES
+                    chainConnect(host, port)
+                }
             }
             ACTION_CHAIN_DISCONNECT -> chainDisconnect()
         }
@@ -651,6 +658,14 @@ class TorVpnService : VpnService() {
         withContext(Dispatchers.IO) {
             ParallelTorManager.awaitPortFree(proxyHost, proxyPort)
         }
+        TorSocksBridge.upstreamMode = TorSocksBridge.UpstreamMode.TOR
+        TorSocksBridge.chainMode = when (Config.torChainMode) {
+            Config.TOR_CHAIN_WARP -> TorSocksBridge.ChainMode.WARP
+            Config.TOR_CHAIN_AMNEZIA -> TorSocksBridge.ChainMode.AMNEZIA
+            Config.TOR_CHAIN_MASQUE -> TorSocksBridge.ChainMode.MASQUE
+            Config.TOR_CHAIN_FREE_NODES -> TorSocksBridge.ChainMode.FREE_NODES
+            else -> TorSocksBridge.ChainMode.NONE
+        }
         val bridgeResult = TorSocksBridge.start(
             torSocksPort = w.torSocksPort,
             torHost = "127.0.0.1",
@@ -665,6 +680,18 @@ class TorVpnService : VpnService() {
 
         // Step 3+4: TUN interface + tun2socks
         establishTunnel(w, proxyHost, proxyPort)
+
+        when (Config.torChainMode) {
+            Config.TOR_CHAIN_WARP -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "WARP Anycast", message = "Tor \u2192 Cloudflare WARP")
+            }
+            Config.TOR_CHAIN_AMNEZIA -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "AmneziaWG", message = "Tor \u2192 AmneziaWG")
+            }
+            Config.TOR_CHAIN_MASQUE -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "MASQUE H3", message = "Tor \u2192 MASQUE")
+            }
+        }
         return null
     }
 
@@ -1056,14 +1083,57 @@ class TorVpnService : VpnService() {
         }
     }
 
+    private fun switchTorChainMode(mode: String) {
+        Config.torChainMode = mode
+        val engine = chainEngine
+        if (engine != null && engine.isActive) {
+            engine.stopWithoutRestore()
+        }
+        val targetMode = when (mode) {
+            Config.TOR_CHAIN_WARP -> TorSocksBridge.ChainMode.WARP
+            Config.TOR_CHAIN_AMNEZIA -> TorSocksBridge.ChainMode.AMNEZIA
+            Config.TOR_CHAIN_MASQUE -> TorSocksBridge.ChainMode.MASQUE
+            else -> TorSocksBridge.ChainMode.NONE
+        }
+        TorSocksBridge.chainMode = targetMode
+
+        // Ensure Tor VPN interface is active
+        if (vpnInterface == null && activeRunner != null && TorSocksBridge.isRunning()) {
+            serviceScope.launch {
+                establishTunnel(activeRunner!!, "127.0.0.1", Config.proxyPort)
+            }
+        }
+
+        val (hostLabel, desc) = when (mode) {
+            Config.TOR_CHAIN_WARP -> "WARP Anycast" to "Tor \u2192 Cloudflare WARP"
+            Config.TOR_CHAIN_AMNEZIA -> "AmneziaWG" to "Tor \u2192 AmneziaWG"
+            Config.TOR_CHAIN_MASQUE -> "MASQUE H3" to "Tor \u2192 MASQUE"
+            else -> "" to ""
+        }
+        if (targetMode != TorSocksBridge.ChainMode.NONE) {
+            AppState.updateChain {
+                it.copy(
+                    status = AppState.ChainStatus.CONNECTED,
+                    host = hostLabel,
+                    port = 0,
+                    message = desc
+                )
+            }
+        } else {
+            AppState.updateChain { AppState.ChainState() }
+        }
+        Log.i(TAG, "Switched Tor chain mode to: $mode")
+    }
+
     private fun chainDisconnect() {
         val engine = chainEngine
-        if (engine == null || !engine.isActive) {
-            Log.i(TAG, "chain disconnect: nothing running")
-            return
+        if (engine != null && engine.isActive) {
+            Log.i(TAG, "chain disconnect requested")
+            engine.stop()
         }
-        Log.i(TAG, "chain disconnect requested")
-        engine.stop()
+        Config.torChainMode = Config.TOR_CHAIN_NONE
+        TorSocksBridge.chainMode = TorSocksBridge.ChainMode.NONE
+        AppState.updateChain { AppState.ChainState() }
     }
 
     /** The fresh interface the chain session builds on. */

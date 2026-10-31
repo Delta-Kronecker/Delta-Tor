@@ -46,7 +46,21 @@ class AmneziaTunnelBackend(
             Log.w(TAG, "No AmneziaWG peer configured; please set endpoint and keys in settings.")
         }
 
-        // Start hev-socks5-tunnel bridging TUN interface to the local AWG proxy bridge
+        // 1. Start TorSocksBridge in standalone Amnezia upstream mode
+        io.deltator.tunnel.TorSocksBridge.upstreamMode = io.deltator.tunnel.TorSocksBridge.UpstreamMode.AMNEZIA
+        io.deltator.tunnel.TorSocksBridge.amneziaConfig = config
+        val bridgeRes = io.deltator.tunnel.TorSocksBridge.start(
+            torSocksPort = 0,
+            torHost = "127.0.0.1",
+            listenPort = Config.proxyPort,
+            listenHost = "127.0.0.1"
+        )
+        if (bridgeRes.isFailure) {
+            Log.e(TAG, "Failed to start TorSocksBridge for Amnezia: ${bridgeRes.exceptionOrNull()?.message}")
+            return@withContext false
+        }
+
+        // 2. Start hev-socks5-tunnel bridging TUN interface to the local AWG proxy bridge
         val res = HevSocks5Tunnel.start(
             tunFd = tunFd,
             socksAddress = "127.0.0.1",
@@ -65,6 +79,7 @@ class AmneziaTunnelBackend(
     override fun stop() {
         running = false
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
+        try { io.deltator.tunnel.TorSocksBridge.stop() } catch (_: Exception) {}
         Log.i(TAG, "AmneziaTunnelBackend stopped")
     }
 

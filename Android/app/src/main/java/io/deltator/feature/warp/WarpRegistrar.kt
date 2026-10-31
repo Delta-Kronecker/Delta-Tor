@@ -255,4 +255,38 @@ object WarpRegistrar {
             Result.failure(e)
         }
     }
+
+    /**
+     * Binds a WARP+ license key to an existing account.
+     */
+    suspend fun bindLicenseKey(accountId: String, token: String, licenseKey: String): Result<Boolean> = withContext(Dispatchers.IO) {
+        try {
+            val url = URL("$REGISTRATION_URL/$accountId/account")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "PUT"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            conn.setRequestProperty("Authorization", "Bearer $token")
+            val payload = JSONObject().apply {
+                put("license", licenseKey)
+            }
+            conn.outputStream.use { os ->
+                OutputStreamWriter(os, Charsets.UTF_8).use { it.write(payload.toString()) }
+            }
+            val code = conn.responseCode
+            if (code in 200..204) {
+                Log.i(TAG, "WARP+ license key successfully bound!")
+                Result.success(true)
+            } else {
+                val err = conn.errorStream?.bufferedReader()?.readText() ?: "HTTP $code"
+                Log.w(TAG, "Failed to bind WARP+ license: $code $err")
+                Result.failure(RuntimeException("License bind failed: $code $err"))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error binding WARP+ license", e)
+            Result.failure(e)
+        }
+    }
 }
