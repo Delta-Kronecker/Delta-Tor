@@ -568,9 +568,12 @@ public static class BridgeRace
 
         Notify("DeltaTor", "Establishing VPN \u2026", progress: true, progressValue: 0);
 
-        // Bring up the tunnel straight away. No blocking probes or circuit
-        // warming pre-checks — Tor is 100% bootstrapped and listening at this
-        // point, so hand traffic over to the tunnel immediately.
+        // Warm the first Tor circuit before or in parallel with starting the tunnel.
+        // Tor bootstraps to 100% when its SOCKS listener opens, but until a SOCKS
+        // request forces it to open an exit circuit, no general traffic can pass.
+        // Probe first so the first circuit is ready when tun2socks takes traffic.
+        await WarmFirstCircuitAsync();
+
         var tunnelError = TunnelEngine.Start(proxyHost, proxyPort);
         if (tunnelError != null)
         {
@@ -578,10 +581,7 @@ public static class BridgeRace
             return;
         }
 
-        // Wait up to 5s for tun2socks to establish its SOCKS5 connection.
-        // This matches Se7en-Pro's observed 2-3s tunnel activation time.
-        // Without this, the app would report "connected" while the tunnel
-        // was still initializing its data path.
+        // Wait for tun2socks to establish its data path.
         TunnelEngine.WaitForTraffic(TimeSpan.FromSeconds(5));
 
         if (AppState.State.Stopping) return;
@@ -604,7 +604,13 @@ public static class BridgeRace
         _bytesAtLastProbe = 0;
         StartStatsPolling();
         StartLinkWatch();
-        StartExitLocator(proxyHost, proxyPort);
+        // Delay ExitLocator by 3s so initial user/system traffic gets full
+        // priority on the newly warmed circuit without race against ip2location.
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(3000);
+            StartExitLocator(proxyHost, proxyPort);
+        });
         AppLog.I(TAG, $"DeltaTor connected. Winner: {w.Name}, SOCKS5 at {proxyHost}:{proxyPort}");
         AppLog.EndSession($"connected via {w.Name}");
     }
