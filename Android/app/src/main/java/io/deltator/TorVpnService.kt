@@ -885,7 +885,9 @@ class TorVpnService : VpnService() {
             socksPort = proxyPort,
             enableUdpTunneling = true,
             mtu = VPN_MTU,
-            ipv4Address = VPN_ADDRESS
+            ipv4Address = VPN_ADDRESS,
+            disableQuic = true,
+            rejectNonDnsUdp = true
         )
         if (tunResult.isFailure) {
             fail(tunResult.exceptionOrNull()?.message ?: "Failed to start tunnel")

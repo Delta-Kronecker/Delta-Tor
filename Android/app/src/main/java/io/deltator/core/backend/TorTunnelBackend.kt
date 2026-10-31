@@ -87,7 +87,9 @@ class TorTunnelBackend(
             enableUdpTunneling = true,
             mtu = 1280,
             ipv4Address = "10.255.255.1",
-            ipv6Address = "fd00::1"
+            ipv6Address = "fd00::1",
+            disableQuic = true,
+            rejectNonDnsUdp = true
         )
         if (tunResult.isFailure) {
             Log.e(TAG, "hev-socks5-tunnel start failed: ${tunResult.exceptionOrNull()?.message}")

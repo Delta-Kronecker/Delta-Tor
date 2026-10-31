@@ -49,7 +49,7 @@ object HevSocks5Tunnel {
         ipv4Address: String = "10.255.255.1",
         ipv6Address: String = "fd00::1",
         disableQuic: Boolean = true,
-        rejectNonDnsUdp: Boolean = false
+        rejectNonDnsUdp: Boolean = true
     ): Result<Unit> {
         if (!isLibraryLoaded) {
             return Result.failure(IllegalStateException("Native library not loaded"))

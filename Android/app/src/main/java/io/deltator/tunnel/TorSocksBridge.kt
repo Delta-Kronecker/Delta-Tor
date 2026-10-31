@@ -334,25 +334,53 @@ object TorSocksBridge {
             return
         }
 
+        var effectiveInput = clientInput
+        var wasEarlyReply = false
+
+        // For raw IP destinations on TLS port 443 (e.g. apps bypassing system DNS or direct IPs),
+        // sniff SNI to recover the domain so Tor routes by hostname rather than blocked IP.
+        if (DomainRouter.isIpAddress(effectiveHost) && destPort == 443) {
+            clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+            clientOutput.flush()
+            clientSocket.soTimeout = 3000
+            wasEarlyReply = true
+
+            val sniffResult = ProtocolSniffer.sniff(clientInput)
+            if (sniffResult.domain != null) {
+                effectiveHost = sniffResult.domain
+                val dBytes = effectiveHost.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: sniffed domain=$effectiveHost from IP=$destHost")
+            }
+            if (sniffResult.bufferedLength > 0 && sniffResult.bufferedData != null) {
+                effectiveInput = SequenceInputStream(
+                    ByteArrayInputStream(sniffResult.bufferedData, 0, sniffResult.bufferedLength),
+                    clientInput
+                )
+            }
+            clientSocket.soTimeout = 0
+        }
+
+        logd("CONNECT: to $destHost:$destPort -> effective=$effectiveHost:$destPort wasEarly=$wasEarlyReply upstream=$upstreamMode chain=$chainMode")
         when (upstreamMode) {
             UpstreamMode.TOR -> {
                 if (chainMode != ChainMode.NONE) {
-                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput)
+                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
                 } else {
-                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
                 }
             }
             UpstreamMode.WARP -> {
-                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.AMNEZIA -> {
-                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.MASQUE -> {
-                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.DIRECT -> {
-                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
         }
     }
@@ -365,10 +393,11 @@ object TorSocksBridge {
         portBytes: ByteArray,
         clientSocket: Socket,
         clientInput: InputStream,
-        clientOutput: OutputStream
+        clientOutput: OutputStream,
+        sendReply: Boolean = true
     ) {
         logd("CONNECT: chained via Tor -> $mode for $destHost:$destPort")
-        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = sendReply)
     }
 
     private fun connectDirectUpstream(
@@ -377,23 +406,28 @@ object TorSocksBridge {
         destPort: Int,
         clientSocket: Socket,
         clientInput: InputStream,
-        clientOutput: OutputStream
+        clientOutput: OutputStream,
+        sendReply: Boolean = true
     ) {
         try {
             val remoteSocket = Socket()
             remoteSocket.connect(InetSocketAddress(destHost, destPort), TCP_CONNECT_TIMEOUT_MS)
             remoteSocket.tcpNoDelay = true
-            clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
-            clientOutput.flush()
+            if (sendReply) {
+                clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                clientOutput.flush()
+            }
             clientSocket.soTimeout = 0
             logd("CONNECT: $label direct connection OK to $destHost:$destPort")
             bridgeDirect(clientInput, clientOutput, remoteSocket)
         } catch (e: Exception) {
             logd("CONNECT: $label failed to connect to $destHost:$destPort: ${e.message}")
-            try {
-                clientOutput.write(byteArrayOf(0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
-                clientOutput.flush()
-            } catch (_: Exception) {}
+            if (sendReply) {
+                try {
+                    clientOutput.write(byteArrayOf(0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                    clientOutput.flush()
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -475,22 +509,22 @@ object TorSocksBridge {
         when (upstreamMode) {
             UpstreamMode.TOR -> {
                 if (chainMode != ChainMode.NONE) {
-                    connectViaTorChained(chainMode, destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput)
+                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
                 } else {
-                    connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
                 }
             }
             UpstreamMode.WARP -> {
-                connectDirectUpstream("WARP", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.AMNEZIA -> {
-                connectDirectUpstream("Amnezia", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.MASQUE -> {
-                connectDirectUpstream("MASQUE", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
             UpstreamMode.DIRECT -> {
-                connectDirectUpstream("Direct", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
             }
         }
     }
@@ -554,7 +588,7 @@ object TorSocksBridge {
             remoteInput.readFully(connRespHeader)
 
             if (connRespHeader[1] != 0x00.toByte()) {
-                logd("CONNECT: Tor rejected to $destHost:$destPort (rep=${connRespHeader[1]})")
+                Log.w(TAG, "CONNECT: Tor rejected to $destHost:$destPort (rep=${connRespHeader[1]})")
                 if (sendReply) {
                     clientOutput.write(byteArrayOf(0x05, connRespHeader[1], 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                     clientOutput.flush()

@@ -112,8 +112,34 @@ object FakeDns {
             val domain = domainBuilder.toString().lowercase()
             if (domain.isBlank()) return null
 
-            // Type 1 = A record (IPv4), Class 1 = IN (Internet)
-            if (qType != 1 || qClass != 1) {
+            if (qClass != 1) return null
+
+            // Type 28 = AAAA (IPv6), Type 65 = HTTPS (RFC 9460)
+            if (qType == 28 || qType == 65) {
+                // Return NOERROR with 0 answers (NODATA) in 0ms:
+                // - AAAA: Tells OS/browser there is no IPv6, forcing immediate IPv4 synthetic connection
+                //   without waiting for IPv6 timeouts or blackholing through Tor.
+                // - HTTPS (Type 65): Prevents QUIC/HTTP3 pre-negotiation hints via DNS, ensuring
+                //   standard reliable TLS over TCP.
+                val out = ByteArrayOutputStream()
+                val dos = DataOutputStream(out)
+                dos.writeByte(txId0.toInt())
+                dos.writeByte(txId1.toInt())
+                dos.writeShort(0x8180) // Standard query response, No error
+                dos.writeShort(1)      // QDCOUNT: 1
+                dos.writeShort(0)      // ANCOUNT: 0 (NODATA)
+                dos.writeShort(0)      // NSCOUNT: 0
+                dos.writeShort(0)      // ARCOUNT: 0
+
+                // Question section copy
+                val questionLen = pos - 12
+                dos.write(queryBytes, 12, questionLen)
+                dos.flush()
+                return out.toByteArray()
+            }
+
+            // Type 1 = A record (IPv4)
+            if (qType != 1) {
                 return null
             }
 
