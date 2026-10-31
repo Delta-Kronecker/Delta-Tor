@@ -139,6 +139,9 @@ import io.deltator.tunnel.ExitCapacityIndex
 import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorrcSettings
 import io.deltator.core.backend.EngineMode
+import io.deltator.feature.chain.ChainProfile
+import io.deltator.feature.chain.ChainProfileManager
+import io.deltator.feature.chain.ChainProfileType
 import io.deltator.ui.DeltaTor
 import io.deltator.ui.DeltaTorTheme
 import io.deltator.util.AppLog
@@ -2033,15 +2036,14 @@ private fun BottomPanel(
         // The chain card sits first, right where the finger already is: it is
         // only meaningful once Tor is connected, and its own state decides what
         // a tap does - open the sheet while idle, end the chain while in flight.
-        if (chain.status != AppState.ChainStatus.IDLE || state.connected) {
-            ProxyChainCard(
-                chain = chain,
-                connected = state.connected,
-                onClick = onOpenChain,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(8.dp))
-        }
+        // Proxy Chain card is always visible to configure Tor proxy chaining or standalone modes
+        ProxyChainCard(
+            chain = chain,
+            connected = state.connected,
+            onClick = onOpenChain,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
         // The row is never removed. During teardown the left pill keeps its slot
         // and just relabels to START VPN, dimmed until the cores are gone: a
         // start click there would race the teardown for the ports, but hiding
@@ -2183,7 +2185,7 @@ private fun ProxyChainCard(
             if (chain.urlMs >= 0) "on \u00b7 ${chain.urlMs}ms \u2014 tap to configure"
             else "on \u00b7 ${chain.host} \u2014 tap to configure"
         connected -> "off \u00b7 tap to choose chain (Nodes, WARP, AWG, MASQUE)"
-        else -> "connect with Tor first"
+        else -> "off \u00b7 tap to choose chain (Nodes, WARP, AWG, MASQUE)"
     }
     Row(
         modifier
@@ -2255,6 +2257,11 @@ private fun ProxyChainSheet(
     val list by ProxyChainManager.listState.collectAsStateWithLifecycle()
     val fetching by ProxyChainManager.fetching.collectAsStateWithLifecycle()
     val chain by AppState.chainState.collectAsStateWithLifecycle()
+    val warpProfiles by ChainProfileManager.warpProfiles.collectAsStateWithLifecycle()
+    val amneziaProfiles by ChainProfileManager.amneziaProfiles.collectAsStateWithLifecycle()
+    val masqueProfiles by ChainProfileManager.masqueProfiles.collectAsStateWithLifecycle()
+    val chainTesting by ChainProfileManager.testing.collectAsStateWithLifecycle()
+    var isGenerating by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var search by remember { mutableStateOf("") }
@@ -2457,58 +2464,108 @@ private fun ProxyChainSheet(
                     }
                 }
                 1 -> {
-                    val profile = remember { io.deltator.feature.warp.WarpProfile.fromJson(Config.warpConfig) }
-                    var currentEp by remember { mutableStateOf(profile?.endpoint ?: "162.159.192.1:2408") }
                     val isWarpActive = currentMode == Config.TOR_CHAIN_WARP && chain.status == AppState.ChainStatus.CONNECTED
 
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .height(340.dp)
-                            .padding(top = 8.dp),
+                            .height(350.dp)
+                            .padding(top = 4.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                "Cloudflare WARP Double-Hop",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                color = DeltaTor.Text
-                            )
-                            Text(
-                                "Your connection enters the Tor network and exits through Cloudflare's Anycast edge. Prevents exit node packet snooping and bypasses Cloudflare turnstile blocks.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = DeltaTor.Muted
-                            )
-                            Spacer(Modifier.height(4.dp))
+                        Column {
+                            // Action Bar
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(DeltaTor.Surface)
-                                    .padding(12.dp),
+                                    .padding(vertical = 4.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
-                                    Text("Anycast Endpoint", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Muted)
-                                    Text(currentEp, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = DeltaTor.Text)
-                                }
                                 Text(
-                                    "ROTATE IP",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    color = DeltaTor.Accent,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .clickable {
-                                            val next = io.deltator.feature.warp.WarpRegistrar.ANYCAST_ENDPOINTS.filter { it != currentEp }.randomOrNull() ?: currentEp
-                                            currentEp = next
-                                            profile?.let {
-                                                val upd = it.copy(endpoint = next)
-                                                Config.warpConfig = upd.toJson()
-                                            }
-                                        }
-                                        .padding(6.dp)
+                                    "${warpProfiles.size} Cloudflare configs",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DeltaTor.Muted
                                 )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Surface)
+                                            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting) {
+                                                scope.launch { ChainProfileManager.pingAll(ChainProfileType.WARP) }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (chainTesting) "PINGING\u2026" else "PING ALL",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.25f))
+                                            .border(1.dp, DeltaTor.Accent, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !isGenerating) {
+                                                scope.launch {
+                                                    isGenerating = true
+                                                    try {
+                                                        ChainProfileManager.generateWarpProfile()
+                                                    } finally {
+                                                        isGenerating = false
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            if (isGenerating) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(10.dp),
+                                                    color = DeltaTor.Accent,
+                                                    strokeWidth = 1.5.dp
+                                                )
+                                            }
+                                            Text(
+                                                if (isGenerating) "GENERATING\u2026" else "+ GENERATE",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(235.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(warpProfiles, key = { it.id }) { prof ->
+                                    ChainProfileRow(
+                                        profile = prof,
+                                        isCurrentActive = isWarpActive && prof.isSelected,
+                                        onSelect = {
+                                            ChainProfileManager.selectProfile(prof)
+                                            onSelectChainMode(Config.TOR_CHAIN_WARP)
+                                        },
+                                        onPing = {
+                                            scope.launch { ChainProfileManager.pingSingle(prof) }
+                                        },
+                                        onDelete = if (warpProfiles.size > 1) {
+                                            { ChainProfileManager.deleteProfile(prof.id, ChainProfileType.WARP) }
+                                        } else null
+                                    )
+                                }
                             }
                         }
 
@@ -2530,47 +2587,107 @@ private fun ProxyChainSheet(
                     }
                 }
                 2 -> {
-                    val amzConfig = remember { io.deltator.feature.amnezia.AmneziaConfig.fromJson(Config.amneziaWgConfig) ?: io.deltator.feature.amnezia.AmneziaConfig() }
                     val isAmzActive = currentMode == Config.TOR_CHAIN_AMNEZIA && chain.status == AppState.ChainStatus.CONNECTED
 
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .height(340.dp)
-                            .padding(top = 8.dp),
+                            .height(350.dp)
+                            .padding(top = 4.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                "AmneziaWG Obfuscated Double-Hop",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                color = DeltaTor.Text
-                            )
-                            Text(
-                                "DPI-resistant obfuscation (AWG 1.0 - 3.1) layered on top of Tor exit circuit. Randomizes packet lengths and headers.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = DeltaTor.Muted
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Column(
+                        Column {
+                            // Action Bar
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(DeltaTor.Surface)
-                                    .padding(12.dp),
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "${amneziaProfiles.size} AWG configs",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DeltaTor.Muted
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Surface)
+                                            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting) {
+                                                scope.launch { ChainProfileManager.pingAll(ChainProfileType.AMNEZIA) }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (chainTesting) "PINGING\u2026" else "PING ALL",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.25f))
+                                            .border(1.dp, DeltaTor.Accent, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !isGenerating) {
+                                                scope.launch {
+                                                    isGenerating = true
+                                                    try {
+                                                        ChainProfileManager.generateAmneziaProfile()
+                                                    } finally {
+                                                        isGenerating = false
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            if (isGenerating) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(10.dp),
+                                                    color = DeltaTor.Accent,
+                                                    strokeWidth = 1.5.dp
+                                                )
+                                            }
+                                            Text(
+                                                if (isGenerating) "GENERATING\u2026" else "+ GENERATE",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(235.dp),
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Endpoint", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Muted)
-                                    Text(amzConfig.endpoint.ifBlank { "Configured in Settings" }, style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold), color = DeltaTor.Text)
-                                }
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Junk Packets (Jc)", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Muted)
-                                    Text("${amzConfig.jc}", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Text)
-                                }
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Init / Resp Padding (S1/S2)", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Muted)
-                                    Text("${amzConfig.s1}B / ${amzConfig.s2}B", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Text)
+                                items(amneziaProfiles, key = { it.id }) { prof ->
+                                    ChainProfileRow(
+                                        profile = prof,
+                                        isCurrentActive = isAmzActive && prof.isSelected,
+                                        onSelect = {
+                                            ChainProfileManager.selectProfile(prof)
+                                            onSelectChainMode(Config.TOR_CHAIN_AMNEZIA)
+                                        },
+                                        onPing = {
+                                            scope.launch { ChainProfileManager.pingSingle(prof) }
+                                        },
+                                        onDelete = if (amneziaProfiles.size > 1) {
+                                            { ChainProfileManager.deleteProfile(prof.id, ChainProfileType.AMNEZIA) }
+                                        } else null
+                                    )
                                 }
                             }
                         }
@@ -2598,31 +2715,103 @@ private fun ProxyChainSheet(
                     Column(
                         Modifier
                             .fillMaxWidth()
-                            .height(340.dp)
-                            .padding(top = 8.dp),
+                            .height(350.dp)
+                            .padding(top = 4.dp),
                         verticalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(
-                                "MASQUE HTTP/3 Datagram Double-Hop",
-                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                color = DeltaTor.Text
-                            )
-                            Text(
-                                "CONNECT-UDP/IP datagrams encapsulated in QUIC/HTTP/3. Eliminates TCP Head-of-Line blocking and hides traffic as legitimate HTTP/3.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = DeltaTor.Muted
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Column(
+                        Column {
+                            // Action Bar
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(DeltaTor.Surface)
-                                    .padding(12.dp)
+                                    .padding(vertical = 4.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("MASQUE Endpoint", style = MaterialTheme.typography.labelSmall, color = DeltaTor.Muted)
-                                Text(Config.masqueEndpoint, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold), color = DeltaTor.Text)
+                                Text(
+                                    "${masqueProfiles.size} MASQUE configs",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = DeltaTor.Muted
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Surface)
+                                            .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting) {
+                                                scope.launch { ChainProfileManager.pingAll(ChainProfileType.MASQUE) }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (chainTesting) "PINGING\u2026" else "PING ALL",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.25f))
+                                            .border(1.dp, DeltaTor.Accent, RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !isGenerating) {
+                                                scope.launch {
+                                                    isGenerating = true
+                                                    try {
+                                                        ChainProfileManager.generateMasqueProfile()
+                                                    } finally {
+                                                        isGenerating = false
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            if (isGenerating) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(10.dp),
+                                                    color = DeltaTor.Accent,
+                                                    strokeWidth = 1.5.dp
+                                                )
+                                            }
+                                            Text(
+                                                if (isGenerating) "GENERATING\u2026" else "+ GENERATE",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = Color.White
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(235.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                items(masqueProfiles, key = { it.id }) { prof ->
+                                    ChainProfileRow(
+                                        profile = prof,
+                                        isCurrentActive = isMasqueActive && prof.isSelected,
+                                        onSelect = {
+                                            ChainProfileManager.selectProfile(prof)
+                                            onSelectChainMode(Config.TOR_CHAIN_MASQUE)
+                                        },
+                                        onPing = {
+                                            scope.launch { ChainProfileManager.pingSingle(prof) }
+                                        },
+                                        onDelete = if (masqueProfiles.size > 1) {
+                                            { ChainProfileManager.deleteProfile(prof.id, ChainProfileType.MASQUE) }
+                                        } else null
+                                    )
+                                }
                             }
                         }
 
@@ -2643,6 +2832,141 @@ private fun ProxyChainSheet(
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChainProfileRow(
+    profile: ChainProfile,
+    isCurrentActive: Boolean,
+    onSelect: () -> Unit,
+    onPing: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
+    val isSelected = profile.isSelected
+    val borderColor = when {
+        isSelected && isCurrentActive -> DeltaTor.Green
+        isSelected -> DeltaTor.Accent
+        else -> DeltaTor.BorderLight
+    }
+    val bgColor = when {
+        isSelected && isCurrentActive -> DeltaTor.Green.copy(alpha = 0.08f)
+        isSelected -> DeltaTor.Accent.copy(alpha = 0.08f)
+        else -> DeltaTor.Surface
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(bgColor)
+            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+            .clickable(onClick = onSelect)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    profile.name,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = DeltaTor.Text,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                if (isSelected && isCurrentActive) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(DeltaTor.Green)
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "ACTIVE",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                            color = Color.Black
+                        )
+                    }
+                } else if (isSelected) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(DeltaTor.Accent)
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            "SELECTED",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                            color = Color.Black
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(2.dp))
+            Text(
+                profile.endpoint,
+                style = MaterialTheme.typography.labelSmall,
+                color = DeltaTor.Accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (profile.details.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    profile.details,
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = DeltaTor.Muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        Spacer(Modifier.width(8.dp))
+
+        // Latency badge / Ping button
+        Column(horizontalAlignment = Alignment.End) {
+            val (pingText, pingColor) = when {
+                profile.delayMs > 0 && profile.delayMs < 150 -> "${profile.delayMs} ms" to DeltaTor.Green
+                profile.delayMs >= 150 && profile.delayMs < 350 -> "${profile.delayMs} ms" to DeltaTor.Amber
+                profile.delayMs >= 350 -> "${profile.delayMs} ms" to DeltaTor.Red
+                profile.delayMs == -2L -> "timeout" to DeltaTor.Red.copy(alpha = 0.8f)
+                else -> "TEST" to DeltaTor.Muted
+            }
+
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(DeltaTor.Bg)
+                    .border(1.dp, pingColor.copy(alpha = 0.4f), RoundedCornerShape(6.dp))
+                    .clickable(onClick = onPing)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    pingText,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                    color = pingColor
+                )
+            }
+
+            if (onDelete != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "DEL",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, fontWeight = FontWeight.Bold),
+                    color = DeltaTor.Red.copy(alpha = 0.7f),
+                    modifier = Modifier
+                        .clickable(onClick = onDelete)
+                        .padding(2.dp)
+                )
             }
         }
     }
