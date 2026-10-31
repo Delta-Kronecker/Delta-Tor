@@ -45,6 +45,28 @@ object TorSocksBridge {
     private const val DNS_TIMEOUT_MS = 15000
     private const val DNS_CACHE_TTL_MS = 300_000L
 
+    enum class UpstreamMode {
+        TOR,
+        WARP,
+        AMNEZIA,
+        MASQUE,
+        DIRECT
+    }
+
+    enum class ChainMode {
+        NONE,
+        FREE_NODES,
+        WARP,
+        AMNEZIA,
+        MASQUE
+    }
+
+    @Volatile var upstreamMode: UpstreamMode = UpstreamMode.TOR
+    @Volatile var chainMode: ChainMode = ChainMode.NONE
+    @Volatile var warpProfile: io.deltator.feature.warp.WarpProfile? = null
+    @Volatile var amneziaConfig: io.deltator.feature.amnezia.AmneziaConfig? = null
+    @Volatile var masqueEndpoint: String = ""
+
     private var torHost: String = "127.0.0.1"
     private var torSocksPort: Int = 0
     private var localAuthUsername: String? = null
@@ -312,8 +334,67 @@ object TorSocksBridge {
             return
         }
 
-        // Original flow — no domain routing
-        connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+        when (upstreamMode) {
+            UpstreamMode.TOR -> {
+                if (chainMode != ChainMode.NONE) {
+                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput)
+                } else {
+                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+                }
+            }
+            UpstreamMode.WARP -> {
+                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+            }
+            UpstreamMode.AMNEZIA -> {
+                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+            }
+            UpstreamMode.MASQUE -> {
+                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+            }
+            UpstreamMode.DIRECT -> {
+                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, clientInput, clientOutput)
+            }
+        }
+    }
+
+    private fun connectViaTorChained(
+        mode: ChainMode,
+        destHost: String,
+        destPort: Int,
+        rawAddr: ByteArray,
+        portBytes: ByteArray,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream
+    ) {
+        logd("CONNECT: chained via Tor -> $mode for $destHost:$destPort")
+        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+    }
+
+    private fun connectDirectUpstream(
+        label: String,
+        destHost: String,
+        destPort: Int,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream
+    ) {
+        try {
+            val remoteSocket = Socket()
+            remoteSocket.connect(InetSocketAddress(destHost, destPort), TCP_CONNECT_TIMEOUT_MS)
+            remoteSocket.tcpNoDelay = true
+            clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+            clientOutput.flush()
+            clientSocket.soTimeout = 0
+            logd("CONNECT: $label direct connection OK to $destHost:$destPort")
+            bridgeDirect(clientInput, clientOutput, remoteSocket)
+        } catch (e: Exception) {
+            logd("CONNECT: $label failed to connect to $destHost:$destPort: ${e.message}")
+            try {
+                clientOutput.write(byteArrayOf(0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                clientOutput.flush()
+            } catch (_: Exception) {}
+        }
     }
 
     private fun handleConnectWithRouting(
@@ -391,7 +472,27 @@ object TorSocksBridge {
         val effectiveInput = if (sniffLen > 0)
             SequenceInputStream(ByteArrayInputStream(sniffBuffer!!, 0, sniffLen), clientInput)
         else clientInput
-        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+        when (upstreamMode) {
+            UpstreamMode.TOR -> {
+                if (chainMode != ChainMode.NONE) {
+                    connectViaTorChained(chainMode, destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput)
+                } else {
+                    connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                }
+            }
+            UpstreamMode.WARP -> {
+                connectDirectUpstream("WARP", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+            }
+            UpstreamMode.AMNEZIA -> {
+                connectDirectUpstream("Amnezia", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+            }
+            UpstreamMode.MASQUE -> {
+                connectDirectUpstream("MASQUE", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+            }
+            UpstreamMode.DIRECT -> {
+                connectDirectUpstream("Direct", destHost, destPort, clientSocket, effectiveInput, clientOutput)
+            }
+        }
     }
 
     /**
