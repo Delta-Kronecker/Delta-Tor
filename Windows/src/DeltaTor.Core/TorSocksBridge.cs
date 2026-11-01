@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using DeltaTor.Core.Util;
@@ -280,13 +281,8 @@ public static class TorSocksBridge
                     var cmd = input.ReadByte();
                     input.ReadByte(); // reserved
 
-                    if (ver != 0x05 || (cmd != 0x01 && cmd != 0x05))
+                    if (ver != 0x05 || (cmd != 0x01 && cmd != 0x03 && cmd != 0x05))
                     {
-                        // Standard tun2socks speaks SOCKS5 UDP ASSOCIATE (0x03)
-                        // for UDP traffic; the bridge only carries CONNECT and
-                        // the hev-style FWD_UDP, so log the attempt — it is the
-                        // one signature that tells a broken tunneled path apart
-                        // in the log.
                         AppLog.W(TAG,
                             $"SOCKS: unsupported request dropped (ver={ver}, cmd=0x{cmd:x2})");
                         WriteAll(output, new byte[] { 0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0 });
@@ -333,6 +329,14 @@ public static class TorSocksBridge
                     if (portHigh < 0 || portLow < 0) return;
                     var destPort = (portHigh << 8) | portLow;
                     var portBytes = new byte[] { (byte)portHigh, (byte)portLow };
+
+                    // Handle UDP ASSOCIATE (cmd 0x03).
+                    if (cmd == 0x03)
+                    {
+                        socket.ReceiveTimeout = 0;
+                        HandleUdpAssociate(socket, input, output);
+                        return;
+                    }
 
                     // Handle FWD_UDP (cmd 0x05).
                     if (cmd == 0x05)
@@ -598,6 +602,168 @@ public static class TorSocksBridge
         finally
         {
             Untrack(remoteSocket);
+        }
+    }
+
+    /// <summary>
+    /// Handle SOCKS5 UDP ASSOCIATE (cmd 0x03) — standard SOCKS5 UDP association used by tun2socks.
+    /// DNS queries (port 53) are resolved via DNS-over-TCP over Tor SOCKS5.
+    /// Non-DNS UDP packets are dropped.
+    /// </summary>
+    private static void HandleUdpAssociate(Socket clientSocket, Stream input, Stream output)
+    {
+        UdpClient? udpClient = null;
+        try
+        {
+            udpClient = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+            var localPort = ((IPEndPoint)udpClient.Client.LocalEndPoint!).Port;
+
+            // Send SOCKS5 success reply with local UDP relay port
+            var reply = new byte[]
+            {
+                0x05, 0x00, 0x00, 0x01,
+                127, 0, 0, 1,
+                (byte)((localPort >> 8) & 0xFF),
+                (byte)(localPort & 0xFF)
+            };
+            WriteAll(output, reply);
+            LogD($"UDP ASSOCIATE: session established on 127.0.0.1:{localPort}");
+
+            // Monitor client TCP socket connection in background thread to close UDP when TCP drops
+            var tcpMonitor = new Thread(() =>
+            {
+                try
+                {
+                    while (_running && clientSocket.Connected)
+                    {
+                        if (clientSocket.Poll(1000000, SelectMode.SelectRead) && clientSocket.Available == 0)
+                            break; // Connection closed by client
+                    }
+                }
+                catch { /* TCP closed */ }
+                finally
+                {
+                    try { udpClient.Close(); } catch { /* ignore */ }
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "tor-bridge-udp-assoc-tcp"
+            };
+            tcpMonitor.Start();
+
+            while (_running)
+            {
+                IPEndPoint? senderEp = null;
+                byte[] packet;
+                try
+                {
+                    packet = udpClient.Receive(ref senderEp);
+                }
+                catch
+                {
+                    break; // Socket closed
+                }
+
+                if (packet == null || packet.Length < 10 || senderEp == null) continue;
+
+                // SOCKS5 UDP Datagram header:
+                // RSV (2) | FRAG (1) | ATYP (1) | DST.ADDR (var) | DST.PORT (2) | DATA (var)
+                if (packet[0] != 0x00 || packet[1] != 0x00) continue; // RSV must be 0
+                if (packet[2] != 0x00) continue; // FRAG non-zero not supported
+
+                var atyp = packet[3];
+                var headerLen = 0;
+                var destPort = 0;
+
+                switch (atyp)
+                {
+                    case 0x01: // IPv4
+                        headerLen = 4 + 4 + 2; // RSV(2)+FRAG(1)+ATYP(1) + IP(4) + Port(2) = 10
+                        if (packet.Length < headerLen) continue;
+                        destPort = (packet[8] << 8) | packet[9];
+                        break;
+                    case 0x03: // Domain name
+                        if (packet.Length < 5) continue;
+                        var domainLen = packet[4];
+                        headerLen = 4 + 1 + domainLen + 2;
+                        if (packet.Length < headerLen) continue;
+                        destPort = (packet[5 + domainLen] << 8) | packet[6 + domainLen];
+                        break;
+                    case 0x04: // IPv6
+                        headerLen = 4 + 16 + 2;
+                        if (packet.Length < headerLen) continue;
+                        destPort = (packet[20] << 8) | packet[21];
+                        break;
+                    default:
+                        continue;
+                }
+
+                var payloadLen = packet.Length - headerLen;
+                if (payloadLen <= 0) continue;
+
+                if (destPort != 53)
+                {
+                    // Non-DNS UDP: drop
+                    continue;
+                }
+
+                var headerCopy = new byte[headerLen];
+                Array.Copy(packet, 0, headerCopy, 0, headerLen);
+                var payloadCopy = new byte[payloadLen];
+                Array.Copy(packet, headerLen, payloadCopy, 0, payloadLen);
+
+                var ep = senderEp;
+                var activeClient = udpClient;
+
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    try
+                    {
+                        _dnsSlots.Wait();
+                        try
+                        {
+                            var cached = GetCachedDns(payloadCopy);
+                            byte[]? response;
+                            if (cached != null)
+                            {
+                                response = cached;
+                            }
+                            else
+                            {
+                                response = ResolveThroughTor(payloadCopy);
+                                if (response != null) CacheDnsResponse(payloadCopy, response);
+                            }
+
+                            if (response != null && response.Length > 0)
+                            {
+                                var respPacket = Cat(headerCopy, response);
+                                lock (activeClient)
+                                {
+                                    activeClient.Send(respPacket, respPacket.Length, ep);
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            _dnsSlots.Release();
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        LogD($"UDP ASSOCIATE: DNS forward failed: {e.Message}");
+                    }
+                });
+            }
+        }
+        catch (Exception e)
+        {
+            LogD($"UDP ASSOCIATE session error: {e.Message}");
+        }
+        finally
+        {
+            try { udpClient?.Close(); } catch { /* ignore */ }
+            LogD("UDP ASSOCIATE session ended");
         }
     }
 

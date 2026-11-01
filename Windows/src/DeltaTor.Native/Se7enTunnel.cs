@@ -27,7 +27,7 @@ public sealed class Se7enTunnel : ISocksTunnel
     private const string AdapterAlias = "se7en_tun";
 
     /// <summary>Processes kept outside the tunnel (Windows' addDisallowedApplication).</summary>
-    private static readonly string[] ExcludedProcesses = { "tor", "lyrebird", "DeltaTor" };
+    private static readonly string[] ExcludedProcesses = { "tor", "tor.exe", "lyrebird", "lyrebird.exe", "DeltaTor", "DeltaTor.exe" };
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private TunHost? _host;
