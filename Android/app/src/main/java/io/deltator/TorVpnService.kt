@@ -1879,6 +1879,8 @@ class TorVpnService : VpnService() {
         if (networkCallback != null) return
         val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
+            private var lastNetwork: Network? = null
+
             override fun onLost(network: Network) {
                 // Losing one network is routine when the system moves between
                 // Wi-Fi and cellular, so only a real absence of any counts.
@@ -1889,11 +1891,27 @@ class TorVpnService : VpnService() {
             }
 
             override fun onAvailable(network: Network) {
-                if (linkUp) return
+                val switched = lastNetwork != null && lastNetwork != network
+                lastNetwork = network
+                val wasDown = !linkUp
                 linkUp = true
                 failedProbes = 0
                 quietProbes = 0
-                Log.i(TAG, "Network available again")
+                Log.i(TAG, "Network available (switched=$switched, wasDown=$wasDown)")
+
+                if (AppState.state.value.connected) {
+                    if (wasDown || switched) {
+                        serviceScope.launch {
+                            val probe = probeTunnelUsable()
+                            if (probe == ProbeResult.Dead) {
+                                Log.w(TAG, "Network changed and tunnel dead, triggering fast recovery")
+                                recoverTransport()
+                            } else {
+                                startExitLocator("127.0.0.1", Config.proxyPort)
+                            }
+                        }
+                    }
+                }
             }
         }
         try {

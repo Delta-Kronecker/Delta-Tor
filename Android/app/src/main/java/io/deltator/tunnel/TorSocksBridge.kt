@@ -378,6 +378,21 @@ object TorSocksBridge {
         }
     }
 
+    private fun parseEndpoint(endpoint: String): Pair<String, Int>? {
+        var ep = endpoint.trim()
+        if (ep.isEmpty()) return null
+        if (ep.startsWith("https://")) ep = ep.removePrefix("https://").substringBefore("/")
+        if (ep.startsWith("http://")) ep = ep.removePrefix("http://").substringBefore("/")
+        val colon = ep.lastIndexOf(':')
+        return if (colon != -1) {
+            val host = ep.substring(0, colon)
+            val port = ep.substring(colon + 1).toIntOrNull() ?: 443
+            host to port
+        } else {
+            ep to 443
+        }
+    }
+
     private fun connectViaTorChained(
         mode: ChainMode,
         destHost: String,
@@ -390,7 +405,128 @@ object TorSocksBridge {
         sendReply: Boolean = true
     ) {
         logd("CONNECT: chained via Tor -> $mode for $destHost:$destPort")
+        val upstreamEp = when (mode) {
+            ChainMode.MASQUE -> parseEndpoint(masqueEndpoint)
+            ChainMode.WARP -> warpProfile?.endpoint?.let { parseEndpoint(it) }
+            ChainMode.AMNEZIA -> amneziaConfig?.endpoint?.let { parseEndpoint(it) }
+            else -> null
+        }
+
+        if (upstreamEp != null) {
+            val success = connectViaTorDoubleHop(
+                upstreamEp.first, upstreamEp.second,
+                destHost, destPort, rawAddr, portBytes,
+                clientSocket, clientInput, clientOutput, sendReply
+            )
+            if (success) return
+        }
+
+        // Direct Tor circuit fallback
         connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = sendReply)
+    }
+
+    private fun connectViaTorDoubleHop(
+        upstreamHost: String,
+        upstreamPort: Int,
+        destHost: String,
+        destPort: Int,
+        rawAddr: ByteArray,
+        portBytes: ByteArray,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+        sendReply: Boolean
+    ): Boolean {
+        var remoteSocket: Socket? = null
+        try {
+            remoteSocket = Socket()
+            remoteSocket.connect(InetSocketAddress(torHost, torSocksPort), TCP_CONNECT_TIMEOUT_MS)
+            remoteSocket.tcpNoDelay = true
+
+            val remoteInput = remoteSocket.getInputStream()
+            val remoteOutput = remoteSocket.getOutputStream()
+
+            // 1. SOCKS5 greeting to Tor
+            remoteOutput.write(byteArrayOf(0x05, 0x01, 0x00))
+            remoteOutput.flush()
+
+            val greetResp = ByteArray(2)
+            remoteInput.readFully(greetResp)
+            if (greetResp[0] != 0x05.toByte() || greetResp[1] != 0x00.toByte()) {
+                remoteSocket.close()
+                return false
+            }
+
+            // 2. CONNECT to upstream proxy via Tor
+            val hostBytes = upstreamHost.toByteArray(Charsets.US_ASCII)
+            val upPortBytes = byteArrayOf((upstreamPort shr 8).toByte(), (upstreamPort and 0xFF).toByte())
+            val upReq = byteArrayOf(0x05, 0x01, 0x00, 0x03, hostBytes.size.toByte()) + hostBytes + upPortBytes
+            remoteOutput.write(upReq)
+            remoteOutput.flush()
+
+            val torResp = ByteArray(4)
+            remoteInput.readFully(torResp)
+            if (torResp[1] != 0x00.toByte()) {
+                remoteSocket.close()
+                return false
+            }
+            when (torResp[3].toInt() and 0xFF) {
+                0x01 -> { val rest = ByteArray(6); remoteInput.readFully(rest) }
+                0x03 -> { val len = remoteInput.read(); val rest = ByteArray(len + 2); remoteInput.readFully(rest) }
+                0x04 -> { val rest = ByteArray(18); remoteInput.readFully(rest) }
+            }
+
+            // 3. Negotiate HTTP CONNECT with upstream proxy
+            val connectHttp = "CONNECT $destHost:$destPort HTTP/1.1\r\nHost: $destHost:$destPort\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: DeltaTor/2.0\r\n\r\n"
+            remoteOutput.write(connectHttp.toByteArray(Charsets.US_ASCII))
+            remoteOutput.flush()
+
+            val reader = java.io.BufferedReader(java.io.InputStreamReader(remoteInput, Charsets.US_ASCII))
+            val statusLine = reader.readLine() ?: ""
+            if (!statusLine.contains("200")) {
+                logd("CONNECT: double-hop upstream returned status: $statusLine")
+                remoteSocket.close()
+                return false
+            }
+            while (true) {
+                val line = reader.readLine()
+                if (line.isNullOrEmpty()) break
+            }
+
+            logd("CONNECT: double-hop Tor -> $upstreamHost:$upstreamPort -> $destHost:$destPort OK")
+
+            if (sendReply) {
+                clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                clientOutput.flush()
+            }
+            clientSocket.soTimeout = 0
+
+            remoteSocket.use { remote ->
+                val t1 = Thread({
+                    try {
+                        copyStream(clientInput, remoteOutput)
+                    } catch (_: Exception) {
+                    } finally {
+                        try { remoteOutput.close() } catch (_: Exception) {}
+                    }
+                }, "tor-bridge-chain-c2s")
+                t1.isDaemon = true
+                t1.start()
+
+                try {
+                    copyStream(remoteInput, clientOutput)
+                } catch (_: Exception) {
+                } finally {
+                    try { remote.close() } catch (_: Exception) {}
+                    t1.interrupt()
+                }
+            }
+            return true
+        } catch (e: Exception) {
+            logd("CONNECT: double-hop failed: ${e.message}")
+            try { remoteSocket?.close() } catch (_: Exception) {}
+            return false
+        }
     }
 
     private fun connectDirectUpstream(
