@@ -48,3 +48,4 @@ runs.json
 # Windows port: fetched Se7enTun engine (extracted dir + archive), never committed
 /Windows/libs/se7entun/
 /Se7enTun-*.zip
+/releases/
