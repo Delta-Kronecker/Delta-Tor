@@ -24,9 +24,19 @@ object FakeDns {
     // 198.18.0.0/15 range: 198.18.0.1 to 198.19.255.254 (131,070 usable synthetic IPs)
     private const val BASE_IP_START = 0xC6120001L // 198.18.0.1
     private const val IP_COUNT = 131070
+    private const val MAX_ENTRIES = 10000
 
-    private val domainToIp = ConcurrentHashMap<String, String>()
-    private val ipToDomain = ConcurrentHashMap<String, String>()
+    private val lock = Any()
+    private val domainToIp = object : LinkedHashMap<String, String>(1024, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean {
+            if (size > MAX_ENTRIES && eldest != null) {
+                ipToDomain.remove(eldest.value)
+                return true
+            }
+            return false
+        }
+    }
+    private val ipToDomain = HashMap<String, String>(1024)
     private val counter = AtomicInteger(0)
 
     @Volatile
@@ -46,31 +56,40 @@ object FakeDns {
     /**
      * Look up the domain name associated with a synthetic IP.
      */
-    fun getDomain(ip: String): String? = ipToDomain[ip]
+    fun getDomain(ip: String): String? = synchronized(lock) { ipToDomain[ip] }
 
     /**
      * Look up or allocate a synthetic IP address for a given domain name.
      */
-    fun getOrAllocateIp(domain: String): String {
+    fun getOrAllocateIp(domain: String): String = synchronized(lock) {
         val cleanDomain = domain.lowercase().trimEnd('.')
-        return domainToIp.computeIfAbsent(cleanDomain) {
-            val idx = Math.floorMod(counter.getAndIncrement(), IP_COUNT)
-            val ipVal = BASE_IP_START + idx
-            val b1 = (ipVal shr 24 and 0xFF).toInt()
-            val b2 = (ipVal shr 16 and 0xFF).toInt()
-            val b3 = (ipVal shr 8 and 0xFF).toInt()
-            val b4 = (ipVal and 0xFF).toInt()
-            val ipStr = "$b1.$b2.$b3.$b4"
-            ipToDomain[ipStr] = cleanDomain
-            Log.d(TAG, "Allocated synthetic IP $ipStr for domain $cleanDomain")
-            ipStr
+        val existing = domainToIp[cleanDomain]
+        if (existing != null) return existing
+
+        val idx = Math.floorMod(counter.getAndIncrement(), IP_COUNT)
+        val ipVal = BASE_IP_START + idx
+        val b1 = (ipVal shr 24 and 0xFF).toInt()
+        val b2 = (ipVal shr 16 and 0xFF).toInt()
+        val b3 = (ipVal shr 8 and 0xFF).toInt()
+        val b4 = (ipVal and 0xFF).toInt()
+        val ipStr = "$b1.$b2.$b3.$b4"
+
+        // If ipStr was previously assigned to another domain, purge the old domain mapping
+        val oldDomain = ipToDomain.remove(ipStr)
+        if (oldDomain != null) {
+            domainToIp.remove(oldDomain)
         }
+
+        domainToIp[cleanDomain] = ipStr
+        ipToDomain[ipStr] = cleanDomain
+        Log.d(TAG, "Allocated synthetic IP $ipStr for domain $cleanDomain")
+        ipStr
     }
 
     /**
      * Clear all cached mappings (e.g. on tunnel reset).
      */
-    fun clear() {
+    fun clear() = synchronized(lock) {
         domainToIp.clear()
         ipToDomain.clear()
         counter.set(0)

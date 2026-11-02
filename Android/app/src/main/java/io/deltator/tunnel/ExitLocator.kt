@@ -28,9 +28,9 @@ data class ExitInfo(
 
 /**
  * Resolves the true public exit IP and country.
- * In VPN mode, queries through the active VPN TUN interface (Proxy.NO_PROXY)
- * so that chained exits (WARP, AmneziaWG, MASQUE, Free Nodes SSTP) accurately
- * reflect the final external exit IP seen by the outside world.
+ * Always queries through the local SOCKS5 proxy bridge (127.0.0.1:proxyPort)
+ * to prevent real IP leaks (since DeltaTor itself is excluded from the VPN TUN
+ * to prevent routing loops, so raw direct sockets bypass the VPN).
  */
 object ExitLocator {
     private const val TAG = "ExitLocator"
@@ -51,15 +51,6 @@ object ExitLocator {
         socksPort: Int = io.deltator.Config.proxyPort,
         timeoutMs: Int = 8000
     ): ExitInfo? {
-        val isVpnActive = io.deltator.AppState.state.value.connected && !io.deltator.Config.proxyOnlyMode
-
-        // 1. In VPN mode, probe through the active VPN TUN (NO_PROXY routes through Android VPN)
-        if (isVpnActive) {
-            val vpnInfo = probeAll(context, Proxy.NO_PROXY, timeoutMs)
-            if (vpnInfo != null) return vpnInfo
-        }
-
-        // 2. In proxy-only mode or as fallback, probe through the SOCKS5 proxy
         val socksProxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(socksHost, socksPort))
         return probeAll(context, socksProxy, timeoutMs)
     }

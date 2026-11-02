@@ -74,7 +74,7 @@ object TorSocksBridge {
     private var serverSocket: ServerSocket? = null
     private var acceptorThread: Thread? = null
     private val running = AtomicBoolean(false)
-    private val connectionThreads = CopyOnWriteArrayList<Thread>()
+    private var connectionExecutor = Executors.newCachedThreadPool()
     private var dnsExecutor = Executors.newFixedThreadPool(8)
 
     // DNS cache: query key (hex of query minus transaction ID) -> (response, expiry)
@@ -143,10 +143,8 @@ object TorSocksBridge {
         acceptorThread?.interrupt()
         acceptorThread = null
 
-        for (thread in connectionThreads) {
-            thread.interrupt()
-        }
-        connectionThreads.clear()
+        connectionExecutor.shutdownNow()
+        connectionExecutor = Executors.newCachedThreadPool()
 
         dnsExecutor.shutdownNow()
         dnsExecutor = Executors.newFixedThreadPool(8)
@@ -205,7 +203,7 @@ object TorSocksBridge {
     }
 
     private fun handleConnection(clientSocket: Socket) {
-        val thread = Thread({
+        connectionExecutor.submit {
             try {
                 clientSocket.use { socket ->
                     socket.soTimeout = 30000
@@ -217,11 +215,11 @@ object TorSocksBridge {
                     val version = input.read()
                     if (version == -1) {
                         // EOF — readiness probe or client closed immediately; not an error
-                        return@Thread
+                        return@submit
                     }
                     if (version != 0x05) {
                         Log.w(TAG, "Invalid SOCKS5 version: $version")
-                        return@Thread
+                        return@submit
                     }
                     val nMethods = input.read()
                     val methods = ByteArray(nMethods)
@@ -229,7 +227,7 @@ object TorSocksBridge {
 
                     // Authenticate local client
                     if (!LocalProxyAuth.handleGreeting(methods, input, output, localAuthUsername, localAuthPassword)) {
-                        return@Thread
+                        return@submit
                     }
 
                     // SOCKS5 request
@@ -240,7 +238,7 @@ object TorSocksBridge {
                     if (ver != 0x05 || (cmd != 0x01 && cmd != 0x05)) {
                         output.write(byteArrayOf(0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                         output.flush()
-                        return@Thread
+                        return@submit
                     }
 
                     // Parse address
@@ -271,7 +269,7 @@ object TorSocksBridge {
                         else -> {
                             output.write(byteArrayOf(0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                             output.flush()
-                            return@Thread
+                            return@submit
                         }
                     }
 
@@ -284,7 +282,7 @@ object TorSocksBridge {
                     if (cmd == 0x05) {
                         socket.soTimeout = 0
                         handleFwdUdp(input, output)
-                        return@Thread
+                        return@submit
                     }
 
                     // Handle CONNECT (cmd 0x01) — chain through Tor SOCKS5
@@ -295,12 +293,7 @@ object TorSocksBridge {
                     logd("Connection handler error: ${e.message}")
                 }
             }
-        }, "tor-bridge-handler")
-        thread.isDaemon = true
-        connectionThreads.add(thread)
-        thread.start()
-
-        connectionThreads.removeAll { !it.isAlive }
+        }
     }
 
     /**

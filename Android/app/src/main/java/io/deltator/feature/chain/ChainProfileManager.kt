@@ -484,18 +484,23 @@ object ChainProfileManager {
                 // SOCKS5 handshake
                 out.write(byteArrayOf(0x05, 0x01, 0x00))
                 out.flush()
+                val dis = java.io.DataInputStream(inp)
                 val gr = ByteArray(2)
-                inp.read(gr)
+                dis.readFully(gr)
+                if (gr[0] != 0x05.toByte() || gr[1] != 0x00.toByte()) {
+                    s.close()
+                    return -1L
+                }
 
                 // SOCKS5 CONNECT
                 val hb = host.toByteArray(Charsets.US_ASCII)
                 out.write(byteArrayOf(0x05, 0x01, 0x00, 0x03, hb.size.toByte()) + hb + byteArrayOf((port shr 8).toByte(), (port and 0xFF).toByte()))
                 out.flush()
-                val resp = ByteArray(10)
-                inp.read(resp)
+                val respHeader = ByteArray(4)
+                dis.readFully(respHeader)
                 val rtt = SystemClock.elapsedRealtime() - start
                 s.close()
-                if (resp.size >= 2 && resp[1] == 0x00.toByte()) {
+                if (respHeader[0] == 0x05.toByte() && respHeader[1] == 0x00.toByte()) {
                     return rtt
                 }
             } catch (_: Exception) {}

@@ -4,6 +4,8 @@ import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.net.InetSocketAddress
@@ -123,6 +125,7 @@ object PreFlightBridgePing {
         if (candidateLines.isEmpty()) return@withContext emptyList()
         val remainingLines = validLines.drop(maxCandidates)
 
+        val semaphore = Semaphore(8)
         val results = candidateLines.map { line ->
             async {
                 val ep = extractEndpoint(line)
@@ -130,7 +133,7 @@ object PreFlightBridgePing {
                     // Lines that cannot be socket-pinged (e.g. snowflake rendezvous) are kept as-is
                     PingResult(line, reachable = true, rttMs = 9999L)
                 } else {
-                    val rtt = testSocket(ep.first, ep.second, timeoutMs)
+                    val rtt = semaphore.withPermit { testSocket(ep.first, ep.second, timeoutMs) }
                     if (rtt != null) {
                         PingResult(line, reachable = true, rttMs = rtt)
                     } else {
