@@ -380,6 +380,21 @@ object ChainProfileManager {
         Log.i(TAG, "Selected chain profile: ${profile.name} (${profile.endpoint})")
     }
 
+    fun selectBestProfile(type: ChainProfileType): ChainProfile? {
+        val list = when (type) {
+            ChainProfileType.WARP -> _warpProfiles.value
+            ChainProfileType.AMNEZIA -> _amneziaProfiles.value
+            ChainProfileType.MASQUE -> _masqueProfiles.value
+        }
+        val best = list.filter { it.delayMs > 0 }.minByOrNull { it.delayMs }
+            ?: list.firstOrNull()
+        if (best != null) {
+            selectProfile(best)
+            Log.i(TAG, "Auto-selected best profile for $type: ${best.name} (${best.delayMs}ms)")
+        }
+        return best
+    }
+
     fun deleteProfile(id: String, type: ChainProfileType) {
         when (type) {
             ChainProfileType.WARP -> {
@@ -430,6 +445,12 @@ object ChainProfileManager {
                     _masqueProfiles.value = updated
                     saveProfiles(ChainProfileType.MASQUE)
                 }
+            }
+
+            // Auto-select fastest responsive node if current node is unreachable or unselected
+            val currentSelected = updated.find { it.isSelected }
+            if (currentSelected == null || currentSelected.delayMs < 0) {
+                selectBestProfile(type)
             }
         } finally {
             _testing.value = false
