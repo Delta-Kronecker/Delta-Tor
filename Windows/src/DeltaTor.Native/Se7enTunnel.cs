@@ -27,7 +27,7 @@ public sealed class Se7enTunnel : ISocksTunnel
     private const string AdapterAlias = "se7en_tun";
 
     /// <summary>Processes kept outside the tunnel (Windows' addDisallowedApplication).</summary>
-    private static readonly string[] ExcludedProcesses = { "tor", "lyrebird", "DeltaTor" };
+    private static readonly string[] ExcludedProcesses = { "tor", "tor.exe", "lyrebird", "lyrebird.exe", "DeltaTor", "DeltaTor.exe" };
 
     private readonly SemaphoreSlim _gate = new(1, 1);
     private TunHost? _host;
@@ -121,24 +121,14 @@ public sealed class Se7enTunnel : ISocksTunnel
 
     public bool WaitForTraffic(TimeSpan timeout)
     {
-        // Se7en-Pro activation pattern: wait for TunState.Running (adapter up),
-        // then a short delay for tun2socks to establish SOCKS connection, then verify
-        // the adapter interface exists. This matches the ~2-3s activation time.
-        
+        // Poll for TunState.Running and interface stats readiness without hard-coded sleep delays.
         var deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
         
-        // First wait for the host to report Running state.
         while (Environment.TickCount64 < deadline)
         {
             if (_host?.State == TunState.Running)
             {
-                // Give tun2socks a moment to connect to the SOCKS proxy.
-                // Se7enTun reports "Running" when both the host and tun2socks process
-                // are up, but the SOCKS connection needs a few hundred milliseconds.
-                Thread.Sleep(2000);
-                
                 // Verify the adapter is functional by checking if it reports stats.
-                // This confirms the network interface exists and has a route.
                 var stats = GetStats();
                 if (stats is not null)
                 {
@@ -146,7 +136,7 @@ public sealed class Se7enTunnel : ISocksTunnel
                     return true;
                 }
             }
-            Thread.Sleep(100);
+            Thread.Sleep(50);
         }
         
         AppLog.W(Tag, "WaitForTraffic timeout: tunnel state not ready");
