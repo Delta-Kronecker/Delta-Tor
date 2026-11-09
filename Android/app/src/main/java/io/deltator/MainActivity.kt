@@ -2403,6 +2403,8 @@ private fun ProxyChainSheet(
     val amneziaProfiles by ChainProfileManager.amneziaProfiles.collectAsStateWithLifecycle()
     val masqueProfiles by ChainProfileManager.masqueProfiles.collectAsStateWithLifecycle()
     val chainTesting by ChainProfileManager.testing.collectAsStateWithLifecycle()
+    val autoMatching by ChainProfileManager.autoMatching.collectAsStateWithLifecycle()
+    val lastAutoMatchSummary by ChainProfileManager.lastAutoMatchSummary.collectAsStateWithLifecycle()
     var isGenerating by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2454,28 +2456,70 @@ private fun ProxyChainSheet(
                         style = MaterialTheme.typography.labelSmall,
                         color = DeltaTor.Muted
                     )
+                    lastAutoMatchSummary?.let { summary ->
+                        Text(
+                            "✔ $summary",
+                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = DeltaTor.Accent
+                        )
+                    }
                 }
 
                 if (selectedTab == 0) {
-                    Text(
-                        if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
-                        style = MaterialTheme.typography.labelMedium.copy(
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp
-                        ),
-                        color = when {
-                            ProxyChainManager.testing -> DeltaTor.Amber
-                            list.servers.isNotEmpty() -> DeltaTor.Accent
-                            else -> DeltaTor.Muted
-                        },
-                        modifier = Modifier
-                            .clickable(
-                                enabled = !ProxyChainManager.testing && list.servers.isNotEmpty()
-                            ) {
-                                scope.launch { ProxyChainManager.testAll() }
-                            }
-                            .padding(horizontal = 8.dp, vertical = 6.dp)
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (ProxyChainManager.testing) "TESTING\u2026" else "TEST",
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.2.sp
+                            ),
+                            color = when {
+                                ProxyChainManager.testing -> DeltaTor.Amber
+                                list.servers.isNotEmpty() -> DeltaTor.Accent
+                                else -> DeltaTor.Muted
+                            },
+                            modifier = Modifier
+                                .clickable(
+                                    enabled = !ProxyChainManager.testing && list.servers.isNotEmpty()
+                                ) {
+                                    scope.launch { ProxyChainManager.testAll() }
+                                }
+                                .padding(horizontal = 6.dp, vertical = 6.dp)
+                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(DeltaTor.Accent.copy(alpha = 0.15f))
+                                .border(1.dp, DeltaTor.Accent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                .clickable(
+                                    enabled = !ProxyChainManager.testing && !autoMatching && list.servers.isNotEmpty()
+                                ) {
+                                    scope.launch {
+                                        onSelectChainMode(Config.TOR_CHAIN_FREE_NODES)
+                                        val best = list.servers.filter { it.delayMs >= 0 }.minByOrNull { it.delayMs }
+                                            ?: list.servers.firstOrNull()
+                                        if (best != null) {
+                                            if (best.countryCode.isNotBlank()) {
+                                                io.deltator.tunnel.ExitNodes.replaceAll(listOf(best.countryCode), mapOf(best.countryCode to best.countryName))
+                                                val intent = android.content.Intent(context, TorVpnService::class.java).apply {
+                                                    action = TorVpnService.ACTION_APPLY_EXIT
+                                                }
+                                                context.startService(intent)
+                                            }
+                                            onPickFreeNode(best.host, best.port)
+                                            android.widget.Toast.makeText(context, "Автоподбор: ${best.countryName} (${best.host}) ↔ Tor Exit [${best.countryCode}]", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                "АВТОПОДБОР",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = DeltaTor.Accent
+                            )
+                        }
+                    }
                 }
             }
 
@@ -2692,7 +2736,7 @@ private fun ProxyChainSheet(
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(DeltaTor.Surface)
                                             .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
-                                            .clickable(enabled = !chainTesting) {
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
                                                 scope.launch { ChainProfileManager.pingAll(ChainProfileType.WARP) }
                                             }
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2701,6 +2745,28 @@ private fun ProxyChainSheet(
                                             if (chainTesting) "PINGING\u2026" else "PING ALL",
                                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                             color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.15f))
+                                            .border(1.dp, DeltaTor.Accent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
+                                                scope.launch {
+                                                    onSelectChainMode(Config.TOR_CHAIN_WARP)
+                                                    val res = ChainProfileManager.autoMatchNearest(ChainProfileType.WARP)
+                                                    if (res != null) {
+                                                        android.widget.Toast.makeText(context, "Автоподбор: ${res.summary}", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (autoMatching) "ПОДБОР…" else "АВТОПОДБОР",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = DeltaTor.Accent
                                         )
                                     }
                                     Box(
@@ -2815,7 +2881,7 @@ private fun ProxyChainSheet(
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(DeltaTor.Surface)
                                             .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
-                                            .clickable(enabled = !chainTesting) {
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
                                                 scope.launch { ChainProfileManager.pingAll(ChainProfileType.AMNEZIA) }
                                             }
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2824,6 +2890,28 @@ private fun ProxyChainSheet(
                                             if (chainTesting) "PINGING\u2026" else "PING ALL",
                                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                             color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.15f))
+                                            .border(1.dp, DeltaTor.Accent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
+                                                scope.launch {
+                                                    onSelectChainMode(Config.TOR_CHAIN_AMNEZIA)
+                                                    val res = ChainProfileManager.autoMatchNearest(ChainProfileType.AMNEZIA)
+                                                    if (res != null) {
+                                                        android.widget.Toast.makeText(context, "Автоподбор: ${res.summary}", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (autoMatching) "ПОДБОР…" else "АВТОПОДБОР",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = DeltaTor.Accent
                                         )
                                     }
                                     Box(
@@ -2938,7 +3026,7 @@ private fun ProxyChainSheet(
                                             .clip(RoundedCornerShape(6.dp))
                                             .background(DeltaTor.Surface)
                                             .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(6.dp))
-                                            .clickable(enabled = !chainTesting) {
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
                                                 scope.launch { ChainProfileManager.pingAll(ChainProfileType.MASQUE) }
                                             }
                                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -2947,6 +3035,28 @@ private fun ProxyChainSheet(
                                             if (chainTesting) "PINGING\u2026" else "PING ALL",
                                             style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                             color = if (chainTesting) DeltaTor.Amber else DeltaTor.Accent
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(DeltaTor.Accent.copy(alpha = 0.15f))
+                                            .border(1.dp, DeltaTor.Accent.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
+                                            .clickable(enabled = !chainTesting && !autoMatching) {
+                                                scope.launch {
+                                                    onSelectChainMode(Config.TOR_CHAIN_MASQUE)
+                                                    val res = ChainProfileManager.autoMatchNearest(ChainProfileType.MASQUE)
+                                                    if (res != null) {
+                                                        android.widget.Toast.makeText(context, "Автоподбор: ${res.summary}", android.widget.Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(
+                                            if (autoMatching) "ПОДБОР…" else "АВТОПОДБОР",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = DeltaTor.Accent
                                         )
                                     }
                                     Box(

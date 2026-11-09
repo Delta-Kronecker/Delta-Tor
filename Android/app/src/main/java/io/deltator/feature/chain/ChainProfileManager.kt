@@ -6,8 +6,12 @@ import io.deltator.Config
 import io.deltator.feature.amnezia.AmneziaConfig
 import io.deltator.feature.warp.WarpProfile
 import io.deltator.feature.warp.WarpRegistrar
+import io.deltator.TorVpnService
 import io.deltator.tunnel.BridgeCountries
+import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.TorSocksBridge
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,6 +63,20 @@ object ChainProfileManager {
 
     private val _testing = MutableStateFlow(false)
     val testing: StateFlow<Boolean> = _testing.asStateFlow()
+
+    private val _autoMatching = MutableStateFlow(false)
+    val autoMatching: StateFlow<Boolean> = _autoMatching.asStateFlow()
+
+    private val _lastAutoMatchSummary = MutableStateFlow<String?>(null)
+    val lastAutoMatchSummary: StateFlow<String?> = _lastAutoMatchSummary.asStateFlow()
+
+    data class AutoMatchResult(
+        val profile: ChainProfile,
+        val countryCode: String,
+        val countryName: String,
+        val pingMs: Long,
+        val summary: String
+    )
 
     private lateinit var prefs: android.content.SharedPreferences
     private lateinit var appContext: Context
@@ -440,13 +458,80 @@ object ChainProfileManager {
         }
     }
 
-    // ---------------------------------------------------------------- PING / PROBE
+    // ---------------------------------------------------------------- PING / PROBE & AUTO-MATCH
 
     /**
-     * Pings all profiles of a given type in parallel and sorts the list.
+     * Smart Auto-Match:
+     * 1. Rapidly tests all chain profiles in parallel.
+     * 2. Auto-selects the fastest responsive node (lowest latency).
+     * 3. Resolves its egress country.
+     * 4. Steers Tor's exit relay (ExitNodes {cc}) to match that exact country,
+     *    reducing inter-hop latency between Tor and the chain egress to minimum.
+     * 5. Live applies new circuit exit if Tor is active.
      */
-    suspend fun pingAll(type: ChainProfileType) = withContext(Dispatchers.IO) {
-        if (_testing.value) return@withContext
+    suspend fun autoMatchNearest(type: ChainProfileType): AutoMatchResult? = withContext(Dispatchers.IO) {
+        if (_autoMatching.value) return@withContext null
+        _autoMatching.value = true
+        try {
+            val updated = pingAll(type)
+            val candidates = updated.ifEmpty {
+                when (type) {
+                    ChainProfileType.WARP -> _warpProfiles.value
+                    ChainProfileType.AMNEZIA -> _amneziaProfiles.value
+                    ChainProfileType.MASQUE -> _masqueProfiles.value
+                }
+            }
+            if (candidates.isEmpty()) return@withContext null
+
+            // Pick fastest responsive node, or first candidate if all timed out
+            val best = candidates.filter { it.delayMs > 0 }.minByOrNull { it.delayMs }
+                ?: candidates.firstOrNull()
+                ?: return@withContext null
+
+            selectProfile(best)
+
+            var (cc, cn) = if (best.countryCode.isNotBlank()) {
+                best.countryCode to best.countryName
+            } else {
+                resolveEndpointCountry(best.endpoint)
+            }
+            if (cc.isBlank()) {
+                cc = "DE"
+                cn = "Germany"
+            }
+
+            // Adapt Tor exit node to match the chain's egress country
+            ExitNodes.replaceAll(listOf(cc), mapOf(cc to cn))
+
+            if (::appContext.isInitialized) {
+                try {
+                    val intent = android.content.Intent(appContext, TorVpnService::class.java).apply {
+                        action = TorVpnService.ACTION_APPLY_EXIT
+                    }
+                    appContext.startService(intent)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to apply live Tor exit: ${e.message}")
+                }
+            }
+
+            val summary = if (best.delayMs > 0) {
+                "${best.name} ($cn) ↔ Tor Exit [$cc] · ${best.delayMs} ms"
+            } else {
+                "${best.name} ($cn) ↔ Tor Exit [$cc]"
+            }
+            _lastAutoMatchSummary.value = summary
+            Log.i(TAG, "Smart Auto-Match: $summary")
+            AutoMatchResult(best, cc, cn, best.delayMs, summary)
+        } finally {
+            _autoMatching.value = false
+        }
+    }
+
+    /**
+     * Pings all profiles of a given type in parallel and sorts by delay.
+     */
+    suspend fun pingAll(type: ChainProfileType): List<ChainProfile> = withContext(Dispatchers.IO) {
+        if (_testing.value) return@withContext emptyList()
         _testing.value = true
         try {
             val list = when (type) {
@@ -454,14 +539,14 @@ object ChainProfileManager {
                 ChainProfileType.AMNEZIA -> _amneziaProfiles.value
                 ChainProfileType.MASQUE -> _masqueProfiles.value
             }
-            val semaphore = Semaphore(6)
-            val updated = list.map { prof ->
-                semaphore.withPermit {
+            val deferreds = list.map { prof ->
+                async {
                     val delay = measurePing(prof.endpoint, type)
                     val (cc, cn) = resolveEndpointCountry(prof.endpoint)
                     prof.copy(delayMs = delay, countryCode = cc, countryName = cn)
                 }
-            }.sortedBy { if (it.delayMs < 0) Long.MAX_VALUE else it.delayMs }
+            }
+            val updated = deferreds.awaitAll().sortedBy { if (it.delayMs < 0) Long.MAX_VALUE else it.delayMs }
 
             when (type) {
                 ChainProfileType.WARP -> {
@@ -479,11 +564,11 @@ object ChainProfileManager {
             }
             updated.forEach { p -> Log.i(TAG, "ping $type: ${p.name} | ${p.endpoint} | ${p.delayMs}ms | ${p.countryCode} ${p.countryName}") }
 
-            // Auto-select fastest responsive node if current node is unreachable or unselected
             val currentSelected = updated.find { it.isSelected }
             if (currentSelected == null || currentSelected.delayMs < 0) {
                 selectBestProfile(type)
             }
+            updated
         } finally {
             _testing.value = false
         }
@@ -527,7 +612,7 @@ object ChainProfileManager {
         } catch (_: Exception) { "" to "" }
     }
 
-    private fun measurePing(endpoint: String, type: ChainProfileType? = null): Long {
+    fun measurePing(endpoint: String, type: ChainProfileType? = null): Long {
         var host = endpoint.trim()
         var endpointPort = 443
 
@@ -543,63 +628,55 @@ object ChainProfileManager {
         }
         if (host.isBlank()) return -1L
 
-        // WARP/AmneziaWG use WireGuard/UDP endpoints (2408/4500/51820) — a TCP
-        // CONNECT to the UDP port is meaningless and was reporting false failures.
-        // Probe reachable TCP ports on the same host (anycast edge / control) instead.
         val probePorts = when (type) {
-            ChainProfileType.WARP -> listOf(443, 80)
-            ChainProfileType.AMNEZIA -> listOf(443, 80, 22, endpointPort)
+            ChainProfileType.WARP -> listOf(443, 80, endpointPort)
+            ChainProfileType.AMNEZIA -> listOf(endpointPort, 443, 80, 22)
             ChainProfileType.MASQUE -> listOf(endpointPort, 443, 80)
             else -> listOf(endpointPort, 443, 80)
         }.distinct()
 
-        if (TorSocksBridge.isRunning()) {
-            for (port in probePorts) {
-                try {
-                    val start = SystemClock.elapsedRealtime()
-                    val s = Socket()
-                    s.connect(InetSocketAddress("127.0.0.1", Config.proxyPort), 3000)
-                    s.soTimeout = 4000
-                    val out = s.getOutputStream()
-                    val inp = s.getInputStream()
-                    out.write(byteArrayOf(0x05, 0x01, 0x00))
-                    out.flush()
-                    val dis = java.io.DataInputStream(inp)
-                    val gr = ByteArray(2)
-                    dis.readFully(gr)
-                    if (gr[0] != 0x05.toByte() || gr[1] != 0x00.toByte()) {
-                        s.close(); continue
-                    }
-                    val hb = host.toByteArray(Charsets.US_ASCII)
-                    out.write(byteArrayOf(0x05, 0x01, 0x00, 0x03, hb.size.toByte()) + hb + byteArrayOf((port shr 8).toByte(), (port and 0xFF).toByte()))
-                    out.flush()
-                    val respHeader = ByteArray(4)
-                    dis.readFully(respHeader)
-                    val rtt = SystemClock.elapsedRealtime() - start
-                    s.close()
-                    if (respHeader[0] == 0x05.toByte() && respHeader[1] == 0x00.toByte()) {
-                        return rtt
-                    }
-                } catch (_: Exception) {}
+        for (port in probePorts) {
+            val start = SystemClock.elapsedRealtime()
+            var socket: Socket? = null
+            try {
+                socket = Socket()
+                socket.connect(InetSocketAddress(host, port), 1200)
+                val rtt = SystemClock.elapsedRealtime() - start
+                return rtt.coerceAtLeast(1L)
+            } catch (ce: java.net.ConnectException) {
+                // Connection refused = remote host answered with TCP RST! It is alive!
+                val rtt = SystemClock.elapsedRealtime() - start
+                if (rtt < 1100) {
+                    return rtt.coerceAtLeast(1L)
+                }
+            } catch (_: Exception) {
+            } finally {
+                try { socket?.close() } catch (_: Exception) {}
             }
         }
 
-        for (port in probePorts) {
+        // UDP fallback probe for WireGuard/Amnezia
+        if (type == ChainProfileType.WARP || type == ChainProfileType.AMNEZIA) {
             try {
                 val start = SystemClock.elapsedRealtime()
-                val socket = Socket()
-                socket.connect(InetSocketAddress(host, port), 2500)
-                val rtt = SystemClock.elapsedRealtime() - start
-                socket.close()
-                return rtt
+                java.net.DatagramSocket().use { ds ->
+                    ds.soTimeout = 800
+                    val target = InetSocketAddress(host, endpointPort)
+                    val dummy = byteArrayOf(0x01, 0x00, 0x00, 0x00)
+                    val packet = java.net.DatagramPacket(dummy, dummy.size, target)
+                    ds.send(packet)
+                    val recvBuf = ByteArray(256)
+                    val recvPacket = java.net.DatagramPacket(recvBuf, recvBuf.size)
+                    try {
+                        ds.receive(recvPacket)
+                        return (SystemClock.elapsedRealtime() - start).coerceAtLeast(1L)
+                    } catch (_: java.net.PortUnreachableException) {
+                        return (SystemClock.elapsedRealtime() - start).coerceAtLeast(1L)
+                    } catch (_: Exception) {}
+                }
             } catch (_: Exception) {}
         }
-        return try {
-            val start = SystemClock.elapsedRealtime()
-            val addr = java.net.InetAddress.getByName(host)
-            if (addr.isReachable(2000)) SystemClock.elapsedRealtime() - start else -1L
-        } catch (_: Exception) {
-            -1L
-        }
+
+        return -1L
     }
 }
