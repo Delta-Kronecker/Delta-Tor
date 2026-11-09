@@ -86,6 +86,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -166,6 +167,14 @@ class MainActivity : ComponentActivity() {
             // Permission is best-effort; the service still runs
         }
 
+    /**
+     * Raised by [handleDebugIntent] whenever an `ACTION_OPEN_EXIT_SHEET` intent
+     * arrives (a monotonically increasing tick, so the second notification tap
+     * re-opens the sheet even while it was already open once). The screen watches
+     * it and shows the sheet on the next composition.
+     */
+    private val openExitSheetTick = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
@@ -213,7 +222,9 @@ class MainActivity : ComponentActivity() {
                     onChainPick = { host, port -> sendActionChain(host, port) },
                     onSelectChainMode = { mode -> sendActionChainMode(mode) },
                     onChainDisconnect = { sendAction(TorVpnService.ACTION_CHAIN_DISCONNECT) },
-                    onUpdateBridges = { BridgeStore.update(applicationContext) }
+                    onUpdateBridges = { BridgeStore.update(applicationContext) },
+                    onNewIdentity = { sendAction(TorVpnService.ACTION_NEW_IDENTITY) },
+                    openExitSheetTick = openExitSheetTick.intValue
                 )
             }
         }
@@ -222,6 +233,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         handleDebugIntent(intent)
+        val s = AppState.state.value
+        val chain = AppState.chainState.value
+        if (s.connected || s.torRunning || chain.status == AppState.ChainStatus.CONNECTED) {
+            sendAction(TorVpnService.ACTION_LOCATE_EXIT)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -246,6 +262,41 @@ class MainActivity : ComponentActivity() {
                 if (!engine.isNullOrBlank()) {
                     Config.engineMode = engine
                 }
+                intent.action = null
+            }
+            TorVpnService.ACTION_OPEN_EXIT_SHEET -> {
+                intent.action = null
+                openExitSheetTick.intValue++
+            }
+            "io.deltator.ACTION_DEBUG_PING_WARP" -> {
+                intent.action = null
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) { ChainProfileManager.pingAll(ChainProfileType.WARP) }
+            }
+            "io.deltator.ACTION_DEBUG_PING_AMNEZIA" -> {
+                intent.action = null
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) { ChainProfileManager.pingAll(ChainProfileType.AMNEZIA) }
+            }
+            "io.deltator.ACTION_DEBUG_PING_MASQUE" -> {
+                intent.action = null
+                kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.IO) { ChainProfileManager.pingAll(ChainProfileType.MASQUE) }
+            }
+            "io.deltator.ACTION_DEBUG_SET_WARP" -> {
+                val json = intent.getStringExtra("warp_config")
+                if (!json.isNullOrBlank()) { Config.warpConfig = json; android.util.Log.i("MainActivity", "Debug: WARP config set (${json.length} chars)") }
+                intent.action = null
+            }
+            "io.deltator.CHAIN_CONNECT" -> {
+                val mode = intent.getStringExtra("io.deltator.extra.chain_mode") ?: Config.TOR_CHAIN_FREE_NODES
+                val host = intent.getStringExtra("io.deltator.extra.chain_host") ?: ""
+                val port = intent.getIntExtra("io.deltator.extra.chain_port", 443)
+                android.util.Log.i("MainActivity", "Debug: CHAIN_CONNECT mode=$mode host=$host port=$port")
+                val svc = Intent(this, TorVpnService::class.java).apply {
+                    action = TorVpnService.ACTION_CHAIN_CONNECT
+                    putExtra("io.deltator.extra.chain_mode", mode)
+                    putExtra("io.deltator.extra.chain_host", host)
+                    putExtra("io.deltator.extra.chain_port", port)
+                }
+                try { if (android.os.Build.VERSION.SDK_INT >= 26) startForegroundService(svc) else startService(svc) } catch (e: Exception) { startService(svc) }
                 intent.action = null
             }
         }
@@ -401,7 +452,9 @@ fun DeltaTorScreen(
     onChainPick: (host: String, port: Int) -> Unit,
     onSelectChainMode: (mode: String) -> Unit,
     onChainDisconnect: () -> Unit,
-    onUpdateBridges: () -> Unit
+    onUpdateBridges: () -> Unit,
+    onNewIdentity: () -> Unit,
+    openExitSheetTick: Int = 0
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
 
@@ -422,8 +475,19 @@ fun DeltaTorScreen(
                 onSelectChainMode = onSelectChainMode,
                 onChainDisconnect = onChainDisconnect,
                 onUpdateBridges = onUpdateBridges,
+                onNewIdentity = {
+                    val s = AppState.state.value
+                    if (Config.torChainMode != Config.TOR_CHAIN_NONE) {
+                        AppState.setHint("A proxy chain owns the exit — end the chain to rotate")
+                    } else if (!s.torRunning && !s.connected) {
+                        AppState.setHint(if (s.stopping) "Tor is restarting — press again in a moment" else "Tor is not running — connect first")
+                    } else {
+                        onNewIdentity()
+                    }
+                },
                 onOpenLog = goLog,
-                onOpenSplitTunnel = goSplit
+                onOpenSplitTunnel = goSplit,
+                openExitSheetTick = openExitSheetTick
             )
             Screen.Log -> LogScreen(onBack = goMain)
             Screen.SplitTunnel -> SplitTunnelScreen(onBack = goMain)
@@ -440,8 +504,10 @@ private fun MainScreen(
     onSelectChainMode: (mode: String) -> Unit,
     onChainDisconnect: () -> Unit,
     onUpdateBridges: () -> Unit,
+    onNewIdentity: () -> Unit,
     onOpenLog: () -> Unit,
-    onOpenSplitTunnel: () -> Unit
+    onOpenSplitTunnel: () -> Unit,
+    openExitSheetTick: Int = 0
 ) {
     val state by AppState.state.collectAsStateWithLifecycle()
     val release by AppState.releaseState.collectAsStateWithLifecycle()
@@ -453,6 +519,12 @@ private fun MainScreen(
     // dismissed by a swipe or by picking a server.
     var showChainSheet by remember { mutableStateOf(false) }
     var chainWarningFor by remember { mutableStateOf<Pair<String, Int>?>(null) }
+    // The location sheet is part of the same family: the exit-country list with
+    // live node counts, opened from the LOCATION pill next to the ring.
+    var showExitSheet by remember { mutableStateOf(false) }
+    LaunchedEffect(openExitSheetTick) {
+        if (openExitSheetTick > 0) showExitSheet = true
+    }
 
     // An APK downloaded in an earlier run opens the installer by itself as soon
     // as this screen is up. The latch matters: without it a cancel would bring
@@ -559,6 +631,10 @@ private fun MainScreen(
                 onChainDisconnect()
             }
         )
+    }
+
+    if (showExitSheet) {
+        ExitLocationSheet(onClose = { showExitSheet = false })
     }
 
     chainWarningFor?.let { picked ->
@@ -675,6 +751,8 @@ private fun MainScreen(
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
+                onNewIdentity = onNewIdentity,
+                onOpenExitLocations = { showExitSheet = true },
                 // The card's tap never jumps straight to the list: it first
                 // raises the three-language warning, and the sheet follows
                 // wherever that dialog is dismissed.
@@ -1509,7 +1587,7 @@ private fun labelText(
     return when {
         // Nothing here either. The only STOPPING the user sees is the big word.
         state.stopping -> ""
-        state.error != null -> state.error
+        state.error != null -> state.error ?: ""
         state.connecting -> "CANCEL"
         state.connected -> "DISCONNECT"
         // Proxy mode is a live state of its own, not a half-finished VPN. Without
@@ -2017,6 +2095,8 @@ private fun BottomPanel(
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
+    onNewIdentity: () -> Unit,
+    onOpenExitLocations: () -> Unit,
     onOpenChain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2033,6 +2113,54 @@ private fun BottomPanel(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Tor identity controls, straight on the home screen where the finger
+        // already is. The Tor engine is the only one with a control port, so
+        // both pills appear with it alone. The identity pill answers every tap:
+        // where the service cannot rotate right now it still answers through the
+        // hint line below, instead of sitting dark and looking broken.
+        val identity by AppState.identityState.collectAsStateWithLifecycle()
+        val hint by AppState.hint.collectAsStateWithLifecycle()
+        // The hint describes an instant answer, not a standing fact: six
+        // seconds after it appeared it stops describing anything.
+        LaunchedEffect(hint.atMillis) {
+            if (hint.atMillis != 0L) {
+                delay(6_000)
+                AppState.setHint("")
+            }
+        }
+        if (state.engineMode.equals(EngineMode.TOR_RACING.id, true)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = if (identity.busy) "ROTATING\u2026" else "NEW IDENTITY",
+                    filled = false,
+                    enabled = !identity.busy,
+                    onClick = onNewIdentity
+                )
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "EXIT LOCATION",
+                    filled = false,
+                    enabled = true,
+                    onClick = onOpenExitLocations
+                )
+            }
+            if (hint.text.isNotBlank()) {
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    hint.text,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DeltaTor.AccentLight,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
         // The chain card sits first, right where the finger already is: it is
         // only meaningful once Tor is connected, and its own state decides what
         // a tap does - open the sheet while idle, end the chain while in flight.
@@ -2141,13 +2269,27 @@ private fun BottomPanel(
             )
             InfoPill(
                 label = "EXIT",
-                value = when {
-                    state.exitCode.isNotBlank() ->
-                        "${flagEmoji(state.exitCode)} ${state.exitName}".trim()
-                    state.connected -> "Locating \u2026"
-                    else -> "--"
+                value = run {
+                    val chained = Config.torChainMode != Config.TOR_CHAIN_NONE
+                    val chainLbl = when (Config.torChainMode) {
+                        Config.TOR_CHAIN_WARP -> "WARP"; Config.TOR_CHAIN_AMNEZIA -> "AmneziaWG"
+                        Config.TOR_CHAIN_MASQUE -> "MASQUE"; Config.TOR_CHAIN_FREE_NODES -> "VPN"; else -> "Chain"
+                    }
+                    val torPart = if (state.torExitCode.isNotBlank()) "${flagEmoji(state.torExitCode)}${state.torExitCode}" else ""
+                    val chainPart = if (state.chainExitCode.isNotBlank()) "${flagEmoji(state.chainExitCode)}${state.chainExitCode}" else ""
+                    when {
+                        chained && torPart.isNotBlank() && chainPart.isNotBlank() -> "Tor $torPart  \u00b7  $chainLbl $chainPart"
+                        chained && torPart.isNotBlank() && state.exitName.contains("broken", true) ->
+                            "Tor $torPart (${chainLbl} broken)"
+                        chained && torPart.isNotBlank() -> "Tor $torPart  \u2192  $chainLbl \u2026"
+                        chained && chainPart.isNotBlank() -> "$chainLbl $chainPart"
+                        state.exitCode.isNotBlank() -> "${flagEmoji(state.exitCode)} ${state.exitName}".trim()
+                        state.connected -> "Locating \u2026"
+                        else -> "--"
+                    }
                 },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.weight(1f),
+                maxLines = 2
             )
         }
 
@@ -2265,6 +2407,9 @@ private fun ProxyChainSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var search by remember { mutableStateOf("") }
+    var showAddNode by remember { mutableStateOf(false) }
+    var addNodeHost by remember { mutableStateOf("") }
+    var addNodeCC by remember { mutableStateOf("") }
 
     val currentMode = Config.torChainMode
     var selectedTab by remember {
@@ -2447,6 +2592,20 @@ private fun ProxyChainSheet(
                                 .fillMaxWidth()
                                 .height(340.dp)
                         ) {
+                            item(key = "add_node") {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(8.dp))
+                                        .clickable { addNodeHost = ""; addNodeCC = ""; showAddNode = true }
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("+ ADD CUSTOM NODE (host:port)", style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold), color = DeltaTor.Accent)
+                                }
+                            }
                             groups.forEach { (code, group) ->
                                 item(key = "section:$code") {
                                     val name = group.first().countryName
@@ -2460,6 +2619,46 @@ private fun ProxyChainSheet(
                                     )
                                 }
                             }
+                        }
+                        if (showAddNode) {
+                            AlertDialog(
+                                onDismissRequest = { showAddNode = false },
+                                title = { Text("Add free node", color = DeltaTor.Text) },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedTextField(
+                                            value = addNodeHost,
+                                            onValueChange = { addNodeHost = it },
+                                            label = { Text("host:port (SSTP/VPN Gate)") },
+                                            singleLine = true,
+                                            colors = AdvancedFieldColors()
+                                        )
+                                        OutlinedTextField(
+                                            value = addNodeCC,
+                                            onValueChange = { addNodeCC = it.take(2).uppercase() },
+                                            label = { Text("Country code (e.g. DE), optional") },
+                                            singleLine = true,
+                                            colors = AdvancedFieldColors()
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    TextButton(onClick = {
+                                        val raw = addNodeHost.trim()
+                                        val hp = raw.substringAfterLast("@", raw)
+                                        val host = hp.substringBeforeLast(":").ifBlank { hp }
+                                        val port = hp.substringAfterLast(":", "").toIntOrNull() ?: Config.sstpPort
+                                        if (host.isNotBlank()) {
+                                            val cc = addNodeCC.trim().uppercase()
+                                            val cn = if (cc.length == 2) try { java.util.Locale("", cc).displayCountry } catch (_: Exception) { cc } else ""
+                                            ProxyChainManager.addCustomServer(host, port, cc, cn)
+                                        }
+                                        showAddNode = false
+                                    }) { Text("Add", color = DeltaTor.Accent) }
+                                },
+                                dismissButton = { TextButton(onClick = { showAddNode = false }) { Text("Cancel", color = DeltaTor.Muted) } },
+                                containerColor = DeltaTor.Surface
+                            )
                         }
                     }
                 }
@@ -2931,8 +3130,16 @@ private fun ChainProfileRow(
 
         Spacer(Modifier.width(8.dp))
 
-        // Latency badge / Ping button
+        // Latency badge / Ping button (+ exit country after ping)
         Column(horizontalAlignment = Alignment.End) {
+            if (profile.countryCode.isNotBlank()) {
+                Text(
+                    "${flagEmoji(profile.countryCode)} ${profile.countryCode.uppercase()}",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = DeltaTor.Text
+                )
+                Spacer(Modifier.height(2.dp))
+            }
             val (pingText, pingColor) = when {
                 profile.delayMs > 0 && profile.delayMs < 150 -> "${profile.delayMs} ms" to DeltaTor.Green
                 profile.delayMs >= 150 && profile.delayMs < 350 -> "${profile.delayMs} ms" to DeltaTor.Amber
@@ -3149,7 +3356,7 @@ private fun StatCard(label: String, value: String, accent: Color, up: Boolean, m
 }
 
 @Composable
-private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier) {
+private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier, maxLines: Int = 1) {
     val shape = RoundedCornerShape(12.dp)
     Column(
         modifier = modifier
@@ -3171,7 +3378,7 @@ private fun InfoPill(label: String, value: String, modifier: Modifier = Modifier
             value,
             style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
             color = DeltaTor.Text,
-            maxLines = 1
+            maxLines = maxLines
         )
     }
 }
@@ -4204,6 +4411,183 @@ private fun DrawerGroupHeader(
                 style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.2.sp),
                 color = color.copy(alpha = 0.7f)
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExitLocationSheet(onClose: () -> Unit) {
+    val directory by ExitNodes.directory.collectAsStateWithLifecycle()
+    val selectedCodes by ExitNodes.codes.collectAsStateWithLifecycle()
+    val capacity by ExitCapacityIndex.byCountry.collectAsStateWithLifecycle()
+    val state by AppState.state.collectAsStateWithLifecycle()
+    var query by remember { mutableStateOf("") }
+
+    // The list the user is building, as a local draft. It is written through to
+    // [ExitNodes] by the bottom bar's APPLY, and ALSO by backing out with a
+    // swipe: closing the sheet used to discard the draft, which read as "the
+    // app threw my selection away". A dismissal the user meant as a fingertip
+    // escape now carries the selection it shows on screen.
+    var draft by remember(selectedCodes) { mutableStateOf(selectedCodes) }
+    val live = state.torRunning || state.connected
+
+    // The sheet's height is bounded on purpose: header, search and the bottom
+    // bar are fixed furniture and the list gets what is left. Without the bound
+    // a full country table plus the APPLY bar ran past the sheet's own scroll
+    // window on smaller screens, and the one control that confirms everything —
+    // APPLY — was the thing on the floor.
+    // Keep the list short enough that CLEAR + APPLY are always on screen
+    // (the core of bug #2 was the confirmation bar falling below the fold).
+    val listMax = (LocalConfiguration.current.screenHeightDp * 0.34f).dp
+
+    ModalBottomSheet(
+        onDismissRequest = {
+            if (draft != selectedCodes) {
+                val names = directory.associate { it.code to it.name }
+                ExitNodes.replaceAll(draft, names)
+            }
+            onClose()
+        },
+        containerColor = Color(0xFF14171F)
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.48f).dp)
+                .padding(start = 20.dp, end = 20.dp, bottom = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "EXIT LOCATION",
+                        style = MaterialTheme.typography.labelLarge.copy(letterSpacing = 1.6.sp),
+                        color = DeltaTor.Text
+                    )
+                    Text(
+                        when {
+                            state.exitIp.isNotBlank() && state.exitCode.isNotBlank() ->
+                                "now: ${flagEmoji(state.exitCode)} ${state.exitName.ifBlank { state.exitCode }} \u00b7 ${state.exitIp}"
+                            state.exitName.isNotBlank() -> "now: ${state.exitName}"
+                            live -> "locating the current exit\u2026"
+                            else -> "${directory.size} countries with running exits"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = DeltaTor.Muted
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                if (live) {
+                    "APPLY builds new circuits right away, without a reconnect. Nothing selected means every country."
+                } else {
+                    "APPLY is remembered for the next connect. Nothing selected means every country."
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = DeltaTor.Muted
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            // Search: name or code, case-insensitive, over the whole list.
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text("Search country or code", style = MaterialTheme.typography.bodySmall, color = DeltaTor.Muted) },
+                textStyle = TextStyle(
+                    color = DeltaTor.Text,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
+                ),
+                colors = AdvancedFieldColors(),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            val q = query.trim().lowercase()
+            val shown = directory.filter { c ->
+                q.isEmpty() || c.name.lowercase().contains(q) || c.code.lowercase().contains(q)
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                if (shown.isEmpty()) {
+                    item {
+                        Text(
+                            if (directory.isEmpty()) "The country table is still loading\u2026"
+                            else "No country matches \"$query\"",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = DeltaTor.Muted,
+                            modifier = Modifier.padding(vertical = 24.dp)
+                        )
+                    }
+                }
+                items(shown.size, key = { shown[it].code }) { i ->
+                    val c = shown[i]
+                    val cap = capacity[c.code]
+                    CountryRow(
+                        emoji = flagEmoji(c.code),
+                        name = c.name,
+                        code = c.code,
+                        selected = draft.contains(c.code),
+                        exits = cap?.exits ?: 0,
+                        share = cap?.weight ?: 0f,
+                        onClick = {
+                            draft = if (draft.contains(c.code)) draft - c.code else draft + c.code
+                        }
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(10.dp))
+
+            // Fixed furniture, never scrolled away: the selection count, CLEAR
+            // and the APPLY bar. The bar is clickable even when unchanged, so
+            // the control never plays dead -- pressing it with an unchanged
+            // draft just answers in the hint line.
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    "CLEAR",
+                    style = MaterialTheme.typography.labelMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.2.sp
+                    ),
+                    color = if (draft.isEmpty()) DeltaTor.Muted else DeltaTor.Accent,
+                    modifier = Modifier
+                        .clickable(enabled = draft.isNotEmpty()) {
+                            draft = emptyList()
+                            AppState.setHint("Exit freed — circuits leave anywhere")
+                        }
+                        .padding(horizontal = 4.dp, vertical = 8.dp)
+                )
+                GradientPill(
+                    modifier = Modifier.weight(1f),
+                    label = "APPLY (${draft.size})",
+                    filled = true,
+                    enabled = true,
+                    onClick = {
+                        val names = directory.associate { it.code to it.name }
+                        ExitNodes.replaceAll(draft, names)
+                        AppState.setHint(
+                            if (draft.isEmpty()) "Exit freed — circuits leave anywhere"
+                            else "Exit set to ${draft.joinToString(", ")} — rebuilding circuits"
+                        )
+                        onClose()
+                    }
+                )
+            }
         }
     }
 }

@@ -4,91 +4,95 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import io.deltator.Config
 import io.deltator.feature.amnezia.AmneziaConfig
-import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.util.concurrent.atomic.AtomicLong
+import org.amnezia.awg.backend.Backend
+import org.amnezia.awg.backend.GoBackend
+import org.amnezia.awg.backend.NoopTunnelActionHandler
+import org.amnezia.awg.backend.Tunnel
+import org.amnezia.awg.config.Config as WgConfig
+import java.io.BufferedReader
+import java.io.StringReader
 
 /**
- * TunnelBackend for AmneziaWG (AWG 1.0 - 3.1).
- *
- * Proposal #1 & #4:
- * Integrates obfuscated WireGuard with Jc, Jmin/Jmax, S1/S2, and H1-H4 header magic values.
- * Bypasses TSPU / DPI packet length inspection for WireGuard handshakes.
+ * Real AmneziaWG (AWG 1.x) backend via org.amnezia.awg (zaneschepke/amneziawg-android).
+ * Applies AWG obfuscation params (Jc/Jmin/Jmax/S1/S2/H1-H4) supported by this backend.
  */
 class AmneziaTunnelBackend(
     private val context: Context,
     private val config: AmneziaConfig = AmneziaConfig.fromJson(Config.amneziaWgConfig) ?: AmneziaConfig()
-) : TunnelBackend {
+) : TunnelBackend, Tunnel {
 
-    companion object {
-        private const val TAG = "AmneziaTunnelBackend"
-    }
+    companion object { private const val TAG = "AmneziaTunnelBackend" }
+    private val backend: Backend by lazy { GoBackend(context, NoopTunnelActionHandler()) }
 
     override val id: String = EngineMode.AMNEZIA_WG.id
     override val displayName: String = EngineMode.AMNEZIA_WG.title
 
-    @Volatile
-    private var running = false
+    @Volatile private var running = false
+    @Volatile private var tunnelState: Tunnel.State = Tunnel.State.DOWN
 
-    private val rxBytes = AtomicLong(0)
-    private val txBytes = AtomicLong(0)
-
-    override val isRunning: Boolean
-        get() = running
+    override val isRunning: Boolean get() = running
+    override fun getName(): String = "deltator_awg"
+    override fun isIpv4ResolutionPreferred(): Boolean = true
+    override fun onStateChange(newState: Tunnel.State) { tunnelState = newState; running = newState == Tunnel.State.UP }
 
     override suspend fun start(tunFd: ParcelFileDescriptor): Boolean = withContext(Dispatchers.IO) {
-        Log.i(TAG, "Starting AmneziaTunnelBackend (AWG 1.0 - 3.1) with DPI params: Jc=${config.jc}, Jmin=${config.jmin}, Jmax=${config.jmax}, S1=${config.s1}, S2=${config.s2}")
-        if (config.endpoint.isBlank() || config.peerPublicKey.isBlank()) {
-            Log.w(TAG, "No AmneziaWG peer configured; please set endpoint and keys in settings.")
+        try { tunFd.close() } catch (_: Exception) {}
+        try {
+            if (config.endpoint.isBlank() || config.peerPublicKey.isBlank()) {
+                Log.w(TAG, "AmneziaWG config incomplete (endpoint/peer key missing)")
+                return@withContext false
+            }
+            Log.i(TAG, "Starting AmneziaWG (AWG): Jc=${config.jc} Jmin=${config.jmin} Jmax=${config.jmax} S1=${config.s1} S2=${config.s2} H1=${config.h1} H2=${config.h2} H3=${config.h3} H4=${config.h4}")
+            val wg = toWgQuick(config)
+            val cfg = WgConfig.parse(BufferedReader(StringReader(wg)))
+            val st = backend.setState(this@AmneziaTunnelBackend, Tunnel.State.UP, cfg)
+            running = st == Tunnel.State.UP
+            tunnelState = st
+            Log.i(TAG, "AmneziaWG start state=$st endpoint=${config.endpoint}")
+            running
+        } catch (e: Exception) {
+            Log.e(TAG, "AmneziaWG start failed: ${e.message}", e)
+            running = false; false
         }
+    }
 
-        // 1. Start TorSocksBridge in standalone Amnezia upstream mode
-        io.deltator.tunnel.TorSocksBridge.upstreamMode = io.deltator.tunnel.TorSocksBridge.UpstreamMode.AMNEZIA
-        io.deltator.tunnel.TorSocksBridge.amneziaConfig = config
-        val bridgeRes = io.deltator.tunnel.TorSocksBridge.start(
-            torSocksPort = 0,
-            torHost = "127.0.0.1",
-            listenPort = Config.proxyPort,
-            listenHost = "127.0.0.1"
-        )
-        if (bridgeRes.isFailure) {
-            Log.e(TAG, "Failed to start TorSocksBridge for Amnezia: ${bridgeRes.exceptionOrNull()?.message}")
-            return@withContext false
-        }
-
-        // 2. Start hev-socks5-tunnel bridging TUN interface to the local AWG proxy bridge
-        val res = HevSocks5Tunnel.start(
-            tunFd = tunFd,
-            socksAddress = "127.0.0.1",
-            socksPort = Config.proxyPort,
-            enableUdpTunneling = true,
-            mtu = 1280,
-            ipv4Address = "10.255.255.1",
-            ipv6Address = "fd00::1"
-        )
-
-        running = res.isSuccess
-        Log.i(TAG, "AmneziaWG tunnel active on TUN fd ${tunFd.fd} (success=${res.isSuccess})")
-        running
+    private fun toWgQuick(c: AmneziaConfig): String = buildString {
+        appendLine("[Interface]")
+        appendLine("PrivateKey = ${c.privateKey}")
+        // Prefer IPv4 to avoid VpnService IPv6 address permission issues on some ROMs.
+        if (c.address.isNotBlank()) appendLine("Address = ${c.address.split(',').first().trim()}")
+        if (c.dns.isNotBlank()) appendLine("DNS = ${c.dns}")
+        appendLine("MTU = 1280")
+        // AWG 1.x obfuscation params
+        if (c.jc > 0) appendLine("Jc = ${c.jc}")
+        if (c.jmin > 0) appendLine("Jmin = ${c.jmin}")
+        if (c.jmax > 0) appendLine("Jmax = ${c.jmax}")
+        if (c.s1 > 0) appendLine("S1 = ${c.s1}")
+        if (c.s2 > 0) appendLine("S2 = ${c.s2}")
+        if (c.h1 != 1L) appendLine("H1 = ${c.h1}")
+        if (c.h2 != 2L) appendLine("H2 = ${c.h2}")
+        if (c.h3 != 3L) appendLine("H3 = ${c.h3}")
+        if (c.h4 != 4L) appendLine("H4 = ${c.h4}")
+        appendLine()
+        appendLine("[Peer]")
+        appendLine("PublicKey = ${c.peerPublicKey}")
+        if (!c.presharedKey.isNullOrBlank()) appendLine("PresharedKey = ${c.presharedKey}")
+        if (c.allowedIps.isNotBlank()) appendLine("AllowedIPs = ${c.allowedIps}")
+        appendLine("Endpoint = ${c.endpoint}")
+        appendLine("PersistentKeepalive = 25")
     }
 
     override fun stop() {
-        running = false
-        try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
-        try { io.deltator.tunnel.TorSocksBridge.stop() } catch (_: Exception) {}
+        try { backend.setState(this, Tunnel.State.DOWN, null) } catch (e: Exception) { Log.w(TAG, "AWG stop: ${e.message}") }
+        running = false; tunnelState = Tunnel.State.DOWN
         Log.i(TAG, "AmneziaTunnelBackend stopped")
     }
 
-    override fun getStats(): BackendStats? {
-        val s = HevSocks5Tunnel.getStats()
-        return if (s != null) {
-            BackendStats(rxBytes = s.rxBytes, txBytes = s.txBytes)
-        } else {
-            BackendStats(rxBytes = rxBytes.get(), txBytes = txBytes.get())
-        }
-    }
+    override fun getStats(): BackendStats? = try {
+        val s = backend.getStatistics(this)
+        BackendStats(rxBytes = s.totalRx(), txBytes = s.totalTx())
+    } catch (_: Exception) { null }
 }

@@ -65,7 +65,13 @@ that still gets through on heavily filtered networks.
 
 - **Exit country, live** — pick any countries; the app steers even *existing* circuits
   over the control port, so you can change country without reconnecting, and it verifies
-  the real exit IP afterwards and shows the country and address.
+  the real exit IP afterwards and shows the country and address. The **EXIT LOCATION**
+  button on the main screen lists every country with its running exits and capacity share;
+  a change here is steered into the live session immediately.
+- **New identity** — one button on the main screen (and a row in the notification) that
+  sends `SIGNAL NEWNYM` over the control port of the winning Tor client and re-probes the
+  exit, so the next streams leave through fresh circuits. Gated to the Tor engine without
+  a proxy chain, because a chain owns its exit.
 - **Proxy chain over VPN Gate** — add a second hop: Tor → SSTP → a public VPN Gate server
   → internet, with a country-sorted server list, live latency tests of every server, and
   automatic fallback to the next best server — never to a dead connection.
@@ -111,7 +117,8 @@ next to the exe. Full-tunnel mode asks Windows for administrator rights when it 
 - **The ring** is the whole interface: tap to connect, tap again to reconnect. Everything
   else lives behind the hamburger drawer.
 - **Notification** shows live down/up speed and running totals, plus disconnect actions —
-  including a chain-aware disconnect when a proxy chain is running.
+  including a chain-aware disconnect when a proxy chain is running, and a *New identity*
+  row to rotate the live Tor circuits.
 - **Stop vs disconnect**: *Stop VPN* tears the tunnel down but keeps Tor warm, so the next
   connect skips the slow parts; *Disconnect* ends the session and the next connect is a
   fresh race.

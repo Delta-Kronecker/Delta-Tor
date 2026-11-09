@@ -104,7 +104,7 @@ class TorRunner(
         Thread({
             var ok = false
             try {
-                ok = applyExitNodesViaControl(port, ccs)
+                ok = applyExitNow(port, ccs)
             } catch (e: Exception) {
                 Log.w(TAG_EXIT, "[$name] could not apply via control port $port: ${e.message}")
             }
@@ -114,100 +114,51 @@ class TorRunner(
     }
 
     /**
-     * The control exchange itself. Returns true when the exit rules took effect.
-     *
-     * The template this app ships with keeps a 24h [MaxCircuitDirtiness] and the
-     * fork's Conflux enabled. Both fight the live switch: the first circuit of
-     * the session was built without an exit restriction, so all traffic would
-     * ride that single circuit's original (wrong) country for a whole day, and
-     * Conflux sets rebuilt after the switch keep relinking unrestricted legs.
-     * The present values are therefore retired (10 min turnover, Conflux off)
-     * and a fresh identity is requested so the next streams leave through the
-     * selected countries. Any line the binary rejects is left alone, traced, and
-     * the session continues with the exit list still in force.
+     * The live-steer exchange, logged under the ExitNode section either way so a
+     * device-side failure is visible. `STEER` head marks a user-initiated change
+     * apart from the once-per-session bootstrap application.
      */
-    private fun applyExitNodesViaControl(port: Int, ccs: List<String>): Boolean {
-        val exitValue = ccs.joinToString(",") { "{$it}" }
-        Log.i(TAG_EXIT, "=== EXIT NODE |> $name |> ${ccs.joinToString(",")} ===")
+    private fun applyExitNow(port: Int, ccs: List<String>, steer: Boolean = false): Boolean {
+        Log.i(TAG_EXIT, "=== ${if (steer) "STEER" else "EXIT"} NODE |> $name |> ${ccs.joinToString(",")} ===")
         Log.i(TAG_EXIT, "[$name] geoip: built earlier for ${ccs.joinToString(",")}")
         Log.i(TAG_EXIT, "[$name] control port: $listenHost:$port")
-        return sendControl(
-            port,
-            listOf(
-                ControlCommand("AUTHENTICATE", optional = false),
-                ControlCommand("SETCONF ExitNodes=\"$exitValue\"", optional = false),
-                ControlCommand("SETCONF StrictNodes=0", optional = false),
-                ControlCommand("SETCONF MaxCircuitDirtiness=600", optional = true),
-                ControlCommand("SETCONF ConfluxEnabled=0", optional = true),
-                ControlCommand("SETCONF CircuitBuildTimeout=180", optional = true),
-                ControlCommand("SETCONF LearnCircuitBuildTimeout=1", optional = true),
-                ControlCommand("SIGNAL NEWNYM", optional = true),
-                ControlCommand("GETCONF ExitNodes", optional = false),
-                ControlCommand("GETCONF StrictNodes", optional = false)
-            )
-        )
-    }
-
-    private class ControlCommand(val line: String, val optional: Boolean)
-
-    /**
-     * Send a short control exchange to a bootstrapped Tor. Logs one line per
-     * command (command + final status) under the ExitNode section; optional
-     * commands that fail are waived with a warning, mandatory ones throw.
-     */
-    private fun sendControl(port: Int, commands: List<ControlCommand>): Boolean {
-        val socket = java.net.Socket()
-        try {
-            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 4_000)
-            socket.soTimeout = 4_000
-            val writer = socket.getOutputStream()
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1))
-            for (command in commands) {
-                writer.write(command.line.toByteArray(Charsets.ISO_8859_1))
-                writer.write("\r\n".toByteArray(Charsets.ISO_8859_1))
-                writer.flush()
-                val reply = readReply(reader)
-                val ok = reply.isNotEmpty() && reply.last().startsWith("250")
-                if (!ok) {
-                    if (command.optional) {
-                        Log.w(TAG_EXIT, "[$name] ${command.line} -> ${reply.joinToString(" / ")} (ignored)")
-                        continue
-                    }
-                    throw RuntimeException("${command.line} -> ${reply.joinToString(" / ")}")
-                }
-                Log.i(TAG_EXIT, "[$name] ${command.line} -> ${reply.last()}")
-            }
-            return true
-        } finally {
-            runCatching { socket.close() }
-        }
+        return TorControl.steerExit(port, dataDir, ccs, tag = TAG_EXIT)
     }
 
     /**
-     * Read one complete control reply. Single-line replies come back as one
-     * line; multi-line "250-..." blocks end at their "250 ..." terminator and
-     * "250+..." (data) blocks consume the raw data lines up to the "." line and
-     * the closing "250 ..." line.
+     * The loopback control port Tor binds for this runner, `0` when it did not
+     * open. The winner's port is what the main screen's "New Identity" button
+     * and the live exit re-steer both talk to through [TorControl].
      */
-    private fun readReply(reader: BufferedReader): List<String> {
-        val out = ArrayList<String>()
-        var line = reader.readLine() ?: return out
-        out.add(line)
-        if (line.startsWith("250+")) {
-            // Raw data follows: read until the standalone "." terminator.
-            while (true) {
-                val data = reader.readLine() ?: break
-                if (data == ".") break
-                out.add(data)
-            }
-            reader.readLine()?.let { out.add(it) } // closing status line
-        } else {
-            while (line.startsWith("250-")) {
-                line = reader.readLine() ?: break
-                out.add(line)
-            }
+    val controlPortLive: Int get() = controlPort
+
+    /** This runner's Tor DataDirectory; the control cookie lives in there. */
+    val controlDataDir: File get() = dataDir
+
+    /**
+     * Apply [codes] to a running, bootstrapped Tor over its control port,
+     * building (or refreshing) the geoip database first so Tor can actually
+     * resolve the countries. Blocks; call off the main thread.
+     *
+     * Returns false with a word in the log when there is no listener to speak
+     * to, rather than pretending the steering took effect.
+     */
+    fun liveSteerExit(codes: List<String>): Boolean {
+        val ccs = codes.map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        val port = controlPort
+        if (port <= 0) {
+            Log.w(TAG_EXIT, "[$name] live steer: no control port is open")
+            return false
         }
-        return out
+        if (ccs.isNotEmpty()) prepareGeoIp(ccs)
+        return try {
+            applyExitNow(port, ccs, steer = true)
+        } catch (e: Exception) {
+            Log.w(TAG_EXIT, "[$name] live steer failed over $port: ${e.message}")
+            false
+        }
     }
 
     /**
@@ -659,17 +610,18 @@ class TorRunner(
         // the first boot is unrestricted (fast), and the country rules are
         // pushed in once the runner is already at 100%: Tor then steers new
         // circuits into the selected countries without the slow cold start.
-        val exitCodes = ExitNodes.currentCodes()
-            .map { it.trim().uppercase() }
-            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
-            .distinct()
-        if (exitCodes.isNotEmpty()) {
-            controlPort = freeEphemeralPort()
-        }
+        //
+        // The control port itself is opened on EVERY runner, not just the ones
+        // that steer at bootstrap: the main screen's "New Identity" button and
+        // the live location switch both talk to the winner of the race over
+        // this port, through [TorControl], whatever the user has picked so far.
+        // Authentication is Tor's own default for ControlPort (cookie, written
+        // into [dataDir]); the client reads it from there.
+        controlPort = freeEphemeralPort()
 
         val templateLines = TorrcSettings.mobileConfluxLines(TorrcSettings.isMobileData(context))
         val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n" +
-            (if (exitCodes.isNotEmpty()) "ControlPort $listenHost:$controlPort\n" else "")
+            "ControlPort $listenHost:$controlPort\n"
         torrcFile.writeText(torrcContent)
         try {
             File(context.filesDir, "tor_last.torrc").writeText(torrcContent)
@@ -697,10 +649,20 @@ class TorRunner(
      * without a word, so say so instead of pretending the exit is pinned.
      */
     private fun prepareGeoIp() {
-        val codes = ExitNodes.currentCodes()
-            .map { it.trim().uppercase() }
-            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
-            .distinct()
+        prepareGeoIp(
+            ExitNodes.currentCodes()
+                .map { it.trim().uppercase() }
+                .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+                .distinct()
+        )
+    }
+
+    /**
+     * Build the geoip database for exactly [codes]. The live re-steer calls this
+     * with whatever the user has just selected, which may be a country that was
+     * not in the database at process start.
+     */
+    private fun prepareGeoIp(codes: List<String>) {
         if (codes.isEmpty()) {
             // No country chosen: drop a stale database so nothing points at it.
             GeoIpFile.discard(dataDir)

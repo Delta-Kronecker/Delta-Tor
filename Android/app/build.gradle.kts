@@ -184,4 +184,7 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.17.0")
+
+    // WireGuard/AWG userspace backend (supports AWG params; also used for WARP/WG).
+    implementation("com.zaneschepke:amneziawg-android:1.3.0")
 }

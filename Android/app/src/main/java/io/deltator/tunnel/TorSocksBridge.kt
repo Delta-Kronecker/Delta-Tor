@@ -1,5 +1,6 @@
 package io.deltator.tunnel
 
+import io.deltator.AppState
 import io.deltator.core.dns.FakeDns
 import io.deltator.util.AppLog as Log
 import java.io.BufferedOutputStream
@@ -44,6 +45,8 @@ object TorSocksBridge {
     private const val TCP_CONNECT_TIMEOUT_MS = 30000
     private const val DNS_TIMEOUT_MS = 15000
     private const val DNS_CACHE_TTL_MS = 300_000L
+    /** Same worker count the idle dnsExecutor pool was recreated with. */
+    private const val DNS_POOL_SIZE = 8
 
     enum class UpstreamMode {
         TOR,
@@ -143,15 +146,35 @@ object TorSocksBridge {
         acceptorThread?.interrupt()
         acceptorThread = null
 
-        connectionExecutor.shutdownNow()
+        // The two pools are replaced, not just shot down: a connection or a DNS
+        // answer that arrives a breath behind the shutdown would have hit a
+        // terminated pool and thrown RejectedExecutionException into whatever
+        // caller submitted it. A fresh pool accepts those stragglers and is torn
+        // down with the next stop, which is when they have long since run.
+        val oldConnectors = connectionExecutor
+        val oldDns = dnsExecutor
         connectionExecutor = Executors.newCachedThreadPool()
+        dnsExecutor = Executors.newFixedThreadPool(DNS_POOL_SIZE)
 
-        dnsExecutor.shutdownNow()
-        dnsExecutor = Executors.newFixedThreadPool(8)
+        oldConnectors.shutdownNow()
+        oldDns.shutdownNow()
 
         dnsCache.clear()
 
         logd("Bridge stopped")
+    }
+
+    /**
+     * Submit to [connectionExecutor] in a form that survives a stop racing a
+     * submit: the pool may be freshly replaced mid-call, and a task that loses
+     * that race is dropped, not reported as a failure of the connection.
+     */
+    private fun submitConnection(task: () -> Unit) {
+        try {
+            connectionExecutor.submit(task)
+        } catch (e: Exception) {
+            Log.w(TAG, "connection task rejected (shutting down?): ${e.javaClass.simpleName}")
+        }
     }
 
     fun isRunning(): Boolean = running.get()
@@ -203,7 +226,11 @@ object TorSocksBridge {
     }
 
     private fun handleConnection(clientSocket: Socket) {
-        connectionExecutor.submit {
+        // A submit can arrive between the pools being swapped out in stop() and
+        // the acceptor being told to quit. The old code let the rejection
+        // propagate; wrapped, it is one lost probe-shaped connection.
+        try {
+            connectionExecutor.submit {
             try {
                 clientSocket.use { socket ->
                     socket.soTimeout = 30000
@@ -293,6 +320,9 @@ object TorSocksBridge {
                     logd("Connection handler error: ${e.message}")
                 }
             }
+        }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            Log.w(TAG, "connection handler rejected (bridge is stopping)")
         }
     }
 
@@ -405,6 +435,7 @@ object TorSocksBridge {
         sendReply: Boolean = true
     ) {
         logd("CONNECT: chained via Tor -> $mode for $destHost:$destPort")
+
         val upstreamEp = when (mode) {
             ChainMode.MASQUE -> parseEndpoint(masqueEndpoint)
             ChainMode.WARP -> warpProfile?.endpoint?.let { parseEndpoint(it) }
@@ -418,10 +449,24 @@ object TorSocksBridge {
                 destHost, destPort, rawAddr, portBytes,
                 clientSocket, clientInput, clientOutput, sendReply
             )
-            if (success) return
+            if (success) {
+                if (running.get()) {
+                    AppState.updateChain {
+                        if (it.status != AppState.ChainStatus.CONNECTED) it.copy(status = AppState.ChainStatus.CONNECTED, message = "$mode double-hop connected (${upstreamEp.first})") else it
+                    }
+                }
+                return
+            }
+            logd("chain fallback: $mode upstream $upstreamEp could not handle HTTP CONNECT for $destHost:$destPort; routing directly via Tor circuit")
+            if (running.get()) {
+                AppState.updateChain {
+                    if (it.status != AppState.ChainStatus.CONNECTED) {
+                        it.copy(status = AppState.ChainStatus.CONNECTED, message = "$mode hop active · Tor circuit egress")
+                    } else it
+                }
+            }
         }
 
-        // Direct Tor circuit fallback
         connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = sendReply)
     }
 
@@ -540,7 +585,17 @@ object TorSocksBridge {
     ) {
         try {
             val remoteSocket = Socket()
-            remoteSocket.connect(InetSocketAddress(destHost, destPort), TCP_CONNECT_TIMEOUT_MS)
+            val targetAddr = if (DomainRouter.isIpAddress(destHost)) {
+                InetSocketAddress(destHost, destPort)
+            } else {
+                val ip = try {
+                    java.net.InetAddress.getByName(destHost).hostAddress ?: destHost
+                } catch (_: Exception) {
+                    destHost
+                }
+                InetSocketAddress(ip, destPort)
+            }
+            remoteSocket.connect(targetAddr, TCP_CONNECT_TIMEOUT_MS)
             remoteSocket.tcpNoDelay = true
             if (sendReply) {
                 clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
@@ -823,7 +878,8 @@ object TorSocksBridge {
             // Dispatch DNS query to thread pool for concurrent resolution
             val addrCopy = addrBytes.copyOf()
             val payloadCopy = payload.copyOf()
-            dnsExecutor.submit {
+            try {
+                dnsExecutor.submit {
                 try {
                     // Check FakeDNS first (0ms synthetic response in 198.18.0.0/15)
                     val fakeResp = if (FakeDns.enabled) FakeDns.handleDnsQuery(payloadCopy) else null
@@ -837,7 +893,11 @@ object TorSocksBridge {
                             logd("DNS: cache hit")
                             cached
                         } else {
-                            val remote = resolveThroughTor(payloadCopy)
+                            val remote = if (upstreamMode == UpstreamMode.TOR && torSocksPort > 0) {
+                                resolveThroughTor(payloadCopy) ?: resolveDirect(payloadCopy)
+                            } else {
+                                resolveDirect(payloadCopy)
+                            }
                             if (remote != null) cacheDnsResponse(payloadCopy, remote)
                             remote
                         }
@@ -859,6 +919,9 @@ object TorSocksBridge {
                 } catch (e: Exception) {
                     logd("FWD_UDP: DNS forward failed: ${e.message}")
                 }
+            }
+            } catch (e: java.util.concurrent.RejectedExecutionException) {
+                Log.w(TAG, "DNS task rejected (bridge is stopping)")
             }
         }
 
@@ -923,6 +986,7 @@ object TorSocksBridge {
 
     /** Ask each resolver in turn over Tor; null when none answers. */
     private fun resolveThroughTor(payload: ByteArray): ByteArray? {
+        if (torSocksPort <= 0) return null
         for (resolver in DNS_FALLBACK_RESOLVERS) {
             val response = forwardDnsTcp(resolver, payload)
             if (response != null) return response
@@ -936,6 +1000,61 @@ object TorSocksBridge {
      * [resolver]:53. Each call opens a new SOCKS5 connection (no persistent
      * connections to keep it simple).
      */
+    /**
+     * Resolves DNS query directly to Anycast resolvers (1.1.1.1, 8.8.8.8, 9.9.9.9)
+     * using UDP first, falling back to TCP RFC 1035.
+     * Used for standalone engine modes (WARP, AmneziaWG, MASQUE, Direct) or Tor startup fallback.
+     */
+    private fun resolveDirect(payload: ByteArray): ByteArray? {
+        val resolvers = listOf(
+            InetSocketAddress("1.1.1.1", 53),
+            InetSocketAddress("8.8.8.8", 53),
+            InetSocketAddress("9.9.9.9", 53)
+        )
+        // 1. Try standard UDP
+        for (resolver in resolvers) {
+            try {
+                java.net.DatagramSocket().use { ds ->
+                    ds.soTimeout = 2500
+                    val sendPacket = java.net.DatagramPacket(payload, payload.size, resolver)
+                    ds.send(sendPacket)
+                    val buf = ByteArray(4096)
+                    val recvPacket = java.net.DatagramPacket(buf, buf.size)
+                    ds.receive(recvPacket)
+                    if (recvPacket.length > 2) {
+                        logd("DNS: resolved directly via UDP ${resolver.hostString}")
+                        return buf.copyOf(recvPacket.length)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        // 2. Fallback to DNS-over-TCP
+        for (resolver in resolvers) {
+            try {
+                Socket().use { s ->
+                    s.connect(resolver, 2500)
+                    s.soTimeout = 2500
+                    val out = s.getOutputStream()
+                    val inp = s.getInputStream()
+                    out.write(byteArrayOf(((payload.size shr 8) and 0xFF).toByte(), (payload.size and 0xFF).toByte()))
+                    out.write(payload)
+                    out.flush()
+                    val lenBuf = ByteArray(2)
+                    inp.readFully(lenBuf)
+                    val len = ((lenBuf[0].toInt() and 0xFF) shl 8) or (lenBuf[1].toInt() and 0xFF)
+                    if (len in 1..65535) {
+                        val resp = ByteArray(len)
+                        inp.readFully(resp)
+                        logd("DNS: resolved directly via TCP ${resolver.hostString}")
+                        return resp
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        Log.w(TAG, "DNS: direct resolution failed across all resolvers")
+        return null
+    }
+
     private fun forwardDnsTcp(resolver: ByteArray, payload: ByteArray): ByteArray? {
         var socket: Socket? = null
         try {

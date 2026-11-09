@@ -80,6 +80,7 @@ object WarpRegistrar {
 
     // Official Cloudflare Anycast IP pool for DPI bypass rotation
     val ANYCAST_ENDPOINTS = listOf(
+        "engage.cloudflareclient.com:2408",
         "162.159.192.1:2408",
         "162.159.193.1:2408",
         "162.159.195.1:2408",

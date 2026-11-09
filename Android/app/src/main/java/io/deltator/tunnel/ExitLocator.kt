@@ -7,6 +7,7 @@ import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URL
+import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 
 /** Where the traffic leaves the Tor network or proxy chain. */
@@ -31,6 +32,9 @@ data class ExitInfo(
  * Always queries through the local SOCKS5 proxy bridge (127.0.0.1:proxyPort)
  * to prevent real IP leaks (since DeltaTor itself is excluded from the VPN TUN
  * to prevent routing loops, so raw direct sockets bypass the VPN).
+ *
+ * Works for every exit path (direct Tor and Tor→chain/WARP/Amnezia/MASQUE/free
+ * nodes) because the probe rides the same SOCKS bridge the apps use.
  */
 object ExitLocator {
     private const val TAG = "ExitLocator"
@@ -44,6 +48,8 @@ object ExitLocator {
     )
 
     private val IPV4 = Regex("^(?:\\d{1,3}\\.){3}\\d{1,3}$")
+    /** Cloudflare/special markers that are not a geographic country. */
+    private val NON_GEO = setOf("T1", "XX", "A1", "A2", "O1")
 
     suspend fun locate(
         context: Context,
@@ -55,34 +61,28 @@ object ExitLocator {
         return probeAll(context, socksProxy, timeoutMs)
     }
 
+    /** Probe without a SOCKS proxy (direct/VPN egress). */
+    suspend fun locateDirect(context: Context, timeoutMs: Int = 8000): ExitInfo? =
+        probeAll(context, Proxy.NO_PROXY, timeoutMs)
+
     private suspend fun probeAll(context: Context, proxy: Proxy, timeoutMs: Int): ExitInfo? {
-        // Fast probe: Cloudflare trace (returns exact public IP + ISO country code)
+        // Fast probe: Cloudflare trace (returns exact public IP + country marker).
+        // `loc=T1` means "Tor" (not geography) — resolve the real country by IP so
+        // exit-country matching and display work for Tor and any chained engine.
         try {
             val trace = fetch(proxy, "https://cloudflare.com/cdn-cgi/trace", timeoutMs)
             val ip = trace.lineSequence().find { it.startsWith("ip=") }?.removePrefix("ip=")?.trim()
             val loc = trace.lineSequence().find { it.startsWith("loc=") }?.removePrefix("loc=")?.trim()
-            if (!ip.isNullOrBlank() && IPV4.matches(ip)) {
-                val cInfo = try { BridgeCountries.countryInfo(context, ip) } catch (e: Exception) { null }
-                val cName = if (!loc.isNullOrBlank()) {
-                    val display = java.util.Locale("", loc).displayCountry
-                    if (display.isNotBlank() && display != loc) display
-                    else cInfo?.second ?: ""
-                } else {
-                    cInfo?.second ?: ""
-                }
-                return ExitInfo(
-                    ip = ip,
-                    countryCode = loc ?: "",
-                    countryName = cName,
-                    fromNetwork = true
-                )
+            if (!ip.isNullOrBlank() && (IPV4.matches(ip) || ip.contains(':'))) {
+                val (cc, name) = resolveCountry(context, ip, loc)
+                return ExitInfo(ip = ip, countryCode = cc, countryName = name, fromNetwork = true)
             }
         } catch (e: Exception) {
             Log.d(TAG, "Cloudflare trace probe failed: ${e.message}")
         }
 
         // Secondary: ip2location.io JSON
-        geoLookup(proxy, timeoutMs)?.let { return it }
+        geoLookup(context, proxy, timeoutMs)?.let { return it }
 
         // Fallback: plain-text echo services + offline GeoIP database
         for (url in echoUrls) {
@@ -93,31 +93,44 @@ object ExitLocator {
                 null
             } ?: continue
 
-            val offline = try { BridgeCountries.countryInfo(context, ip) } catch (e: Exception) { null }
-            val code = offline?.first ?: ""
-            val name = offline?.second ?: if (code.isNotBlank()) java.util.Locale("", code).displayCountry else ""
-            return ExitInfo(
-                ip = ip,
-                countryCode = code,
-                countryName = name,
-                fromNetwork = false
-            )
+            val (cc, name) = resolveCountry(context, ip, null)
+            return ExitInfo(ip = ip, countryCode = cc, countryName = name, fromNetwork = false)
         }
         return null
     }
 
+    /**
+     * Turn a raw marker [hint] (e.g. Cloudflare `loc`) + [ip] into a real
+     * (countryCode, countryName). Non-geo markers like T1 (Tor) fall back to the
+     * offline IP database so matching/selection works.
+     */
+    private suspend fun resolveCountry(context: Context, ip: String, hint: String?): Pair<String, String> {
+        val raw = hint?.trim()?.uppercase().orEmpty()
+        val isGeo = raw.length == 2 && raw.all { it in 'A'..'Z' } && raw !in NON_GEO
+        val offline = try { BridgeCountries.countryInfo(context, ip) } catch (e: Exception) { null }
+        return if (isGeo) {
+            val display = Locale("", raw).displayCountry
+            val name = if (display.isNotBlank() && !display.equals(raw, true)) display else (offline?.second ?: raw)
+            raw to name
+        } else {
+            if (offline != null) offline.first to offline.second else "" to ""
+        }
+    }
+
     // --- ip2location.io -------------------------------------------------------
 
-    private fun geoLookup(proxy: Proxy, timeoutMs: Int): ExitInfo? = try {
+    private suspend fun geoLookup(context: Context, proxy: Proxy, timeoutMs: Int): ExitInfo? = try {
         val body = fetch(proxy, GEO_URL, timeoutMs)
         val ip = json(body, "ip")
         if (ip.isNullOrBlank()) {
             null
         } else {
+            val (cc, name) = resolveCountry(context, ip, json(body, "country_code"))
+            val apiName = json(body, "country_name").orEmpty()
             ExitInfo(
                 ip = ip,
-                countryCode = json(body, "country_code").orEmpty(),
-                countryName = json(body, "country_name").orEmpty(),
+                countryCode = cc,
+                countryName = if (name.isNotBlank()) name else apiName,
                 city = json(body, "city_name").orEmpty(),
                 asn = json(body, "as").orEmpty(),
                 fromNetwork = true
