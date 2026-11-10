@@ -232,7 +232,14 @@ public sealed class SstpChainEngine
             }
             else
             {
-                AppState.UpdateChain(_ => new ChainState());
+                // The loop ended on its own. If it already reported a failure,
+                // that Failed state and its message are what the user must be
+                // able to read; only a half-finished phase is cleared here.
+                var status = AppState.Chain.Status;
+                if (status is ChainStatus.Connecting or ChainStatus.Stopping)
+                {
+                    AppState.UpdateChain(_ => new ChainState());
+                }
             }
         }
     }

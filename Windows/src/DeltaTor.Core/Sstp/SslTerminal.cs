@@ -276,6 +276,28 @@ internal sealed class SslTerminal
         return certificate is null ? System.Array.Empty<byte>() : certificate.GetRawCertData();
     }
 
+    /// <summary>
+    /// True for the IOException a socket read throws when its ReceiveTimeout
+    /// elapses (WSAETIMEDOUT on Windows, WouldBlock elsewhere). Android's
+    /// <c>receive</c> catches <c>SocketTimeoutException</c> for exactly this
+    /// reason: one quiet second on a Tor circuit means "nothing yet", not
+    /// "the session is dead".
+    /// </summary>
+    private static bool IsReceiveTimeout(IOException e)
+    {
+        for (Exception? inner = e; inner is not null; inner = inner.InnerException)
+        {
+            if (inner is SocketException socket &&
+                (socket.SocketErrorCode == SocketError.TimedOut ||
+                 socket.SocketErrorCode == SocketError.WouldBlock))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void Receive(ByteBuffer buffer)
     {
         var start = buffer.Position;
@@ -289,7 +311,23 @@ internal sealed class SslTerminal
         }
 
         var max = buffer.Capacity - writeAt;
-        var n = _ssl!.Read(buffer.Array, writeAt, max);
+
+        int n;
+        try
+        {
+            n = _ssl!.Read(buffer.Array, writeAt, max);
+        }
+        catch (IOException e) when (IsReceiveTimeout(e))
+        {
+            // Return with no bytes rather than failing the session: the
+            // incoming loop keeps ticking its SSTP/PPP echo timers while it
+            // waits, and reads again on the next pass. This is the Windows
+            // counterpart of Android's swallowed SocketTimeoutException — and
+            // it also means a genuinely silent server is caught by the echo
+            // deadline, not by a one-second hiccup.
+            return;
+        }
+
         if (n <= 0)
         {
             throw new IOException("SSTP TLS stream closed");

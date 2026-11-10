@@ -841,10 +841,15 @@ public static class BridgeRace
     private static void OnChainExhausted(string reason)
     {
         AppLog.W(TAG, $"chain exhausted: {reason} \u2014 restoring plain Tor VPN");
+        // The card draws a single line, and the reason can be a whole OSC block
+        // with a stack trace; keep its first line for the UI and leave the full
+        // text in the log above.
+        var firstLine = reason.Split('\n')[0].Trim();
+        if (firstLine.Length == 0) firstLine = "the chain could not connect";
         AppState.UpdateChain(state => state with
         {
             Status = ChainStatus.Failed,
-            Message = $"back to Tor: {reason}"
+            Message = $"back to Tor: {firstLine}"
         });
         RestoreTorVpn();
     }
