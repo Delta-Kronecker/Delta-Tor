@@ -621,15 +621,55 @@ object ChainProfileManager {
         } else if (host.startsWith("http://")) {
             host = host.removePrefix("http://").substringBefore("/")
         }
-        if (host.contains(":")) {
+        if (host.startsWith("[") && host.contains("]")) {
+            val after = host.substringAfter("]")
+            host = host.substringAfter("[").substringBefore("]")
+            if (after.startsWith(":")) {
+                endpointPort = after.removePrefix(":").toIntOrNull() ?: endpointPort
+            }
+        } else if (host.count { it == ':' } == 1) {
             val parts = host.split(":")
             host = parts[0]
-            endpointPort = parts[1].toIntOrNull() ?: 443
+            endpointPort = parts[1].toIntOrNull() ?: endpointPort
         }
         if (host.isBlank()) return -1L
 
+        // Resolve hostname to IP, preferring IPv4
+        val targetIp = try {
+            val addrs = java.net.InetAddress.getAllByName(host)
+            addrs.firstOrNull { it is java.net.Inet4Address }?.hostAddress
+                ?: addrs.firstOrNull()?.hostAddress
+                ?: host
+        } catch (_: Exception) {
+            host
+        }
+
+        // 1. High-speed system ICMP ping (works on Android without root for responsive nodes)
+        if (targetIp.matches(Regex("^(?:\\d{1,3}\\.){3}\\d{1,3}$"))) {
+            try {
+                val proc = Runtime.getRuntime().exec(arrayOf("/system/bin/ping", "-c", "1", "-w", "1", targetIp))
+                val reader = proc.inputStream.bufferedReader()
+                var line: String?
+                var pingMs = -1L
+                while (reader.readLine().also { line = it } != null) {
+                    val l = line ?: break
+                    if ("time=" in l) {
+                        val part = l.substringAfter("time=").substringBefore(" ")
+                        val ms = part.toDoubleOrNull()?.toLong() ?: -1L
+                        if (ms >= 0) {
+                            pingMs = ms.coerceAtLeast(1L)
+                            break
+                        }
+                    }
+                }
+                proc.waitFor()
+                if (pingMs > 0) return pingMs
+            } catch (_: Exception) {}
+        }
+
+        // 2. TCP Handshake probe (works for MASQUE, Amnezia, and proxies with open TCP ports)
         val probePorts = when (type) {
-            ChainProfileType.WARP -> listOf(443, 80, endpointPort)
+            ChainProfileType.WARP -> listOf(endpointPort, 443, 80)
             ChainProfileType.AMNEZIA -> listOf(endpointPort, 443, 80, 22)
             ChainProfileType.MASQUE -> listOf(endpointPort, 443, 80)
             else -> listOf(endpointPort, 443, 80)
@@ -640,41 +680,20 @@ object ChainProfileManager {
             var socket: Socket? = null
             try {
                 socket = Socket()
-                socket.connect(InetSocketAddress(host, port), 1200)
+                socket.tcpNoDelay = true
+                socket.connect(InetSocketAddress(host, port), 800)
                 val rtt = SystemClock.elapsedRealtime() - start
                 return rtt.coerceAtLeast(1L)
             } catch (ce: java.net.ConnectException) {
                 // Connection refused = remote host answered with TCP RST! It is alive!
                 val rtt = SystemClock.elapsedRealtime() - start
-                if (rtt < 1100) {
+                if (rtt < 750) {
                     return rtt.coerceAtLeast(1L)
                 }
             } catch (_: Exception) {
             } finally {
                 try { socket?.close() } catch (_: Exception) {}
             }
-        }
-
-        // UDP fallback probe for WireGuard/Amnezia
-        if (type == ChainProfileType.WARP || type == ChainProfileType.AMNEZIA) {
-            try {
-                val start = SystemClock.elapsedRealtime()
-                java.net.DatagramSocket().use { ds ->
-                    ds.soTimeout = 800
-                    val target = InetSocketAddress(host, endpointPort)
-                    val dummy = byteArrayOf(0x01, 0x00, 0x00, 0x00)
-                    val packet = java.net.DatagramPacket(dummy, dummy.size, target)
-                    ds.send(packet)
-                    val recvBuf = ByteArray(256)
-                    val recvPacket = java.net.DatagramPacket(recvBuf, recvBuf.size)
-                    try {
-                        ds.receive(recvPacket)
-                        return (SystemClock.elapsedRealtime() - start).coerceAtLeast(1L)
-                    } catch (_: java.net.PortUnreachableException) {
-                        return (SystemClock.elapsedRealtime() - start).coerceAtLeast(1L)
-                    } catch (_: Exception) {}
-                }
-            } catch (_: Exception) {}
         }
 
         return -1L

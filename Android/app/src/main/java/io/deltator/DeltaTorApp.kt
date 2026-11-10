@@ -159,7 +159,7 @@ object Config {
      * Tor's output is read either way; only the kept history is off.
      */
     var loggingEnabled: Boolean
-        get() = prefs.getBoolean("logging_enabled", false)
+        get() = prefs.getBoolean("logging_enabled", true)
         set(value) = prefs.edit().putBoolean("logging_enabled", value).apply()
 
     /**

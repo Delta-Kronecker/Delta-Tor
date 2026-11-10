@@ -1204,7 +1204,7 @@ class TorVpnService : VpnService() {
             Log.i(TAG, "exit apply ($reason): not live (torRunning=${s.torRunning} connected=${s.connected} stopping=${s.stopping})")
             return false
         }
-        if (chained) {
+        if (chained && reason != "action" && reason != "auto-match") {
             Log.i(TAG, "exit apply ($reason): chain owns exit (${Config.torChainMode})")
             return false
         }

@@ -15,6 +15,22 @@ class DebugReceiver : BroadcastReceiver() {
         android.util.Log.i(TAG, "received $action")
         Log.i(TAG, "received $action")
 
+        if (action == "io.deltator.ACTION_ENABLE_LOGGING") {
+            Config.loggingEnabled = true
+            io.deltator.util.AppLog.enabled = true
+            android.util.Log.i(TAG, "Logging enabled via broadcast")
+            return
+        }
+
+        if (action == "io.deltator.ACTION_DUMP_LOG") {
+            val lines = io.deltator.util.AppLog.lines.value
+            android.util.Log.i(TAG, "=== DUMPING APPLOG (${lines.size} entries) ===")
+            lines.takeLast(150).forEach { entry ->
+                android.util.Log.i("DeltaTorLog", entry.raw)
+            }
+            return
+        }
+
         if (action == "io.deltator.ACTION_AUTO_MATCH") {
             val typeStr = intent.getStringExtra("type") ?: "WARP"
             val type = try {

@@ -526,16 +526,16 @@ object TorSocksBridge {
             remoteOutput.write(connectHttp.toByteArray(Charsets.US_ASCII))
             remoteOutput.flush()
 
-            val reader = java.io.BufferedReader(java.io.InputStreamReader(remoteInput, Charsets.US_ASCII))
-            val statusLine = reader.readLine() ?: ""
+            // Read HTTP response byte-by-byte to prevent BufferedReader buffering payload bytes
+            val statusLine = readHttpLine(remoteInput)
             if (!statusLine.contains("200")) {
                 logd("CONNECT: double-hop upstream returned status: $statusLine")
                 remoteSocket.close()
                 return false
             }
             while (true) {
-                val line = reader.readLine()
-                if (line.isNullOrEmpty()) break
+                val line = readHttpLine(remoteInput)
+                if (line.isEmpty()) break
             }
 
             logd("CONNECT: double-hop Tor -> $upstreamHost:$upstreamPort -> $destHost:$destPort OK")
@@ -1185,6 +1185,17 @@ object TorSocksBridge {
                 t1.interrupt()
             }
         }
+    }
+
+    private fun readHttpLine(input: InputStream): String {
+        val baos = java.io.ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b == -1) break
+            if (b == '\n'.code) break
+            if (b != '\r'.code) baos.write(b)
+        }
+        return baos.toString("US-ASCII")
     }
 
     private fun copyStream(input: InputStream, output: OutputStream) {

@@ -472,7 +472,7 @@ object ParallelTorManager {
         }
 
         val planNames = plans.map { it.first }.toSet()
-        lastPlans = plans.toMap()
+        lastPlans = preparedPlans.toMap()
         lastPorts = allPorts.filterKeys { it in planNames }
 
         val gen = beginRunners()
