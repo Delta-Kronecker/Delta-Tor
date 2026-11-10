@@ -22,9 +22,16 @@ import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.SstpChainEngine
+import io.deltator.tunnel.TorControl
 import io.deltator.tunnel.TorRunner
 import io.deltator.tunnel.TorSocksBridge
 import io.deltator.tunnel.TorrcSettings
+import io.deltator.core.backend.TunnelBackend
+import io.deltator.core.backend.AmneziaTunnelBackend
+import io.deltator.core.backend.WarpTunnelBackend
+import io.deltator.core.backend.MasqueTunnelBackend
+import io.deltator.core.backend.EngineMode
+import io.deltator.core.dns.FakeDns
 import io.deltator.util.AppLog as Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +39,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -61,8 +69,24 @@ class TorVpnService : VpnService() {
         const val ACTION_STOP_VPN = "io.deltator.STOP_VPN"
         const val ACTION_CHAIN_CONNECT = "io.deltator.CHAIN_CONNECT"
         const val ACTION_CHAIN_DISCONNECT = "io.deltator.CHAIN_DISCONNECT"
+        /**
+         * Rotate the live Tor session: `SIGNAL NEWNYM` over the winner's control
+         * port. Only meaningful with the Tor engine and no chain on top of it.
+         */
+        const val ACTION_NEW_IDENTITY = "io.deltator.NEW_IDENTITY"
+
+        /**
+         * Raised from the notification's "Location" row and debug intents:
+         * opens the main activity focused on the exit-country sheet.
+         */
+        const val ACTION_OPEN_EXIT_SHEET = "io.deltator.OPEN_EXIT_SHEET"
+        /** Force-apply the current [ExitNodes] selection to the live Tor session. */
+        const val ACTION_APPLY_EXIT = "io.deltator.APPLY_EXIT"
+        /** Re-probe the public egress/exit location (useful after UI/screen changes). */
+        const val ACTION_LOCATE_EXIT = "io.deltator.LOCATE_EXIT"
         internal const val EXTRA_CHAIN_HOST = "io.deltator.extra.chain_host"
         internal const val EXTRA_CHAIN_PORT = "io.deltator.extra.chain_port"
+        internal const val EXTRA_CHAIN_MODE = "io.deltator.extra.chain_mode"
         const val CHANNEL_VPN_STATUS = "vpn_status"
         const val CHANNEL_UPDATES = "deltator_updates"
         const val NOTIFICATION_ID = 1
@@ -127,6 +151,15 @@ class TorVpnService : VpnService() {
         private const val PROBE_TIMEOUT_MS = 6_000
 
         /**
+         * Quiet window after a deliberate circuit rotation (NEWNYM / live exit steer).
+         * NEWNYM marks circuits dirty and Tor builds fresh ones; during that time the
+         * SOCKS path can legitimately go silent, which the probe reads as "dead".
+         * Rebuilding the whole transport over that is the "periodic drop" loop, so we
+         * suppress recovery for this window and let Tor finish its own rebuild.
+         */
+        private const val ROTATION_GRACE_MS = 55_000L
+
+        /**
          * How often the traffic counters are read and republished while bytes are
          * actually moving.
          */
@@ -185,9 +218,13 @@ class TorVpnService : VpnService() {
      */
     private var establishFailureReason: String? = null
     private var activeRunner: TorRunner? = null
+    private var currentBackend: TunnelBackend? = null
+    private var screenReceiver: android.content.BroadcastReceiver? = null
+    @Volatile private var isScreenOff = false
     private var statsJob: Job? = null
     private var linkWatchJob: Job? = null
     private var exitLocatorJob: Job? = null
+    private var exitWatchJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
@@ -297,6 +334,16 @@ class TorVpnService : VpnService() {
     @Volatile private var currentSession: Int = 0
 
     /**
+     * End of the quiet window after a deliberate rotation/steer (wall clock ms).
+     * While now < this value, a Dead probe is treated as expected circuit churn
+     * rather than a transport failure. Set by [noteRotationEvent].
+     */
+    @Volatile private var rotationQuietUntilMs = 0L
+
+    /** What [ExitNodes.codes] we last confirmed applied to the live [activeRunner]. */
+    @Volatile private var lastAppliedExitCodes: List<String> = emptyList()
+
+    /**
      * The one-shot safe-torrc recovery. Armed while a connect or a VPN re-start
      * is in flight; the first [fail] that lands on it swaps the torrc template
      * for the fallback and starts the whole attempt again exactly once.
@@ -309,6 +356,30 @@ class TorVpnService : VpnService() {
      */
     private var lastRenderedText = ""
 
+    override fun onCreate() {
+        super.onCreate()
+        val filter = android.content.IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context?, intent: Intent?) {
+                when (intent?.action) {
+                    Intent.ACTION_SCREEN_OFF -> {
+                        isScreenOff = true
+                        Log.i(TAG, "Battery Guard: screen off, switching to low-power profile")
+                    }
+                    Intent.ACTION_SCREEN_ON -> {
+                        isScreenOff = false
+                        Log.i(TAG, "Battery Guard: screen on, active profile restored")
+                    }
+                }
+            }
+        }
+        screenReceiver = receiver
+        try { registerReceiver(receiver, filter) } catch (_: Exception) {}
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CONNECT -> connect()
@@ -316,16 +387,33 @@ class TorVpnService : VpnService() {
             ACTION_START_VPN -> startVpn()
             ACTION_STOP_VPN -> stopVpn()
             ACTION_CHAIN_CONNECT -> {
+                val mode = intent.getStringExtra(EXTRA_CHAIN_MODE)
                 val host = intent.getStringExtra(EXTRA_CHAIN_HOST) ?: ""
                 val port = intent.getIntExtra(EXTRA_CHAIN_PORT, Config.sstpPort)
-                chainConnect(host, port)
+                if (mode != null && mode != Config.TOR_CHAIN_FREE_NODES) {
+                    switchTorChainMode(mode)
+                } else {
+                    Config.torChainMode = Config.TOR_CHAIN_FREE_NODES
+                    chainConnect(host, port)
+                }
             }
             ACTION_CHAIN_DISCONNECT -> chainDisconnect()
+            ACTION_NEW_IDENTITY -> newIdentity()
+            ACTION_APPLY_EXIT -> serviceScope.launch { applyExitCodesLive(ExitNodes.currentCodes(), "action") }
+            ACTION_LOCATE_EXIT -> startExitLocator("127.0.0.1", Config.proxyPort)
+            "io.deltator.ACTION_DEBUG_SET_WARP" -> {
+                val json = intent.getStringExtra("warp_config")
+                if (!json.isNullOrBlank()) { Config.warpConfig = json; Log.i(TAG, "Debug: WARP config set (${json.length} chars)") }
+            }
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
+        try {
+            screenReceiver?.let { unregisterReceiver(it) }
+            screenReceiver = null
+        } catch (_: Exception) {}
         // Teardown blocks until every Tor/lyrebird process has exited and its
         // ports are released, so it must never run on the main thread.
         Thread({ teardown() }, "deltator-teardown").apply { isDaemon = true }.start()
@@ -446,6 +534,54 @@ class TorVpnService : VpnService() {
         TorSocksBridge.debugLogging = Config.debugMode
         TorSocksBridge.domainRouter = io.deltator.tunnel.DomainRouter.DISABLED
 
+        // Hybrid Engine Router (Proposals #1, #2, #3, #4)
+        val engineMode = EngineMode.fromId(Config.engineMode)
+        if (engineMode != EngineMode.TOR_RACING) {
+            updateNotification("Connecting via ${engineMode.title} \u2026", progress = true, progressValue = 0)
+            val backend: TunnelBackend = when (engineMode) {
+                EngineMode.AMNEZIA_WG -> AmneziaTunnelBackend(this)
+                EngineMode.WARP_ANYCAST -> WarpTunnelBackend(this)
+                EngineMode.MASQUE -> MasqueTunnelBackend(this)
+                else -> throw IllegalStateException(
+                    "engine ${engineMode.id} reached the hybrid dispatch from inside the Tor branch"
+                )
+            }
+            currentBackend = backend
+            vpnInterface = establishVpnInterface()
+            if (vpnInterface == null) {
+                fail(establishFailureReason ?: "Failed to establish VPN interface")
+                return null
+            }
+            val started = backend.start(vpnInterface!!)
+            if (!started) {
+                try { vpnInterface?.close() } catch (_: Exception) {}
+                vpnInterface = null
+                fail("Failed to start ${backend.displayName} backend")
+                return null
+            }
+
+            AppState.update {
+                it.copy(
+                    connecting = false,
+                    connected = true,
+                    reconnecting = false,
+                    torRunning = false,
+                    error = null,
+                    transport = engineMode.title,
+                    connectedAtMillis = System.currentTimeMillis(),
+                    exitCode = "", exitName = "", exitIp = "",
+                    torExitCode = "", torExitName = "", torExitIp = "",
+                    chainExitCode = "", chainExitName = "", chainExitIp = ""
+                )
+            }
+            startForeground(NOTIFICATION_ID, buildNotification("Connected via ${engineMode.title}", progress = false))
+            startStatsPolling()
+            // Standalone WG/MASQUE: no local SOCKS/proxyPort bridge; locate via direct egress probe.
+            serviceScope.launch { try { locateDirectExit(engineMode.title) } catch (_: Exception) {} }
+            Log.i(TAG, "Hybrid engine connected: ${engineMode.title}")
+            return null
+        }
+
         // Step 1: Resolve the bridge lists for the selected mode and start its
         // runner(s). In auto mode vanilla / obfs4 / webtunnel race together, plus
         // a fourth "memory" runner on the bridges that provably worked last time.
@@ -561,6 +697,14 @@ class TorVpnService : VpnService() {
         withContext(Dispatchers.IO) {
             ParallelTorManager.awaitPortFree(proxyHost, proxyPort)
         }
+        TorSocksBridge.upstreamMode = TorSocksBridge.UpstreamMode.TOR
+        TorSocksBridge.chainMode = when (Config.torChainMode) {
+            Config.TOR_CHAIN_WARP -> TorSocksBridge.ChainMode.WARP
+            Config.TOR_CHAIN_AMNEZIA -> TorSocksBridge.ChainMode.AMNEZIA
+            Config.TOR_CHAIN_MASQUE -> TorSocksBridge.ChainMode.MASQUE
+            Config.TOR_CHAIN_FREE_NODES -> TorSocksBridge.ChainMode.FREE_NODES
+            else -> TorSocksBridge.ChainMode.NONE
+        }
         val bridgeResult = TorSocksBridge.start(
             torSocksPort = w.torSocksPort,
             torHost = "127.0.0.1",
@@ -575,6 +719,18 @@ class TorVpnService : VpnService() {
 
         // Step 3+4: TUN interface + tun2socks
         establishTunnel(w, proxyHost, proxyPort)
+
+        when (Config.torChainMode) {
+            Config.TOR_CHAIN_WARP -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "WARP Anycast", message = "Tor \u2192 Cloudflare WARP")
+            }
+            Config.TOR_CHAIN_AMNEZIA -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "AmneziaWG", message = "Tor \u2192 AmneziaWG")
+            }
+            Config.TOR_CHAIN_MASQUE -> AppState.updateChain {
+                it.copy(status = AppState.ChainStatus.CONNECTED, host = "MASQUE H3", message = "Tor \u2192 MASQUE")
+            }
+        }
         return null
     }
 
@@ -739,7 +895,10 @@ class TorVpnService : VpnService() {
             lastRenderedText = ""
             quietProbes = 0
             bytesAtLastProbe = 0L
+            rotationQuietUntilMs = 0L
+            lastAppliedExitCodes = ExitNodes.currentCodes()
             startExitLocator(proxyHost, proxyPort)
+            startExitWatch()
             Log.i(TAG, "Proxy mode ready. Winner: ${w.name}, SOCKS5 at $endpoint")
             Log.endSession("proxy ready via ${w.name}")
             // No stats poller and no link watch: both read bytes off the tunnel,
@@ -768,7 +927,9 @@ class TorVpnService : VpnService() {
             socksPort = proxyPort,
             enableUdpTunneling = true,
             mtu = VPN_MTU,
-            ipv4Address = VPN_ADDRESS
+            ipv4Address = VPN_ADDRESS,
+            disableQuic = true,
+            rejectNonDnsUdp = true
         )
         if (tunResult.isFailure) {
             fail(tunResult.exceptionOrNull()?.message ?: "Failed to start tunnel")
@@ -783,9 +944,9 @@ class TorVpnService : VpnService() {
                 error = null,
                 transports = mapOf(w.name to 100),
                 connectedAtMillis = System.currentTimeMillis(),
-                exitCode = "",
-                exitName = "",
-                exitIp = "",
+                exitCode = "", exitName = "", exitIp = "",
+                torExitCode = "", torExitName = "", torExitIp = "",
+                chainExitCode = "", chainExitName = "", chainExitIp = "",
                 socksEndpoint = ""
             )
         }
@@ -795,10 +956,13 @@ class TorVpnService : VpnService() {
         startForeground(NOTIFICATION_ID, buildNotification("Connected via ${w.name} \u00b7 Tor Network", progress = false))
         lastRenderedText = ""
         quietProbes = 0
+        rotationQuietUntilMs = 0L
         bytesAtLastProbe = 0L
+        lastAppliedExitCodes = ExitNodes.currentCodes()
         startStatsPolling()
         startLinkWatch()
         startExitLocator(proxyHost, proxyPort)
+        startExitWatch()
         Log.i(TAG, "DeltaTor connected. Winner: ${w.name}, SOCKS5 at $proxyHost:$proxyPort")
         Log.endSession("connected via ${w.name}")
     }
@@ -923,6 +1087,12 @@ class TorVpnService : VpnService() {
     /** Live when a chain engine exists; [SstpChainEngine.isActive] is the truth. */
     private var chainEngine: SstpChainEngine? = null
 
+    /**
+     * One engine per service, ever. A chain connect starting while another
+     * chain engine is being built would otherwise hand the same VPN slot to two
+     * SSTP negotiations, and only one of them would be tracked for teardown.
+     */
+    @Synchronized
     private fun getChainEngine(): SstpChainEngine {
         var engine = chainEngine
         if (engine == null) {
@@ -930,6 +1100,168 @@ class TorVpnService : VpnService() {
             chainEngine = engine
         }
         return engine
+    }
+
+    /**
+     * When a successful rotation happened, so a button pressed twice in a breath
+     * is answered with "ready in Ns" instead of a second NEWNYM: Tor rate-limits
+     * circuit creation under a fast signal and would serve the sessions it had
+     * already built.
+     */
+    private var lastIdentityAtMillis: Long = 0L
+
+    /** Minimum spacing between two live rotations, in milliseconds. */
+    private val identityCooldownMs: Long = 15_000L
+
+    /**
+     * Rotate the circuits of the live Tor session.
+     *
+     * The exchange is one `SIGNAL NEWNYM` over the winner's control port; the
+     * only bookkeeping besides that is the exit probe, which restarts so the
+     * screen shows where the *new* circuits leave instead of where the old ones
+     * did. Every path — including the ones where nothing will be rotated and
+     * the ones where the control port refuses — reports back through the hint
+     * line under the main-screen pills: a key-press that changes nothing used
+     * to be indistinguishable from a press the app dropped.
+     */
+    private fun newIdentity() {
+        val s = AppState.state.value
+        if (!s.torRunning && !s.connected) {
+            AppState.setHint(if (s.stopping) "Tor is restarting — press again in a moment" else "Tor is not running — connect first")
+            return
+        }
+        if (Config.torChainMode != Config.TOR_CHAIN_NONE) {
+            AppState.setHint("A proxy chain owns the exit — end the chain to rotate")
+            return
+        }
+        val idle = SystemClock.elapsedRealtime() - lastIdentityAtMillis
+        if (idle < identityCooldownMs) {
+            AppState.setHint("Identity rotated ${(identityCooldownMs - idle) / 1000}s ago — try again shortly")
+            return
+        }
+        val w = activeRunner
+        if (w == null || w.controlPortLive <= 0) {
+            AppState.setHint("No control port on the running client")
+            Log.w(TAG, "New identity ignored: runner ${w?.name ?: "null"}, controlPort=${w?.controlPortLive ?: 0}")
+            return
+        }
+        val beforeFlag = if (s.exitCode.isNotBlank()) flagLine(s.exitCode, s.exitName) else ""
+        AppState.setIdentityBusy(true)
+        AppState.setHint(if (beforeFlag.isBlank()) "Rotating identity\u2026" else "Rotating away from $beforeFlag\u2026")
+        serviceScope.launch {
+            val ok = runCatching {
+                TorControl.signalNewIdentity(w.controlPortLive, w.controlDataDir, "NewIdentity")
+            }.getOrElse { e ->
+                Log.w(TAG, "New identity failed: ${e.message}")
+                false
+            }
+            lastIdentityAtMillis = SystemClock.elapsedRealtime()
+            AppState.setIdentityBusy(false)
+            if (ok) {
+                noteRotationEvent()
+                // Tor prefers to wait before NEWNYM is honoured repeatedly and
+                // the probe would otherwise read the OLD circuits' egress.
+                delay(4_000)
+                startExitLocator("127.0.0.1", Config.proxyPort)
+                AppState.setHint("Fresh circuits requested — waiting for the new exit")
+            } else {
+                AppState.setHint("Tor refused the rotation (control port)")
+            }
+        }
+    }
+
+    private fun flagLine(code: String, name: String): String {
+        val cc = code.trim().uppercase()
+        val flag = if (cc.length == 2 && cc.all { it in 'A'..'Z' }) {
+            val a = 0x1F1E6 + (cc[0].code - 'A'.code)
+            val b = 0x1F1E6 + (cc[1].code - 'A'.code)
+            String(Character.toChars(a)) + String(Character.toChars(b))
+        } else ""
+        val label = if (name.isNotBlank()) name else cc
+        return if (flag.isNotBlank()) "$flag $label" else label
+    }
+
+    /** Suppress probe-driven recovery while Tor rebuilds circuits after a deliberate rotation. */
+    private fun noteRotationEvent() {
+        rotationQuietUntilMs = System.currentTimeMillis() + ROTATION_GRACE_MS
+        deadSince = 0
+        failedProbes = 0
+    }
+
+    /**
+     * Apply the current exit-country selection to the live [activeRunner] over its
+     * control port. Redundant SETCONF+NEWNYM is cheap compared to a missed apply (the
+     * bug this fixes); fresh runners already bootstrapped with the right rules are
+     * covered by seeding [lastAppliedExitCodes] before the watcher starts.
+     * Does blocking control-port I/O — call on an IO dispatcher.
+     */
+    private fun applyExitCodesLive(codes: List<String>, reason: String): Boolean {
+        val s = AppState.state.value
+        val live = (s.torRunning || s.connected) && !s.stopping
+        val chained = Config.torChainMode != Config.TOR_CHAIN_NONE
+        val w = activeRunner
+        if (!live) {
+            Log.i(TAG, "exit apply ($reason): not live (torRunning=${s.torRunning} connected=${s.connected} stopping=${s.stopping})")
+            return false
+        }
+        if (chained && reason != "action" && reason != "auto-match") {
+            Log.i(TAG, "exit apply ($reason): chain owns exit (${Config.torChainMode})")
+            return false
+        }
+        if (w == null) {
+            Log.w(TAG, "exit apply ($reason): no active runner")
+            return false
+        }
+        if (w.controlPortLive <= 0) {
+            Log.w(TAG, "exit apply ($reason): ${w.name} has no control port")
+            return false
+        }
+        Log.i(TAG, "exit apply ($reason): [${codes.joinToString(",").ifEmpty { "any" }}] via ${w.name}:${w.controlPortLive}")
+        val ok = try {
+            w.liveSteerExit(codes)
+        } catch (e: Exception) {
+            Log.w(TAG, "exit apply ($reason) threw: ${e.message}")
+            false
+        }
+        Log.i(TAG, "exit apply ($reason): ${if (ok) "applied" else "FAILED"}")
+        if (ok) {
+            lastAppliedExitCodes = codes.toList()
+            noteRotationEvent()
+            AppState.setHint(
+                if (codes.isEmpty()) "Exit freed — circuits leave anywhere"
+                else "Exit set to ${codes.joinToString(", ")} — rebuilding circuits"
+            )
+        } else {
+            AppState.setHint("Could not steer the live session — applies on next connect")
+        }
+        if (AppState.state.value.connected) startExitLocator("127.0.0.1", Config.proxyPort)
+        return ok
+    }
+
+    /**
+     * Watch [ExitNodes.codes] and re-steer the live Tor session on change.
+     * Reconciles on (re)start so a selection made while the watcher was stale (e.g.
+     * across transport recovery) still takes effect, while seeding [lastAppliedExitCodes]
+     * from a fresh bootstrap avoids a redundant NEWNYM.
+     */
+    private fun startExitWatch() {
+        exitWatchJob?.cancel()
+        exitWatchJob = serviceScope.launch {
+            // Reconcile immediately: covers watcher restarts and missed emissions.
+            val cur = ExitNodes.codes.value
+            if (cur != lastAppliedExitCodes) {
+                Log.i(TAG, "exit watch: reconciling [${cur.joinToString(",").ifEmpty { "any" }}] (last=[${lastAppliedExitCodes.joinToString(",").ifEmpty { "any" }}])")
+                applyExitCodesLive(cur, "reconcile")
+            } else {
+                Log.i(TAG, "exit watch: up to date [${cur.joinToString(",").ifEmpty { "any" }}]")
+            }
+            var last = cur
+            ExitNodes.codes.collect { codes ->
+                if (codes == last) return@collect
+                last = codes
+                applyExitCodesLive(codes, "changed")
+            }
+        }
     }
 
     /**
@@ -966,14 +1298,64 @@ class TorVpnService : VpnService() {
         }
     }
 
+    private fun switchTorChainMode(mode: String) {
+        Config.torChainMode = mode
+        val engine = chainEngine
+        if (engine != null && engine.isActive) {
+            engine.stopWithoutRestore()
+        }
+        val targetMode = when (mode) {
+            Config.TOR_CHAIN_WARP -> TorSocksBridge.ChainMode.WARP
+            Config.TOR_CHAIN_AMNEZIA -> TorSocksBridge.ChainMode.AMNEZIA
+            Config.TOR_CHAIN_MASQUE -> TorSocksBridge.ChainMode.MASQUE
+            else -> TorSocksBridge.ChainMode.NONE
+        }
+        TorSocksBridge.chainMode = targetMode
+
+        // Ensure Tor VPN interface is active
+        if (vpnInterface == null && activeRunner != null && TorSocksBridge.isRunning()) {
+            serviceScope.launch {
+                establishTunnel(activeRunner!!, "127.0.0.1", Config.proxyPort)
+            }
+        }
+
+        val (hostLabel, desc) = when (mode) {
+            Config.TOR_CHAIN_WARP -> "WARP Anycast" to "Tor \u2192 Cloudflare WARP"
+            Config.TOR_CHAIN_AMNEZIA -> "AmneziaWG" to "Tor \u2192 AmneziaWG"
+            Config.TOR_CHAIN_MASQUE -> "MASQUE H3" to "Tor \u2192 MASQUE"
+            else -> "" to ""
+        }
+        if (targetMode != TorSocksBridge.ChainMode.NONE) {
+            // WARP/AmneziaWG/MASQUE Tor-chain: WG/QUIC-over-Tor-TCP transport is not implemented;
+            // bridge double-hop falls back to Tor. Report honestly so exit/detection aren't misleading.
+            val needsTorTcp = mode == Config.TOR_CHAIN_WARP || mode == Config.TOR_CHAIN_AMNEZIA || mode == Config.TOR_CHAIN_MASQUE
+            AppState.updateChain {
+                it.copy(
+                    status = if (needsTorTcp) AppState.ChainStatus.FAILED else AppState.ChainStatus.CONNECTED,
+                    host = hostLabel,
+                    port = 0,
+                    message = if (needsTorTcp) "WG/QUIC-over-Tor not supported \u00b7 egress falls to Tor (use standalone engine or Free Nodes)" else desc
+                )
+            }
+        } else {
+            AppState.updateChain { AppState.ChainState() }
+        }
+        AppState.update { it.copy(exitCode = "", exitName = "", exitIp = "", torExitCode = "", torExitName = "", torExitIp = "", chainExitCode = "", chainExitName = "", chainExitIp = "") }
+        startExitLocator("127.0.0.1", Config.proxyPort)
+        Log.i(TAG, "Switched Tor chain mode to: $mode")
+    }
+
     private fun chainDisconnect() {
         val engine = chainEngine
-        if (engine == null || !engine.isActive) {
-            Log.i(TAG, "chain disconnect: nothing running")
-            return
+        if (engine != null && engine.isActive) {
+            Log.i(TAG, "chain disconnect requested")
+            engine.stop()
         }
-        Log.i(TAG, "chain disconnect requested")
-        engine.stop()
+        Config.torChainMode = Config.TOR_CHAIN_NONE
+        TorSocksBridge.chainMode = TorSocksBridge.ChainMode.NONE
+        AppState.updateChain { AppState.ChainState() }
+        AppState.update { it.copy(exitCode = "", exitName = "", exitIp = "", torExitCode = "", torExitName = "", torExitIp = "", chainExitCode = "", chainExitName = "", chainExitIp = "") }
+        startExitLocator("127.0.0.1", Config.proxyPort)
     }
 
     /** The fresh interface the chain session builds on. */
@@ -985,6 +1367,7 @@ class TorVpnService : VpnService() {
     fun onChainEstablished(host: String, port: Int) {
         if (!AppState.vpnStarted) AppState.markStarted()
         Log.i(TAG, "chain established: $host:$port")
+        startExitLocator("127.0.0.1", Config.proxyPort)
         // The one number a probe cannot predict: what the live chain does with
         // a real HTTP request. Best effort; -1 means it was not measurable.
         serviceScope.launch {
@@ -1079,29 +1462,37 @@ class TorVpnService : VpnService() {
     }
 
     private fun establishVpnInterface(): ParcelFileDescriptor? {
-        // Cleared per attempt so a stale reason from an earlier connect can never
-        // be reported for a later one.
         establishFailureReason = null
-        // Guard, not the feature itself. establishTunnel returns before ever
-        // calling this when proxy mode is on, and it is what makes the proxy
-        // branch a single early return rather than a condition threaded through
-        // the builder below. If it ever were reached, the null it returns is a
-        // clean failure: the caller reports "Failed to establish VPN interface"
-        // and stops, rather than handing a null descriptor to tun2socks.
         if (Config.proxyOnlyMode) {
-            // The listener is the loopback address on the configured port, the
-            // same values connect() passes to establishTunnel. They are local
-            // variables there, not properties, so this repeats them rather than
-            // naming something that does not exist at this scope.
             Log.i(TAG, "Proxy mode: not establishing a TUN, SOCKS5 stays on 127.0.0.1:${Config.proxyPort}")
             return null
         }
+        if (Config.dualStackIpv6) {
+            val tun = tryCreateVpnInterface(enableIpv6 = true)
+            if (tun != null) return tun
+            Log.w(TAG, "Failed to establish Dual-Stack IPv6 TUN; falling back to IPv4-only")
+        }
+        return tryCreateVpnInterface(enableIpv6 = false)
+    }
+
+    private fun tryCreateVpnInterface(enableIpv6: Boolean): ParcelFileDescriptor? {
         return try {
             val builder = Builder()
                 .setSession("DeltaTor")
                 .setMtu(VPN_MTU)
                 .addAddress(VPN_ADDRESS, 32)
                 .addDnsServer(DEFAULT_DNS)
+
+            if (enableIpv6) {
+                try {
+                    builder.addAddress("fd00::1", 64)
+                    builder.addRoute("::", 0)
+                    builder.addDnsServer("2001:4860:4860::8888")
+                    Log.i(TAG, "Dual-Stack IPv6 configured (fd00::1/64, route ::/0)")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Dual-Stack IPv6 not supported or refused: ${e.message}")
+                }
+            }
             val picks = Config.splitTunnelSelected.filter { it != packageName }
             val vpnOnly = Config.splitTunnelMode == Config.SPLIT_MODE_VPN
             val usingAllowList = Config.splitTunnelEnabled && vpnOnly
@@ -1241,7 +1632,7 @@ class TorVpnService : VpnService() {
                 builder.addRoute(VPN_ROUTE, 0)
                 Log.i(TAG, "Split tunnel: off, every app goes through Tor")
             }
-            builder.setBlocking(false)
+            builder.setBlocking(Config.strictKillswitch)
             // Logged rather than returned bare: establish() answers null when the
             // platform refused the configuration, and it gives no reason, so the
             // line above is the only record of what was asked for.
@@ -1250,7 +1641,7 @@ class TorVpnService : VpnService() {
                 TAG,
                 tunSection {
                     line("establish", if (tun == null) "returned null" else "ok fd=${tun.fd}")
-                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS")
+                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS ipv6=$enableIpv6")
                 }
             )
             tun
@@ -1288,7 +1679,11 @@ class TorVpnService : VpnService() {
             var lastRx = 0L
             var lastTime = 0L
             while (isActive) {
-                val stats = HevSocks5Tunnel.getStats()
+                if (isScreenOff) {
+                    delay(STATS_INTERVAL_IDLE_MS)
+                    continue
+                }
+                val stats = currentBackend?.getStats() ?: HevSocks5Tunnel.getStats()?.let { io.deltator.core.backend.BackendStats(it.rxBytes, it.txBytes) }
                 if (stats == null) {
                     delay(STATS_INTERVAL_IDLE_MS)
                     continue
@@ -1376,6 +1771,19 @@ class TorVpnService : VpnService() {
         // ROMs -- which is what made these buttons appear on some phones and not
         // others. See the ic_notification_* drawables.
         builder.addAction(R.drawable.ic_notification_disconnect, "Disconnect", disconnectPendingIntent)
+        // "Location" opens the exit-country sheet at any moment: it only raises
+        // the app screen, so unlike the identity row it needs no state gate.
+        builder.addAction(R.drawable.ic_notification_locate, "Location", exitSheetPendingIntent)
+        // "New identity" rotates the live Tor circuits from the shade itself, the
+        // same way the main-screen button does. Only offered when the Tor engine
+        // is what carries the traffic and no chain owns the exit: the other
+        // engines have no control port and a chain rides a fixed upstream.
+        if ((s.torRunning || s.connected) &&
+            s.engineMode.equals(EngineMode.TOR_RACING.id, ignoreCase = true) &&
+            Config.torChainMode == Config.TOR_CHAIN_NONE
+        ) {
+            builder.addAction(R.drawable.ic_notification_refresh, "New identity", newIdentityPendingIntent)
+        }
         // In proxy mode there is no tunnel, so neither VPN action has anything to
         // act on: startVpn and stopVpn both refuse while Config.proxyOnlyMode is
         // set. Shipping them anyway put a live-looking button in the shade that
@@ -1458,6 +1866,16 @@ class TorVpnService : VpnService() {
                 }
 
                 val since = System.currentTimeMillis()
+                // A deliberate NEWNYM / exit steer rebuilds circuits; the SOCKS path
+                // goes quiet until fresh circuits are up. Rebuilding the whole
+                // transport over that churn is the periodic-drop loop, so hold off.
+                if (since < rotationQuietUntilMs) {
+                    deadSince = 0
+                    failedProbes = 0
+                    Log.i(TAG, "Tunnel quiet after rotation; waiting for circuits (${(rotationQuietUntilMs - since) / 1000}s grace left)")
+                    delay(3_000)
+                    continue
+                }
                 if (deadSince == 0L) deadSince = since
                 failedProbes++
                 val deadForMs = since - deadSince
@@ -1653,10 +2071,15 @@ class TorVpnService : VpnService() {
             // A fresh transport has just proved itself, so the careful cadence
             // starts again rather than carrying over whatever it ended on.
             quietProbes = 0
+            rotationQuietUntilMs = 0L
             bytesAtLastProbe = AppState.state.value.txBytes + AppState.state.value.rxBytes
             // The new Tor has its own exit circuits, so the reported country is
-            // stale until it is looked up again.
+            // stale until it is looked up again. The winner bootstrapped with the
+            // current exit selection; seed the watcher so it reconciles only real
+            // changes, and restart it (recovery never did, so it could go stale).
+            lastAppliedExitCodes = ExitNodes.currentCodes()
             startExitLocator("127.0.0.1", Config.proxyPort)
+            startExitWatch()
         } catch (e: Exception) {
             Log.e(TAG, "Recovery failed", e)
             escalateToFullReconnect(e.message ?: "recovery failed")
@@ -1700,6 +2123,8 @@ class TorVpnService : VpnService() {
         if (networkCallback != null) return
         val cm = getSystemService(CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
+            private var lastNetwork: Network? = null
+
             override fun onLost(network: Network) {
                 // Losing one network is routine when the system moves between
                 // Wi-Fi and cellular, so only a real absence of any counts.
@@ -1710,11 +2135,27 @@ class TorVpnService : VpnService() {
             }
 
             override fun onAvailable(network: Network) {
-                if (linkUp) return
+                val switched = lastNetwork != null && lastNetwork != network
+                lastNetwork = network
+                val wasDown = !linkUp
                 linkUp = true
                 failedProbes = 0
                 quietProbes = 0
-                Log.i(TAG, "Network available again")
+                Log.i(TAG, "Network available (switched=$switched, wasDown=$wasDown)")
+
+                if (AppState.state.value.connected) {
+                    if (wasDown || switched) {
+                        serviceScope.launch {
+                            val probe = probeTunnelUsable()
+                            if (probe == ProbeResult.Dead) {
+                                Log.w(TAG, "Network changed and tunnel dead, triggering fast recovery")
+                                recoverTransport()
+                            } else {
+                                startExitLocator("127.0.0.1", Config.proxyPort)
+                            }
+                        }
+                    }
+                }
             }
         }
         try {
@@ -1754,54 +2195,152 @@ class TorVpnService : VpnService() {
     }
 
     private fun startExitLocator(proxyHost: String, proxyPort: Int) {
-        // Every recovery starts the locator again, so the previous run is replaced
-        // rather than left to finish: otherwise N recoveries mean N loops of up to
-        // six 8s probes competing for the circuit that was just rebuilt.
         exitLocatorJob?.cancel()
         exitLocatorJob = serviceScope.launch {
-            val selected = ExitNodes.currentCodes()
+            val chainMode = Config.torChainMode
+            val isChained = chainMode != Config.TOR_CHAIN_NONE
+            val selected = if (isChained) emptyList() else ExitNodes.currentCodes()
                 .map { it.trim().uppercase() }
                 .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
                 .distinct()
+
             try {
-                if (selected.isNotEmpty()) {
-                    // The very first circuit of the session is the fast, unrestricted
-                    // one; the post-bootstrap SETCONF + NEWNYM needs a moment to steer
-                    // the next circuits into the selected countries before the reported
-                    // location can match the choice.
+                if (isChained) {
+                    // Soft hint only: keep prior probed values to avoid resume-flip.
+                    when (chainMode) {
+                        Config.TOR_CHAIN_FREE_NODES -> {
+                            val curHost = AppState.chainState.value.host
+                            val srv = ProxyChainManager.listState.value.servers.find { it.host == curHost }
+                            if (srv != null && srv.countryCode.isNotBlank()) {
+                                AppState.update {
+                                    if (it.chainExitCode.isBlank()) it.copy(
+                                        chainExitCode = srv.countryCode, chainExitName = srv.countryName, chainExitIp = srv.host
+                                    ) else it
+                                }
+                            }
+                        }
+                        Config.TOR_CHAIN_AMNEZIA -> {
+                            val prof = io.deltator.feature.chain.ChainProfileManager.amneziaProfiles.value.find { it.isSelected }
+                            val epIp = prof?.endpoint?.substringBefore(":") ?: ""
+                            val offline = try { BridgeCountries.countryInfo(this@TorVpnService, epIp) } catch (_: Exception) { null }
+                            val cc = offline?.first ?: ""
+                            val cName = offline?.second ?: if (cc.isNotBlank()) java.util.Locale("", cc).displayCountry else ""
+                            if (cc.isNotBlank()) AppState.update {
+                                if (it.chainExitCode.isBlank()) it.copy(chainExitCode = cc, chainExitName = "AmneziaWG ($cName)") else it
+                            }
+                        }
+                        Config.TOR_CHAIN_MASQUE -> {
+                            val epHost = Config.masqueEndpoint.substringAfter("://", Config.masqueEndpoint).substringBefore('/')
+                            val offline = try { BridgeCountries.countryInfo(this@TorVpnService, epHost) } catch (_: Exception) { null }
+                            val cc = offline?.first ?: ""
+                            val cName = offline?.second ?: if (cc.isNotBlank()) java.util.Locale("", cc).displayCountry else ""
+                            if (cc.isNotBlank()) AppState.update {
+                                if (it.chainExitCode.isBlank()) it.copy(chainExitCode = cc, chainExitName = "MASQUE H3 ($cName)") else it
+                            }
+                        }
+                        // WARP: anycast, no fabricated country hint.
+                    }
+                    delay(2_500)
+                } else if (selected.isNotEmpty()) {
                     Log.i("ExitNode", "waiting for live exit switch before locating (selected: ${selected.joinToString(",")})")
                     delay(5_000)
                 }
-                val tries = if (selected.isEmpty()) 1 else 6
+
+                val tries = when {
+                    selected.isNotEmpty() -> 8
+                    isChained -> 8
+                    else -> 3
+                }
                 for (attempt in 1..tries) {
-                    val info = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort, timeoutMs = 8_000)
-                    if (info == null) {
-                        Log.w("ExitNode", "location probe attempt $attempt/$tries failed (no traffic yet?)")
+                    val torPort = activeRunner?.torSocksPort ?: -1
+                    val finalInfo = ExitLocator.locate(this@TorVpnService, proxyHost, proxyPort, timeoutMs = 10_000)
+                    val torInfo = if (isChained && torPort > 0) {
+                        try { ExitLocator.locate(this@TorVpnService, "127.0.0.1", torPort, timeoutMs = 10_000) } catch (_: Exception) { null }
+                    } else null
+
+                    if (finalInfo == null && torInfo == null) {
+                        Log.w("ExitNode", "location probe attempt $attempt/$tries failed (chain=$chainMode)")
                     } else {
+                        val currentChain = Config.torChainMode
+                        val cs = AppState.chainState.value
+                        val broken = cs.status == AppState.ChainStatus.FAILED ||
+                            cs.message.contains("traffic left via Tor", true) ||
+                            cs.message.contains("upstream refused", true) ||
+                            cs.message.contains("not supported", true)
+                        fun gl(code: String, name: String, city: String) = name.ifBlank { city.ifBlank { code } }
+
+                        var tCode = torInfo?.countryCode ?: ""; var tName = torInfo?.let { gl(it.countryCode, it.countryName, it.city) } ?: ""; var tIp = torInfo?.ip ?: ""
+                        var cCode = ""; var cName = ""; var cIp = ""
+
+                        if (currentChain == Config.TOR_CHAIN_NONE) {
+                            val i = finalInfo ?: torInfo
+                            if (i != null) { tCode = i.countryCode; tName = gl(i.countryCode, i.countryName, i.city); tIp = i.ip }
+                        } else if (currentChain == Config.TOR_CHAIN_FREE_NODES) {
+                            // SSTP owns the TUN (app probes via Tor/bridge see Tor egress); VPN Gate is the user egress.
+                            val srv = ProxyChainManager.listState.value.servers.find { it.host == AppState.chainState.value.host }
+                            cCode = srv?.countryCode ?: ""; cName = srv?.countryName?.ifBlank { srv.host } ?: (AppState.chainState.value.host)
+                            cIp = srv?.host ?: AppState.chainState.value.host
+                            if (tCode.isBlank() && finalInfo != null) { tCode = finalInfo.countryCode; tName = gl(finalInfo.countryCode, finalInfo.countryName, finalInfo.city); tIp = finalInfo.ip }
+                        } else if (broken) {
+                            val i = finalInfo ?: torInfo
+                            if (i != null) { tCode = i.countryCode; tName = gl(i.countryCode, i.countryName, i.city); tIp = i.ip }
+                        } else {
+                            val i = finalInfo
+                            if (i != null) { cCode = i.countryCode; cName = gl(i.countryCode, i.countryName, i.city); cIp = i.ip }
+                            if (tCode.isBlank() && torInfo != null) { tCode = torInfo.countryCode; tName = gl(torInfo.countryCode, torInfo.countryName, torInfo.city); tIp = torInfo.ip }
+                        }
+
+                        val chainLabel = when (currentChain) {
+                            Config.TOR_CHAIN_WARP -> "WARP"; Config.TOR_CHAIN_AMNEZIA -> "AmneziaWG"
+                            Config.TOR_CHAIN_MASQUE -> "MASQUE"; Config.TOR_CHAIN_FREE_NODES -> "VPN Gate"; else -> "Chain"
+                        }
+                        val (eCode, eName, eIp) = when {
+                            currentChain == Config.TOR_CHAIN_NONE -> Triple(tCode, tName, tIp)
+                            broken -> Triple(tCode, "Tor (${chainLabel} broken) \u00b7 $tName".trim(' ', '·'), tIp)
+                            cCode.isNotBlank() || cName.isNotBlank() -> Triple(cCode, "$chainLabel \u00b7 ${if (cName.isNotBlank()) cName else cCode}", cIp)
+                            else -> Triple(tCode, tName, tIp)
+                        }
+
                         AppState.update {
                             it.copy(
-                                exitIp = info.ip,
-                                exitCode = info.countryCode,
-                                exitName = info.countryName.ifBlank { info.city }
+                                exitIp = eIp, exitCode = eCode, exitName = eName,
+                                torExitIp = tIp, torExitCode = tCode, torExitName = tName,
+                                chainExitIp = cIp, chainExitCode = cCode, chainExitName = cName
                             )
                         }
-                        val match = info.countryCode.uppercase() in selected
-                        Log.i(
-                            "ExitNode",
-                            "located ${info.ip} \u00b7 ${info.label()}" +
-                                (if (selected.isEmpty()) "" else " \u00b7 ${if (match) "MATCHES ${selected.joinToString(",")}" else "NOT yet ${selected.joinToString(",")}"}") +
-                                (if (info.asn.isNotBlank()) " \u00b7 ${info.asn}" else "")
-                        )
+                        val curHint = AppState.hint.value.text
+                        if (curHint.contains("Rotating", true) || curHint.contains("rebuilding", true) || curHint.contains("waiting for the new exit", true)) {
+                            if (tCode.isNotBlank() || tIp.isNotBlank()) AppState.setHint("Exit: ${flagLine(tCode, tName)} \u00b7 $tIp")
+                        }
+                        val match = (if (isChained) eCode else tCode).uppercase() in selected
+                        Log.i("ExitNode", "exit tor=${tCode}/${tIp} chain=${cCode}/${cIp} effective=${eCode} $eName (mode=$currentChain broken=$broken)")
                         if (selected.isEmpty() || match) return@launch
                     }
-                    if (attempt < tries) delay(8_000)
+                    if (attempt < tries) delay(if (isChained) 5_000 else 4_000)
                 }
-                if (selected.isNotEmpty()) {
-                    Log.w("ExitNode", "did not observe a ${selected.joinToString(",")} exit after $tries tries; connection still up")
-                }
+                if (selected.isNotEmpty()) Log.w("ExitNode", "did not observe a ${selected.joinToString(",")} exit after $tries tries; connection still up")
+                else if (isChained) Log.w("ExitNode", "could not determine $chainMode exit after $tries tries (chain may be broken/fallback)")
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.w("ExitNode", "exit locator failed: ${e.message}")
             }
+        }
+    }
+
+    private suspend fun locateDirectExit(label: String) {
+        try {
+            val info = io.deltator.tunnel.ExitLocator.locateDirect(this@TorVpnService, timeoutMs = 12_000) ?: return
+            val geo = info.countryName.ifBlank { info.city.ifBlank { info.countryCode } }
+            AppState.update {
+                it.copy(
+                    exitIp = info.ip, exitCode = info.countryCode, exitName = "$label \u00b7 $geo",
+                    chainExitIp = info.ip, chainExitCode = info.countryCode, chainExitName = "$label \u00b7 $geo",
+                    torExitIp = "", torExitCode = "", torExitName = ""
+                )
+            }
+            Log.i("ExitNode", "direct exit ($label) ${info.ip} ${info.countryCode} $geo")
+        } catch (e: Exception) {
+            Log.w("ExitNode", "direct exit locate failed: ${e.message}")
         }
     }
 
@@ -1904,9 +2443,13 @@ class TorVpnService : VpnService() {
         linkWatchJob = null
         exitLocatorJob?.cancel()
         exitLocatorJob = null
+        exitWatchJob?.cancel()
+        exitWatchJob = null
         quietProbes = 0
         bytesAtLastProbe = 0L
         unregisterNetworkCallback()
+        try { currentBackend?.stop() } catch (_: Exception) {}
+        currentBackend = null
         try { HevSocks5Tunnel.stop() } catch (_: Exception) {}
         try { vpnInterface?.close() } catch (_: Exception) {}
         vpnInterface = null
@@ -2025,6 +2568,33 @@ class TorVpnService : VpnService() {
         PendingIntent.getService(
             this,
             5,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Rotates the live Tor circuits: the shade's counterpart of the main-screen button. */
+    private val newIdentityPendingIntent: PendingIntent by lazy {
+        val intent = Intent(this, TorVpnService::class.java).apply {
+            action = ACTION_NEW_IDENTITY
+        }
+        PendingIntent.getService(
+            this,
+            6,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** Opens the exit-country sheet: raises [MainActivity] with the request extra. */
+    private val exitSheetPendingIntent: PendingIntent by lazy {
+        val intent = Intent(this, MainActivity::class.java).apply {
+            action = ACTION_OPEN_EXIT_SHEET
+            addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        PendingIntent.getActivity(
+            this,
+            7,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )

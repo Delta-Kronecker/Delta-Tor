@@ -102,6 +102,14 @@ object AppState {
         val exitCode: String = "",
         val exitName: String = "",
         val exitIp: String = "",
+        /** Tor circuit exit (hop) — shown alongside chain egress when chained. */
+        val torExitCode: String = "",
+        val torExitName: String = "",
+        val torExitIp: String = "",
+        /** Final/chain egress when a chain engine is active. */
+        val chainExitCode: String = "",
+        val chainExitName: String = "",
+        val chainExitIp: String = "",
         /**
          * Set while proxy mode is on and Tor is up, as the address to configure a
          * client with: "socks5://127.0.0.1:9050".
@@ -111,7 +119,8 @@ object AppState {
          * told the address somewhere. There is no tunnel to imply it, and the
          * notification is the one surface guaranteed to be on screen.
          */
-        val socksEndpoint: String = ""
+        val socksEndpoint: String = "",
+        val engineMode: String = Config.engineMode
     )
 
     /**
@@ -191,6 +200,35 @@ object AppState {
     val state: StateFlow<VpnState> = _state.asStateFlow()
 
     /**
+     * The New Identity exchange: a boolean the winner's button watches to turn
+     * into a short spinner, so a tap that does its work in ~50ms over the loopback
+     * port still answers visibly on the screen.
+     */
+    data class IdentityState(val busy: Boolean = false)
+
+    private val _identityState = MutableStateFlow(IdentityState())
+    val identityState: StateFlow<IdentityState> = _identityState.asStateFlow()
+
+    /**
+     * One transient line under the identity pills: why a tap was declined or
+     * what a rotation did. Set from the service and the main-screen sheets; the
+     * UI fades it out after [HINT_LIFETIME_MILLIS].
+     */
+    data class Hint(val text: String, val atMillis: Long = 0L)
+
+    private val _hint = MutableStateFlow(Hint(""))
+    val hint: StateFlow<Hint> = _hint.asStateFlow()
+
+    /** Show one line under the identity controls; an empty text clears it. */
+    fun setHint(text: String) {
+        _hint.value = if (text.isBlank()) Hint("") else Hint(text, System.currentTimeMillis())
+    }
+
+    fun setIdentityBusy(busy: Boolean) {
+        _identityState.value = IdentityState(busy)
+    }
+
+    /**
      * The proxy address on its own.
      *
      * A screen that needs only this should not collect [state]: the bootstrap
@@ -223,6 +261,11 @@ object AppState {
 
     fun setMode(mode: String) {
         if (_mode.value != mode) _mode.value = mode
+    }
+
+    fun setEngineMode(engineMode: String) {
+        Config.engineMode = engineMode
+        _state.update { it.copy(engineMode = engineMode) }
     }
 
     private val _bridgeState = MutableStateFlow(BridgeState())

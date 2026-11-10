@@ -1,5 +1,7 @@
 package io.deltator.tunnel
 
+import io.deltator.AppState
+import io.deltator.core.dns.FakeDns
 import io.deltator.util.AppLog as Log
 import java.io.BufferedOutputStream
 import java.io.ByteArrayInputStream
@@ -43,6 +45,30 @@ object TorSocksBridge {
     private const val TCP_CONNECT_TIMEOUT_MS = 30000
     private const val DNS_TIMEOUT_MS = 15000
     private const val DNS_CACHE_TTL_MS = 300_000L
+    /** Same worker count the idle dnsExecutor pool was recreated with. */
+    private const val DNS_POOL_SIZE = 8
+
+    enum class UpstreamMode {
+        TOR,
+        WARP,
+        AMNEZIA,
+        MASQUE,
+        DIRECT
+    }
+
+    enum class ChainMode {
+        NONE,
+        FREE_NODES,
+        WARP,
+        AMNEZIA,
+        MASQUE
+    }
+
+    @Volatile var upstreamMode: UpstreamMode = UpstreamMode.TOR
+    @Volatile var chainMode: ChainMode = ChainMode.NONE
+    @Volatile var warpProfile: io.deltator.feature.warp.WarpProfile? = null
+    @Volatile var amneziaConfig: io.deltator.feature.amnezia.AmneziaConfig? = null
+    @Volatile var masqueEndpoint: String = ""
 
     private var torHost: String = "127.0.0.1"
     private var torSocksPort: Int = 0
@@ -51,7 +77,7 @@ object TorSocksBridge {
     private var serverSocket: ServerSocket? = null
     private var acceptorThread: Thread? = null
     private val running = AtomicBoolean(false)
-    private val connectionThreads = CopyOnWriteArrayList<Thread>()
+    private var connectionExecutor = Executors.newCachedThreadPool()
     private var dnsExecutor = Executors.newFixedThreadPool(8)
 
     // DNS cache: query key (hex of query minus transaction ID) -> (response, expiry)
@@ -120,17 +146,35 @@ object TorSocksBridge {
         acceptorThread?.interrupt()
         acceptorThread = null
 
-        for (thread in connectionThreads) {
-            thread.interrupt()
-        }
-        connectionThreads.clear()
+        // The two pools are replaced, not just shot down: a connection or a DNS
+        // answer that arrives a breath behind the shutdown would have hit a
+        // terminated pool and thrown RejectedExecutionException into whatever
+        // caller submitted it. A fresh pool accepts those stragglers and is torn
+        // down with the next stop, which is when they have long since run.
+        val oldConnectors = connectionExecutor
+        val oldDns = dnsExecutor
+        connectionExecutor = Executors.newCachedThreadPool()
+        dnsExecutor = Executors.newFixedThreadPool(DNS_POOL_SIZE)
 
-        dnsExecutor.shutdownNow()
-        dnsExecutor = Executors.newFixedThreadPool(8)
+        oldConnectors.shutdownNow()
+        oldDns.shutdownNow()
 
         dnsCache.clear()
 
         logd("Bridge stopped")
+    }
+
+    /**
+     * Submit to [connectionExecutor] in a form that survives a stop racing a
+     * submit: the pool may be freshly replaced mid-call, and a task that loses
+     * that race is dropped, not reported as a failure of the connection.
+     */
+    private fun submitConnection(task: () -> Unit) {
+        try {
+            connectionExecutor.submit(task)
+        } catch (e: Exception) {
+            Log.w(TAG, "connection task rejected (shutting down?): ${e.javaClass.simpleName}")
+        }
     }
 
     fun isRunning(): Boolean = running.get()
@@ -182,7 +226,11 @@ object TorSocksBridge {
     }
 
     private fun handleConnection(clientSocket: Socket) {
-        val thread = Thread({
+        // A submit can arrive between the pools being swapped out in stop() and
+        // the acceptor being told to quit. The old code let the rejection
+        // propagate; wrapped, it is one lost probe-shaped connection.
+        try {
+            connectionExecutor.submit {
             try {
                 clientSocket.use { socket ->
                     socket.soTimeout = 30000
@@ -194,11 +242,11 @@ object TorSocksBridge {
                     val version = input.read()
                     if (version == -1) {
                         // EOF — readiness probe or client closed immediately; not an error
-                        return@Thread
+                        return@submit
                     }
                     if (version != 0x05) {
                         Log.w(TAG, "Invalid SOCKS5 version: $version")
-                        return@Thread
+                        return@submit
                     }
                     val nMethods = input.read()
                     val methods = ByteArray(nMethods)
@@ -206,7 +254,7 @@ object TorSocksBridge {
 
                     // Authenticate local client
                     if (!LocalProxyAuth.handleGreeting(methods, input, output, localAuthUsername, localAuthPassword)) {
-                        return@Thread
+                        return@submit
                     }
 
                     // SOCKS5 request
@@ -217,7 +265,7 @@ object TorSocksBridge {
                     if (ver != 0x05 || (cmd != 0x01 && cmd != 0x05)) {
                         output.write(byteArrayOf(0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                         output.flush()
-                        return@Thread
+                        return@submit
                     }
 
                     // Parse address
@@ -248,7 +296,7 @@ object TorSocksBridge {
                         else -> {
                             output.write(byteArrayOf(0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                             output.flush()
-                            return@Thread
+                            return@submit
                         }
                     }
 
@@ -261,7 +309,7 @@ object TorSocksBridge {
                     if (cmd == 0x05) {
                         socket.soTimeout = 0
                         handleFwdUdp(input, output)
-                        return@Thread
+                        return@submit
                     }
 
                     // Handle CONNECT (cmd 0x01) — chain through Tor SOCKS5
@@ -272,12 +320,10 @@ object TorSocksBridge {
                     logd("Connection handler error: ${e.message}")
                 }
             }
-        }, "tor-bridge-handler")
-        thread.isDaemon = true
-        connectionThreads.add(thread)
-        thread.start()
-
-        connectionThreads.removeAll { !it.isAlive }
+        }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            Log.w(TAG, "connection handler rejected (bridge is stopping)")
+        }
     }
 
     /**
@@ -293,14 +339,280 @@ object TorSocksBridge {
         clientInput: InputStream,
         clientOutput: OutputStream
     ) {
+        var effectiveHost = destHost
+        var effectiveRawAddr = rawAddr
+        if (FakeDns.enabled && FakeDns.isFakeIp(destHost)) {
+            val domain = FakeDns.getDomain(destHost)
+            if (domain != null) {
+                effectiveHost = domain
+                val dBytes = domain.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: FakeDNS mapped $destHost -> $domain")
+            }
+        }
+
         val router = domainRouter
         if (router.enabled) {
-            handleConnectWithRouting(router, destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput)
+            handleConnectWithRouting(router, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, clientInput, clientOutput)
             return
         }
 
-        // Original flow — no domain routing
-        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = true)
+        var effectiveInput = clientInput
+        var wasEarlyReply = false
+
+        // For raw IP destinations on TLS port 443 (e.g. apps bypassing system DNS or direct IPs),
+        // sniff SNI to recover the domain so Tor routes by hostname rather than blocked IP.
+        if (DomainRouter.isIpAddress(effectiveHost) && (destPort == 443 || destPort == 80)) {
+            clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+            clientOutput.flush()
+            clientSocket.soTimeout = 3000
+            wasEarlyReply = true
+
+            val sniffResult = ProtocolSniffer.sniff(clientInput)
+            if (sniffResult.domain != null) {
+                effectiveHost = sniffResult.domain
+                val dBytes = effectiveHost.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: sniffed domain=$effectiveHost from IP=$destHost")
+            }
+            if (sniffResult.bufferedLength > 0 && sniffResult.bufferedData != null) {
+                effectiveInput = SequenceInputStream(
+                    ByteArrayInputStream(sniffResult.bufferedData, 0, sniffResult.bufferedLength),
+                    clientInput
+                )
+            }
+            clientSocket.soTimeout = 0
+        }
+
+        logd("CONNECT: to $destHost:$destPort -> effective=$effectiveHost:$destPort wasEarly=$wasEarlyReply upstream=$upstreamMode chain=$chainMode")
+        when (upstreamMode) {
+            UpstreamMode.TOR -> {
+                if (chainMode != ChainMode.NONE) {
+                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                } else {
+                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                }
+            }
+            UpstreamMode.WARP -> {
+                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.AMNEZIA -> {
+                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.MASQUE -> {
+                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.DIRECT -> {
+                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+        }
+    }
+
+    private fun parseEndpoint(endpoint: String): Pair<String, Int>? {
+        var ep = endpoint.trim()
+        if (ep.isEmpty()) return null
+        if (ep.startsWith("https://")) ep = ep.removePrefix("https://").substringBefore("/")
+        if (ep.startsWith("http://")) ep = ep.removePrefix("http://").substringBefore("/")
+        val colon = ep.lastIndexOf(':')
+        return if (colon != -1) {
+            val host = ep.substring(0, colon)
+            val port = ep.substring(colon + 1).toIntOrNull() ?: 443
+            host to port
+        } else {
+            ep to 443
+        }
+    }
+
+    private fun connectViaTorChained(
+        mode: ChainMode,
+        destHost: String,
+        destPort: Int,
+        rawAddr: ByteArray,
+        portBytes: ByteArray,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+        sendReply: Boolean = true
+    ) {
+        logd("CONNECT: chained via Tor -> $mode for $destHost:$destPort")
+
+        val upstreamEp = when (mode) {
+            ChainMode.MASQUE -> parseEndpoint(masqueEndpoint)
+            ChainMode.WARP -> warpProfile?.endpoint?.let { parseEndpoint(it) }
+            ChainMode.AMNEZIA -> amneziaConfig?.endpoint?.let { parseEndpoint(it) }
+            else -> null
+        }
+
+        if (upstreamEp != null) {
+            val success = connectViaTorDoubleHop(
+                upstreamEp.first, upstreamEp.second,
+                destHost, destPort, rawAddr, portBytes,
+                clientSocket, clientInput, clientOutput, sendReply
+            )
+            if (success) {
+                if (running.get()) {
+                    AppState.updateChain {
+                        if (it.status != AppState.ChainStatus.CONNECTED) it.copy(status = AppState.ChainStatus.CONNECTED, message = "$mode double-hop connected (${upstreamEp.first})") else it
+                    }
+                }
+                return
+            }
+            logd("chain fallback: $mode upstream $upstreamEp could not handle HTTP CONNECT for $destHost:$destPort; routing directly via Tor circuit")
+            if (running.get()) {
+                AppState.updateChain {
+                    if (it.status != AppState.ChainStatus.CONNECTED) {
+                        it.copy(status = AppState.ChainStatus.CONNECTED, message = "$mode hop active · Tor circuit egress")
+                    } else it
+                }
+            }
+        }
+
+        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, clientInput, clientOutput, sendReply = sendReply)
+    }
+
+    private fun connectViaTorDoubleHop(
+        upstreamHost: String,
+        upstreamPort: Int,
+        destHost: String,
+        destPort: Int,
+        rawAddr: ByteArray,
+        portBytes: ByteArray,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+        sendReply: Boolean
+    ): Boolean {
+        var remoteSocket: Socket? = null
+        try {
+            remoteSocket = Socket()
+            remoteSocket.connect(InetSocketAddress(torHost, torSocksPort), TCP_CONNECT_TIMEOUT_MS)
+            remoteSocket.tcpNoDelay = true
+
+            val remoteInput = remoteSocket.getInputStream()
+            val remoteOutput = remoteSocket.getOutputStream()
+
+            // 1. SOCKS5 greeting to Tor
+            remoteOutput.write(byteArrayOf(0x05, 0x01, 0x00))
+            remoteOutput.flush()
+
+            val greetResp = ByteArray(2)
+            remoteInput.readFully(greetResp)
+            if (greetResp[0] != 0x05.toByte() || greetResp[1] != 0x00.toByte()) {
+                remoteSocket.close()
+                return false
+            }
+
+            // 2. CONNECT to upstream proxy via Tor
+            val hostBytes = upstreamHost.toByteArray(Charsets.US_ASCII)
+            val upPortBytes = byteArrayOf((upstreamPort shr 8).toByte(), (upstreamPort and 0xFF).toByte())
+            val upReq = byteArrayOf(0x05, 0x01, 0x00, 0x03, hostBytes.size.toByte()) + hostBytes + upPortBytes
+            remoteOutput.write(upReq)
+            remoteOutput.flush()
+
+            val torResp = ByteArray(4)
+            remoteInput.readFully(torResp)
+            if (torResp[1] != 0x00.toByte()) {
+                remoteSocket.close()
+                return false
+            }
+            when (torResp[3].toInt() and 0xFF) {
+                0x01 -> { val rest = ByteArray(6); remoteInput.readFully(rest) }
+                0x03 -> { val len = remoteInput.read(); val rest = ByteArray(len + 2); remoteInput.readFully(rest) }
+                0x04 -> { val rest = ByteArray(18); remoteInput.readFully(rest) }
+            }
+
+            // 3. Negotiate HTTP CONNECT with upstream proxy
+            val connectHttp = "CONNECT $destHost:$destPort HTTP/1.1\r\nHost: $destHost:$destPort\r\nProxy-Connection: Keep-Alive\r\nUser-Agent: DeltaTor/2.0\r\n\r\n"
+            remoteOutput.write(connectHttp.toByteArray(Charsets.US_ASCII))
+            remoteOutput.flush()
+
+            // Read HTTP response byte-by-byte to prevent BufferedReader buffering payload bytes
+            val statusLine = readHttpLine(remoteInput)
+            if (!statusLine.contains("200")) {
+                logd("CONNECT: double-hop upstream returned status: $statusLine")
+                remoteSocket.close()
+                return false
+            }
+            while (true) {
+                val line = readHttpLine(remoteInput)
+                if (line.isEmpty()) break
+            }
+
+            logd("CONNECT: double-hop Tor -> $upstreamHost:$upstreamPort -> $destHost:$destPort OK")
+
+            if (sendReply) {
+                clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                clientOutput.flush()
+            }
+            clientSocket.soTimeout = 0
+
+            remoteSocket.use { remote ->
+                val t1 = Thread({
+                    try {
+                        copyStream(clientInput, remoteOutput)
+                    } catch (_: Exception) {
+                    } finally {
+                        try { remoteOutput.close() } catch (_: Exception) {}
+                    }
+                }, "tor-bridge-chain-c2s")
+                t1.isDaemon = true
+                t1.start()
+
+                try {
+                    copyStream(remoteInput, clientOutput)
+                } catch (_: Exception) {
+                } finally {
+                    try { remote.close() } catch (_: Exception) {}
+                    t1.interrupt()
+                }
+            }
+            return true
+        } catch (e: Exception) {
+            logd("CONNECT: double-hop failed: ${e.message}")
+            try { remoteSocket?.close() } catch (_: Exception) {}
+            return false
+        }
+    }
+
+    private fun connectDirectUpstream(
+        label: String,
+        destHost: String,
+        destPort: Int,
+        clientSocket: Socket,
+        clientInput: InputStream,
+        clientOutput: OutputStream,
+        sendReply: Boolean = true
+    ) {
+        try {
+            val remoteSocket = Socket()
+            val targetAddr = if (DomainRouter.isIpAddress(destHost)) {
+                InetSocketAddress(destHost, destPort)
+            } else {
+                val ip = try {
+                    java.net.InetAddress.getByName(destHost).hostAddress ?: destHost
+                } catch (_: Exception) {
+                    destHost
+                }
+                InetSocketAddress(ip, destPort)
+            }
+            remoteSocket.connect(targetAddr, TCP_CONNECT_TIMEOUT_MS)
+            remoteSocket.tcpNoDelay = true
+            if (sendReply) {
+                clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                clientOutput.flush()
+            }
+            clientSocket.soTimeout = 0
+            logd("CONNECT: $label direct connection OK to $destHost:$destPort")
+            bridgeDirect(clientInput, clientOutput, remoteSocket)
+        } catch (e: Exception) {
+            logd("CONNECT: $label failed to connect to $destHost:$destPort: ${e.message}")
+            if (sendReply) {
+                try {
+                    clientOutput.write(byteArrayOf(0x05, 0x04, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+                    clientOutput.flush()
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun handleConnectWithRouting(
@@ -314,11 +626,22 @@ object TorSocksBridge {
         clientOutput: OutputStream
     ) {
         var effectiveHost = destHost
+        var effectiveRawAddr = rawAddr
+        if (FakeDns.enabled && FakeDns.isFakeIp(destHost)) {
+            val domain = FakeDns.getDomain(destHost)
+            if (domain != null) {
+                effectiveHost = domain
+                val dBytes = domain.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
+                logd("CONNECT: FakeDNS mapped $destHost -> $domain")
+            }
+        }
+
         var sniffBuffer: ByteArray? = null
         var sniffLen = 0
         var wasEarlyReply = false
 
-        if (DomainRouter.isIpAddress(destHost)) {
+        if (DomainRouter.isIpAddress(effectiveHost)) {
             // IP address — sniff to recover domain
             clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             clientOutput.flush()
@@ -328,6 +651,8 @@ object TorSocksBridge {
             val result = ProtocolSniffer.sniff(clientInput)
             if (result.domain != null) {
                 effectiveHost = result.domain
+                val dBytes = effectiveHost.toByteArray(Charsets.US_ASCII)
+                effectiveRawAddr = byteArrayOf(0x03, dBytes.size.toByte()) + dBytes
                 logd("CONNECT: sniffed domain=$effectiveHost from IP=$destHost")
             }
             sniffBuffer = result.bufferedData
@@ -365,7 +690,27 @@ object TorSocksBridge {
         val effectiveInput = if (sniffLen > 0)
             SequenceInputStream(ByteArrayInputStream(sniffBuffer!!, 0, sniffLen), clientInput)
         else clientInput
-        connectViaTor(destHost, destPort, rawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+        when (upstreamMode) {
+            UpstreamMode.TOR -> {
+                if (chainMode != ChainMode.NONE) {
+                    connectViaTorChained(chainMode, effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                } else {
+                    connectViaTor(effectiveHost, destPort, effectiveRawAddr, portBytes, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+                }
+            }
+            UpstreamMode.WARP -> {
+                connectDirectUpstream("WARP", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.AMNEZIA -> {
+                connectDirectUpstream("Amnezia", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.MASQUE -> {
+                connectDirectUpstream("MASQUE", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+            UpstreamMode.DIRECT -> {
+                connectDirectUpstream("Direct", effectiveHost, destPort, clientSocket, effectiveInput, clientOutput, sendReply = !wasEarlyReply)
+            }
+        }
     }
 
     /**
@@ -427,7 +772,7 @@ object TorSocksBridge {
             remoteInput.readFully(connRespHeader)
 
             if (connRespHeader[1] != 0x00.toByte()) {
-                logd("CONNECT: Tor rejected to $destHost:$destPort (rep=${connRespHeader[1]})")
+                Log.w(TAG, "CONNECT: Tor rejected to $destHost:$destPort (rep=${connRespHeader[1]})")
                 if (sendReply) {
                     clientOutput.write(byteArrayOf(0x05, connRespHeader[1], 0x00, 0x01, 0, 0, 0, 0, 0, 0))
                     clientOutput.flush()
@@ -533,17 +878,29 @@ object TorSocksBridge {
             // Dispatch DNS query to thread pool for concurrent resolution
             val addrCopy = addrBytes.copyOf()
             val payloadCopy = payload.copyOf()
-            dnsExecutor.submit {
+            try {
+                dnsExecutor.submit {
                 try {
-                    // Check cache first
-                    val cached = getCachedDns(payloadCopy)
-                    val response = if (cached != null) {
-                        logd("DNS: cache hit")
-                        cached
+                    // Check FakeDNS first (0ms synthetic response in 198.18.0.0/15)
+                    val fakeResp = if (FakeDns.enabled) FakeDns.handleDnsQuery(payloadCopy) else null
+                    val response = if (fakeResp != null) {
+                        logd("DNS: answered via FakeDNS synthesizer")
+                        fakeResp
                     } else {
-                        val remote = resolveThroughTor(payloadCopy)
-                        if (remote != null) cacheDnsResponse(payloadCopy, remote)
-                        remote
+                        // Check cache
+                        val cached = getCachedDns(payloadCopy)
+                        if (cached != null) {
+                            logd("DNS: cache hit")
+                            cached
+                        } else {
+                            val remote = if (upstreamMode == UpstreamMode.TOR && torSocksPort > 0) {
+                                resolveThroughTor(payloadCopy) ?: resolveDirect(payloadCopy)
+                            } else {
+                                resolveDirect(payloadCopy)
+                            }
+                            if (remote != null) cacheDnsResponse(payloadCopy, remote)
+                            remote
+                        }
                     }
 
                     if (response != null && response.isNotEmpty()) {
@@ -562,6 +919,9 @@ object TorSocksBridge {
                 } catch (e: Exception) {
                     logd("FWD_UDP: DNS forward failed: ${e.message}")
                 }
+            }
+            } catch (e: java.util.concurrent.RejectedExecutionException) {
+                Log.w(TAG, "DNS task rejected (bridge is stopping)")
             }
         }
 
@@ -626,6 +986,7 @@ object TorSocksBridge {
 
     /** Ask each resolver in turn over Tor; null when none answers. */
     private fun resolveThroughTor(payload: ByteArray): ByteArray? {
+        if (torSocksPort <= 0) return null
         for (resolver in DNS_FALLBACK_RESOLVERS) {
             val response = forwardDnsTcp(resolver, payload)
             if (response != null) return response
@@ -639,6 +1000,61 @@ object TorSocksBridge {
      * [resolver]:53. Each call opens a new SOCKS5 connection (no persistent
      * connections to keep it simple).
      */
+    /**
+     * Resolves DNS query directly to Anycast resolvers (1.1.1.1, 8.8.8.8, 9.9.9.9)
+     * using UDP first, falling back to TCP RFC 1035.
+     * Used for standalone engine modes (WARP, AmneziaWG, MASQUE, Direct) or Tor startup fallback.
+     */
+    private fun resolveDirect(payload: ByteArray): ByteArray? {
+        val resolvers = listOf(
+            InetSocketAddress("1.1.1.1", 53),
+            InetSocketAddress("8.8.8.8", 53),
+            InetSocketAddress("9.9.9.9", 53)
+        )
+        // 1. Try standard UDP
+        for (resolver in resolvers) {
+            try {
+                java.net.DatagramSocket().use { ds ->
+                    ds.soTimeout = 2500
+                    val sendPacket = java.net.DatagramPacket(payload, payload.size, resolver)
+                    ds.send(sendPacket)
+                    val buf = ByteArray(4096)
+                    val recvPacket = java.net.DatagramPacket(buf, buf.size)
+                    ds.receive(recvPacket)
+                    if (recvPacket.length > 2) {
+                        logd("DNS: resolved directly via UDP ${resolver.hostString}")
+                        return buf.copyOf(recvPacket.length)
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        // 2. Fallback to DNS-over-TCP
+        for (resolver in resolvers) {
+            try {
+                Socket().use { s ->
+                    s.connect(resolver, 2500)
+                    s.soTimeout = 2500
+                    val out = s.getOutputStream()
+                    val inp = s.getInputStream()
+                    out.write(byteArrayOf(((payload.size shr 8) and 0xFF).toByte(), (payload.size and 0xFF).toByte()))
+                    out.write(payload)
+                    out.flush()
+                    val lenBuf = ByteArray(2)
+                    inp.readFully(lenBuf)
+                    val len = ((lenBuf[0].toInt() and 0xFF) shl 8) or (lenBuf[1].toInt() and 0xFF)
+                    if (len in 1..65535) {
+                        val resp = ByteArray(len)
+                        inp.readFully(resp)
+                        logd("DNS: resolved directly via TCP ${resolver.hostString}")
+                        return resp
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        Log.w(TAG, "DNS: direct resolution failed across all resolvers")
+        return null
+    }
+
     private fun forwardDnsTcp(resolver: ByteArray, payload: ByteArray): ByteArray? {
         var socket: Socket? = null
         try {
@@ -769,6 +1185,17 @@ object TorSocksBridge {
                 t1.interrupt()
             }
         }
+    }
+
+    private fun readHttpLine(input: InputStream): String {
+        val baos = java.io.ByteArrayOutputStream()
+        while (true) {
+            val b = input.read()
+            if (b == -1) break
+            if (b == '\n'.code) break
+            if (b != '\r'.code) baos.write(b)
+        }
+        return baos.toString("US-ASCII")
     }
 
     private fun copyStream(input: InputStream, output: OutputStream) {

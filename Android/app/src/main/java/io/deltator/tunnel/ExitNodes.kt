@@ -67,6 +67,29 @@ object ExitNodes {
         persist(currentCodes, currentNames)
     }
 
+    /**
+     * Replace the whole selection with [incoming] in one shot, keeping every
+     * valid code in the order the caller gave and dropping what is not on the
+     * list. The name of a kept or new country is taken from [names]; a code on
+     * the list that has none keeps what it had.
+     *
+     * One write instead of a toggle per row, so the main-screen location sheet
+     * and the drawer can never disagree about a half-applied state, and the
+     * live re-steer in [io.deltator.TorVpnService] sees the final list once.
+     */
+    fun replaceAll(incoming: List<String>, names: Map<String, String>) {
+        val codes = incoming.joinToString(",").split(',')
+            .map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        val nextNames = codes.associateWith { cc ->
+            names[cc] ?: _names.value[cc] ?: java.util.Locale("", cc).displayCountry
+        }
+        _codes.value = codes
+        _names.value = nextNames
+        persist(codes, nextNames)
+    }
+
     fun clear() {
         _codes.value = emptyList()
         _names.value = emptyMap()

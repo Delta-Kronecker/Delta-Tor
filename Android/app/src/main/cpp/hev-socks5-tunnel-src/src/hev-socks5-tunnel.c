@@ -298,45 +298,127 @@ event_task_entry (void *data)
 
 /*
  * Parse a UDP packet and return the IP header length and destination port.
- * Returns 0 if the packet is not IPv4 UDP.
+ * Supports IPv4 and IPv6 UDP.
  */
 static uint16_t
 parse_udp_packet (const uint8_t *data, uint16_t len, uint16_t *dst_port_out)
 {
     uint16_t iphdr_len, dst_port;
 
-    /* Minimum: IPv4 header (20) + UDP header (8) */
-    if (len < 28)
+    if (!data || len < 28)
         return 0;
 
-    /* IPv4 only */
-    if ((data[0] >> 4) != 4)
-        return 0;
+    /* IPv4 */
+    if ((data[0] >> 4) == 4) {
+        iphdr_len = (data[0] & 0x0F) * 4;
+        if (iphdr_len < 20 || len < iphdr_len + 4)
+            return 0;
 
-    iphdr_len = (data[0] & 0x0F) * 4;
-    if (iphdr_len < 20 || len < iphdr_len + 4)
-        return 0;
+        /* UDP protocol (17) */
+        if (data[9] != 17)
+            return 0;
 
-    /* UDP protocol (17) */
-    if (data[9] != 17)
-        return 0;
+        /* Destination port (big-endian at iphdr_len+2..3) */
+        dst_port = ((uint16_t)data[iphdr_len + 2] << 8) | data[iphdr_len + 3];
 
-    /* Destination port (big-endian at iphdr_len+2..3) */
-    dst_port = ((uint16_t)data[iphdr_len + 2] << 8) | data[iphdr_len + 3];
+        if (dst_port_out)
+            *dst_port_out = dst_port;
 
-    if (dst_port_out)
-        *dst_port_out = dst_port;
+        return iphdr_len;
+    }
 
-    return iphdr_len;
+    /* IPv6 */
+    if ((data[0] >> 4) == 6) {
+        if (len < 40 + 4)
+            return 0;
+
+        /* UDP next-header (17) */
+        if (data[6] != 17)
+            return 0;
+
+        dst_port = ((uint16_t)data[40 + 2] << 8) | data[40 + 3];
+
+        if (dst_port_out)
+            *dst_port_out = dst_port;
+
+        return 40;
+    }
+
+    return 0;
+}
+
+static void
+send_icmp6_port_unreachable (const uint8_t *orig, uint16_t orig_len)
+{
+    /* Minimum IPv6 MTU is 1280.
+     * ICMPv6 format (RFC 4443):
+     * [40B IPv6 header][8B ICMPv6 header][original packet data (up to 1232B)]
+     */
+    uint16_t max_data = 1280 - 40 - 8;
+    uint16_t icmp_data_len = orig_len < max_data ? orig_len : max_data;
+    uint16_t icmp_total = 8 + icmp_data_len;
+    uint16_t ip_total = 40 + icmp_total;
+    struct pbuf *p;
+    uint8_t *out, *icmp;
+    uint32_t sum;
+    uint16_t cksum;
+    int i;
+
+    p = pbuf_alloc (PBUF_RAW, ip_total, PBUF_RAM);
+    if (!p)
+        return;
+
+    out = (uint8_t *)p->payload;
+    memset (out, 0, ip_total);
+
+    /* --- IPv6 header (40 bytes) --- */
+    out[0] = 0x60;                         /* Version 6 */
+    out[4] = (icmp_total >> 8) & 0xFF;     /* Payload Length */
+    out[5] = icmp_total & 0xFF;
+    out[6] = 58;                           /* Next Header: ICMPv6 */
+    out[7] = 64;                           /* Hop Limit */
+    memcpy (out + 8, orig + 24, 16);       /* Src IPv6 = original Dst IPv6 */
+    memcpy (out + 24, orig + 8, 16);       /* Dst IPv6 = original Src IPv6 */
+
+    /* --- ICMPv6 header (8 bytes) --- */
+    icmp = out + 40;
+    icmp[0] = 1;                           /* Type: Destination Unreachable */
+    icmp[1] = 4;                           /* Code: Port Unreachable */
+
+    /* ICMPv6 data: copy original IPv6 packet */
+    memcpy (icmp + 8, orig, icmp_data_len);
+
+    /* Checksum with IPv6 pseudo-header (RFC 4443 sec 2.3) */
+    sum = 0;
+    for (i = 0; i < 16; i += 2)
+        sum += ((uint32_t)out[8 + i] << 8) | out[8 + i + 1];
+    for (i = 0; i < 16; i += 2)
+        sum += ((uint32_t)out[24 + i] << 8) | out[24 + i + 1];
+    sum += icmp_total;
+    sum += 58;
+
+    for (i = 0; i < icmp_total; i += 2) {
+        if (i + 1 < icmp_total)
+            sum += ((uint32_t)icmp[i] << 8) | icmp[i + 1];
+        else
+            sum += (uint32_t)icmp[i] << 8;
+    }
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    cksum = ~sum & 0xFFFF;
+    icmp[2] = (cksum >> 8) & 0xFF;
+    icmp[3] = cksum & 0xFF;
+
+    /* Write ICMPv6 response back to TUN */
+    netif_output_handler (&netif, p);
+    pbuf_free (p);
 }
 
 /*
  * Send ICMP Destination Unreachable / Port Unreachable back to TUN.
  * Forces QUIC clients to fall back to TCP immediately instead of
  * waiting 5-10 seconds for a timeout.
- *
- * Packet format (RFC 792):
- *   [20B IP header][8B ICMP header][original IP header + 8B of UDP]
+ * Supports both IPv4 (RFC 792) and IPv6 (RFC 4443).
  */
 static void
 send_icmp_port_unreachable (const uint8_t *orig, uint16_t orig_len,
@@ -348,6 +430,11 @@ send_icmp_port_unreachable (const uint8_t *orig, uint16_t orig_len,
     uint32_t sum;
     uint16_t cksum;
     int i;
+
+    if ((orig[0] >> 4) == 6) {
+        send_icmp6_port_unreachable (orig, orig_len);
+        return;
+    }
 
     icmp_data_len = iphdr_len + 8;    /* Original IP header + 8B of UDP */
     if (orig_len < icmp_data_len)

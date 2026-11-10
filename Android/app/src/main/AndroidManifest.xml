@@ -85,5 +85,16 @@
         <receiver
             android:name=".InstallTriggerReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".DebugReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.deltator.CONNECT" />
+                <action android:name="io.deltator.CHAIN_CONNECT" />
+                <action android:name="io.deltator.DISCONNECT" />
+                <action android:name="io.deltator.ACTION_DEBUG_SET_WARP" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

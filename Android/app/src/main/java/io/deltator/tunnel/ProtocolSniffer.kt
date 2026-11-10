@@ -35,6 +35,16 @@ object ProtocolSniffer {
             if (bytesRead > 0) {
                 totalRead = bytesRead
             }
+            // If it is a TLS Handshake (0x16) and record is split across TCP segments, read more
+            if (totalRead >= 5 && (buffer[0].toInt() and 0xFF) == 0x16) {
+                val recordLen = ((buffer[3].toInt() and 0xFF) shl 8) or (buffer[4].toInt() and 0xFF)
+                val targetLen = minOf(5 + recordLen, buffer.size)
+                while (totalRead < targetLen) {
+                    val r = clientInput.read(buffer, totalRead, targetLen - totalRead)
+                    if (r <= 0) break
+                    totalRead += r
+                }
+            }
         } catch (e: Exception) {
             Log.w(TAG, "Sniff read error: ${e.message}")
         }
@@ -80,9 +90,6 @@ object ProtocolSniffer {
         // Check TLS record header
         if (buf[0].toInt() and 0xFF != 0x16) return null // Not a Handshake record
 
-        val recordLength = ((buf[3].toInt() and 0xFF) shl 8) or (buf[4].toInt() and 0xFF)
-        if (5 + recordLength > len) return null // Incomplete record
-
         // Check Handshake type = ClientHello
         if (buf[5].toInt() and 0xFF != 0x01) return null
 
@@ -108,8 +115,7 @@ object ProtocolSniffer {
         val extensionsLen = ((buf[pos].toInt() and 0xFF) shl 8) or (buf[pos + 1].toInt() and 0xFF)
         pos += 2
 
-        val extensionsEnd = pos + extensionsLen
-        if (extensionsEnd > len) return null
+        val extensionsEnd = minOf(pos + extensionsLen, len)
 
         while (pos + 4 <= extensionsEnd) {
             val extType = ((buf[pos].toInt() and 0xFF) shl 8) or (buf[pos + 1].toInt() and 0xFF)

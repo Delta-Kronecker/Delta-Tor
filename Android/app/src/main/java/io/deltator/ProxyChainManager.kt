@@ -34,8 +34,11 @@ import java.util.concurrent.atomic.AtomicInteger
 private const val TAG = "ChainList"
 
 /** The daily-updated VPN Gate host list. Format: one `host[:port]` per line. */
-private const val HOSTLIST_URL =
+private val HOSTLIST_URLS = listOf(
+    "https://raw.githubusercontent.com/Delta-Kronecker/Vpn-Gate/main/sstp_hosts.txt",
+    "https://cdn.jsdelivr.net/gh/Delta-Kronecker/Vpn-Gate@main/sstp_hosts.txt",
     "https://github.com/Delta-Kronecker/Vpn-Gate/raw/refs/heads/main/sstp_hosts.txt"
+)
 
 /** What an untested/failed measurement is stored as. */
 private const val NO_DELAY = -1L
@@ -87,6 +90,9 @@ object ProxyChainManager {
 
     @Volatile
     private var servers: List<Server> = emptyList()
+
+    @Volatile
+    private var customServers: List<Server> = emptyList()
 
     @Volatile
     var testing: Boolean = false
@@ -147,22 +153,56 @@ object ProxyChainManager {
             val parsed = ArrayList<Server>(array.length())
             for (i in 0 until array.length()) {
                 val o = array.getJSONObject(i)
-                parsed.add(
-                    Server(
-                        o.getString("h"),
-                        o.getInt("p"),
-                        o.optLong("ms", NO_DELAY),
-                        o.optString("cc", ""),
-                        o.optString("cn", "")
-                    )
-                )
+                parsed.add(Server(o.getString("h"), o.getInt("p"), o.optLong("ms", NO_DELAY), o.optString("cc", ""), o.optString("cn", "")))
             }
-            servers = parsed.sorted()
+            val cArr = root.optJSONArray("custom")
+            customServers = if (cArr != null) (0 until cArr.length()).mapNotNull {
+                try {
+                    val o = cArr.getJSONObject(it)
+                    Server(o.getString("h"), o.optInt("p", Config.sstpPort), o.optLong("ms", NO_DELAY), o.optString("cc", ""), o.optString("cn", ""))
+                } catch (_: Exception) { null }
+            } else emptyList()
+            servers = mergeCustom(parsed).sorted()
             publish()
         } catch (e: Exception) {
             Log.w(TAG, "chain list restore failed: ${e.message}")
         }
     }
+
+    private fun mergeCustom(base: List<Server>): List<Server> {
+        if (customServers.isEmpty()) return base
+        val keys = base.map { it.key }.toMutableSet()
+        val extra = customServers.filter { keys.add(it.key) }
+        val mergedCountries = linkedMapOf<String, String>()
+        countries.forEach { mergedCountries[it.code] = it.name }
+        extra.forEach { if (it.countryCode.isNotBlank()) mergedCountries.putIfAbsent(it.countryCode, it.countryName.ifBlank { it.countryCode }) }
+        countries = mergedCountries.map { Country(it.key, it.value) }
+        return base + extra
+    }
+
+    fun addCustomServer(host: String, port: Int, countryCode: String = "", countryName: String = "") {
+        val h = host.trim(); if (h.isBlank()) return
+        val p = if (port in 1..65535) port else Config.sstpPort
+        val s = Server(h, p, NO_DELAY, countryCode.trim().uppercase(Locale.US), countryName.trim())
+        if (customServers.any { it.key == s.key }) return
+        customServers = customServers + s
+        servers = mergeCustom(servers.filter { f -> customServers.none { it.key == f.key } || customServers.any { it.key == f.key } }).sorted()
+        servers = (servers.filterNot { customServers.any { c -> c.key == it.key } } + customServers).distinctBy { it.key }.sorted()
+        publish()
+        val context = appContext ?: return
+        ioScope.launch { save(context) }
+    }
+
+    fun removeCustomServer(key: String) {
+        if (customServers.none { it.key == key }) return
+        customServers = customServers.filterNot { it.key == key }
+        servers = servers.filterNot { it.key == key }.sorted()
+        publish()
+        val context = appContext ?: return
+        ioScope.launch { save(context) }
+    }
+
+    fun isCustom(key: String): Boolean = customServers.any { it.key == key }
 
     private fun save(context: Context) {
         try {
@@ -179,14 +219,19 @@ object ProxyChainManager {
             val array = JSONArray()
             servers.forEach {
                 val o = JSONObject()
-                o.put("h", it.host)
-                o.put("p", it.port)
-                o.put("ms", it.delayMs)
-                o.put("cc", it.countryCode)
-                o.put("cn", it.countryName)
+                o.put("h", it.host); o.put("p", it.port); o.put("ms", it.delayMs)
+                o.put("cc", it.countryCode); o.put("cn", it.countryName)
                 array.put(o)
             }
             root.put("servers", array)
+            val cArr = JSONArray()
+            customServers.forEach {
+                val o = JSONObject()
+                o.put("h", it.host); o.put("p", it.port); o.put("ms", it.delayMs)
+                o.put("cc", it.countryCode); o.put("cn", it.countryName)
+                cArr.put(o)
+            }
+            root.put("custom", cArr)
             file(context).writeText(root.toString())
         } catch (e: Exception) {
             Log.w(TAG, "chain list save failed: ${e.message}")
@@ -243,8 +288,8 @@ object ProxyChainManager {
             val text = withContext(Dispatchers.IO) { fetchDirect() } ?: run {
                 Log.i(TAG, "direct fetch failed, retrying behind Tor")
                 withContext(Dispatchers.IO) { fetchBehindTor() }
-            } ?: run {
-                Log.w(TAG, "host list fetch failed on both routes")
+            } ?: loadBundledSeed(context) ?: run {
+                Log.w(TAG, "host list fetch failed on both routes (no bundled seed)")
                 return false
             }
 
@@ -271,10 +316,10 @@ object ProxyChainManager {
                 if (prior != null) fresh.copy(delayMs = prior.delayMs) else fresh
             }
             updatedAtMillis = System.currentTimeMillis()
-            servers = merged.sorted()
+            servers = mergeCustom(merged).sorted()
             save(context.applicationContext)
             publish()
-            Log.i(TAG, "host list updated: ${merged.size} servers, ${countries.size} countries")
+            Log.i(TAG, "host list updated: ${merged.size} servers (+${customServers.size} custom), ${countries.size} countries")
             return true
         } finally {
             _fetching.value = false
@@ -286,24 +331,42 @@ object ProxyChainManager {
     private fun fetchBehindTor(): String? = fetch(viaTor = true)
 
     private fun fetch(viaTor: Boolean): String? {
-        return try {
-            val url = URL(HOSTLIST_URL)
-            val connection = if (viaTor) {
-                url.openConnection(
-                    Proxy(
-                        Proxy.Type.SOCKS,
-                        InetSocketAddress("127.0.0.1", Config.proxyPort)
+        if (viaTor && !io.deltator.tunnel.TorSocksBridge.isRunning()) return null
+        for (u in HOSTLIST_URLS) {
+            try {
+                val url = URL(u)
+                val connection = if (viaTor) {
+                    url.openConnection(
+                        Proxy(
+                            Proxy.Type.SOCKS,
+                            InetSocketAddress("127.0.0.1", Config.proxyPort)
+                        )
                     )
-                )
-            } else {
-                url.openConnection(Proxy.NO_PROXY)
+                } else {
+                    url.openConnection(Proxy.NO_PROXY)
+                }
+                connection.connectTimeout = 12_000
+                connection.readTimeout = 15_000
+                connection.setRequestProperty("User-Agent", "DeltaTor/${io.deltator.BuildConfig.VERSION_NAME}")
+                val body = connection.getInputStream().bufferedReader().use { it.readText() }
+                if (body.isNotBlank()) {
+                    Log.i(TAG, "host list fetched ${if (viaTor) "via Tor" else "direct"} from $u (${body.length} chars)")
+                    return body
+                }
+            } catch (e: Exception) {
+                Log.d(TAG, "host list fetch ${if (viaTor) "via Tor" else "direct"} failed: $u (${e.message})")
             }
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 20_000
-            connection.getInputStream().bufferedReader().use { it.readText() }
-        } catch (e: Exception) {
-            null
         }
+        return null
+    }
+
+    /** Bundled fallback so the list isn't empty on first run / blocked networks. */
+    private fun loadBundledSeed(context: Context): String? = try {
+        context.applicationContext.assets.open("sstp_hosts.txt").bufferedReader().use { it.readText() }
+            .takeIf { it.isNotBlank() }?.also { Log.i(TAG, "using bundled sstp_hosts seed (${it.length} chars)") }
+    } catch (e: Exception) {
+        Log.d(TAG, "no bundled sstp_hosts seed: ${e.message}")
+        null
     }
 
     /**

@@ -101,7 +101,7 @@ android {
             isShrinkResources = true
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release")
+            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         debug {
             isMinifyEnabled = false
@@ -184,4 +184,7 @@ dependencies {
 
     // Core
     implementation("androidx.core:core-ktx:1.17.0")
+
+    // WireGuard/AWG userspace backend (supports AWG params; also used for WARP/WG).
+    implementation("com.zaneschepke:amneziawg-android:1.3.0")
 }

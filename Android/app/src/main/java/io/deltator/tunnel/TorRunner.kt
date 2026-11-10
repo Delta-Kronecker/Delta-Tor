@@ -1,9 +1,12 @@
 package io.deltator.tunnel
 
 import android.content.Context
+import io.deltator.Config
 import io.deltator.util.AppLog as Log
 import mobile.DnsttClient
 import mobile.Mobile
+import snowflake.Snowflake
+import snowflake.SnowflakeClient
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
@@ -50,6 +53,13 @@ class TorRunner(
      */
     private val dnsttClients = mutableListOf<DnsttClient>()
 
+    /**
+     * Snowflake in-process Go SOCKS5 client. Tor connects to it via
+     * `ClientTransportPlugin snowflake socks5 127.0.0.1:<port>`.
+     */
+    @Volatile private var snowflakeClient: SnowflakeClient? = null
+    @Volatile private var snowflakePort = 0
+
     /** The loopback control port Tor binds when exit countries are selected. */
     @Volatile private var controlPort = 0
     private val exitApplied = AtomicBoolean(false)
@@ -74,7 +84,8 @@ class TorRunner(
         val dnsttOk = synchronized(dnsttClients) {
             dnsttClients.isEmpty() || dnsttClients.any { it.isRunning }
         }
-        return torProcess?.isAlive == true && lyrebirdOk && dnsttOk
+        val snowflakeOk = snowflakeClient == null || snowflakeClient?.isRunning == true
+        return torProcess?.isAlive == true && lyrebirdOk && dnsttOk && snowflakeOk
     }
 
     fun isReady(): Boolean = ready && torProcess?.isAlive == true
@@ -103,7 +114,7 @@ class TorRunner(
         Thread({
             var ok = false
             try {
-                ok = applyExitNodesViaControl(port, ccs)
+                ok = applyExitNow(port, ccs)
             } catch (e: Exception) {
                 Log.w(TAG_EXIT, "[$name] could not apply via control port $port: ${e.message}")
             }
@@ -113,100 +124,51 @@ class TorRunner(
     }
 
     /**
-     * The control exchange itself. Returns true when the exit rules took effect.
-     *
-     * The template this app ships with keeps a 24h [MaxCircuitDirtiness] and the
-     * fork's Conflux enabled. Both fight the live switch: the first circuit of
-     * the session was built without an exit restriction, so all traffic would
-     * ride that single circuit's original (wrong) country for a whole day, and
-     * Conflux sets rebuilt after the switch keep relinking unrestricted legs.
-     * The present values are therefore retired (10 min turnover, Conflux off)
-     * and a fresh identity is requested so the next streams leave through the
-     * selected countries. Any line the binary rejects is left alone, traced, and
-     * the session continues with the exit list still in force.
+     * The live-steer exchange, logged under the ExitNode section either way so a
+     * device-side failure is visible. `STEER` head marks a user-initiated change
+     * apart from the once-per-session bootstrap application.
      */
-    private fun applyExitNodesViaControl(port: Int, ccs: List<String>): Boolean {
-        val exitValue = ccs.joinToString(",") { "{$it}" }
-        Log.i(TAG_EXIT, "=== EXIT NODE |> $name |> ${ccs.joinToString(",")} ===")
+    private fun applyExitNow(port: Int, ccs: List<String>, steer: Boolean = false): Boolean {
+        Log.i(TAG_EXIT, "=== ${if (steer) "STEER" else "EXIT"} NODE |> $name |> ${ccs.joinToString(",")} ===")
         Log.i(TAG_EXIT, "[$name] geoip: built earlier for ${ccs.joinToString(",")}")
         Log.i(TAG_EXIT, "[$name] control port: $listenHost:$port")
-        return sendControl(
-            port,
-            listOf(
-                ControlCommand("AUTHENTICATE", optional = false),
-                ControlCommand("SETCONF ExitNodes=\"$exitValue\"", optional = false),
-                ControlCommand("SETCONF StrictNodes=0", optional = false),
-                ControlCommand("SETCONF MaxCircuitDirtiness=600", optional = true),
-                ControlCommand("SETCONF ConfluxEnabled=0", optional = true),
-                ControlCommand("SETCONF CircuitBuildTimeout=180", optional = true),
-                ControlCommand("SETCONF LearnCircuitBuildTimeout=1", optional = true),
-                ControlCommand("SIGNAL NEWNYM", optional = true),
-                ControlCommand("GETCONF ExitNodes", optional = false),
-                ControlCommand("GETCONF StrictNodes", optional = false)
-            )
-        )
-    }
-
-    private class ControlCommand(val line: String, val optional: Boolean)
-
-    /**
-     * Send a short control exchange to a bootstrapped Tor. Logs one line per
-     * command (command + final status) under the ExitNode section; optional
-     * commands that fail are waived with a warning, mandatory ones throw.
-     */
-    private fun sendControl(port: Int, commands: List<ControlCommand>): Boolean {
-        val socket = java.net.Socket()
-        try {
-            socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 4_000)
-            socket.soTimeout = 4_000
-            val writer = socket.getOutputStream()
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), Charsets.ISO_8859_1))
-            for (command in commands) {
-                writer.write(command.line.toByteArray(Charsets.ISO_8859_1))
-                writer.write("\r\n".toByteArray(Charsets.ISO_8859_1))
-                writer.flush()
-                val reply = readReply(reader)
-                val ok = reply.isNotEmpty() && reply.last().startsWith("250")
-                if (!ok) {
-                    if (command.optional) {
-                        Log.w(TAG_EXIT, "[$name] ${command.line} -> ${reply.joinToString(" / ")} (ignored)")
-                        continue
-                    }
-                    throw RuntimeException("${command.line} -> ${reply.joinToString(" / ")}")
-                }
-                Log.i(TAG_EXIT, "[$name] ${command.line} -> ${reply.last()}")
-            }
-            return true
-        } finally {
-            runCatching { socket.close() }
-        }
+        return TorControl.steerExit(port, dataDir, ccs, tag = TAG_EXIT)
     }
 
     /**
-     * Read one complete control reply. Single-line replies come back as one
-     * line; multi-line "250-..." blocks end at their "250 ..." terminator and
-     * "250+..." (data) blocks consume the raw data lines up to the "." line and
-     * the closing "250 ..." line.
+     * The loopback control port Tor binds for this runner, `0` when it did not
+     * open. The winner's port is what the main screen's "New Identity" button
+     * and the live exit re-steer both talk to through [TorControl].
      */
-    private fun readReply(reader: BufferedReader): List<String> {
-        val out = ArrayList<String>()
-        var line = reader.readLine() ?: return out
-        out.add(line)
-        if (line.startsWith("250+")) {
-            // Raw data follows: read until the standalone "." terminator.
-            while (true) {
-                val data = reader.readLine() ?: break
-                if (data == ".") break
-                out.add(data)
-            }
-            reader.readLine()?.let { out.add(it) } // closing status line
-        } else {
-            while (line.startsWith("250-")) {
-                line = reader.readLine() ?: break
-                out.add(line)
-            }
+    val controlPortLive: Int get() = controlPort
+
+    /** This runner's Tor DataDirectory; the control cookie lives in there. */
+    val controlDataDir: File get() = dataDir
+
+    /**
+     * Apply [codes] to a running, bootstrapped Tor over its control port,
+     * building (or refreshing) the geoip database first so Tor can actually
+     * resolve the countries. Blocks; call off the main thread.
+     *
+     * Returns false with a word in the log when there is no listener to speak
+     * to, rather than pretending the steering took effect.
+     */
+    fun liveSteerExit(codes: List<String>): Boolean {
+        val ccs = codes.map { it.trim().uppercase() }
+            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+            .distinct()
+        val port = controlPort
+        if (port <= 0) {
+            Log.w(TAG_EXIT, "[$name] live steer: no control port is open")
+            return false
         }
-        return out
+        if (ccs.isNotEmpty()) prepareGeoIp(ccs)
+        return try {
+            applyExitNow(port, ccs, steer = true)
+        } catch (e: Exception) {
+            Log.w(TAG_EXIT, "[$name] live steer failed over $port: ${e.message}")
+            false
+        }
     }
 
     /**
@@ -324,7 +286,7 @@ class TorRunner(
             if (malformed.isNotEmpty()) {
                 Log.w(tag, "dropped ${malformed.size} malformed bridge line(s), first: ${malformed.first().take(70)}")
             }
-            val cleanLines = wellFormed.take(MAX_BRIDGE_LINES)
+            val cleanLines = wellFormed.take(Config.bridgeCandidateLimit)
 
             // dnstt lines are rewritten to local vanilla bridges before anything
             // else looks at them: lyrebird does not serve dnstt, and Tor cannot
@@ -351,7 +313,7 @@ class TorRunner(
             // Only real pluggable-transport names count. The memory runner mixes
             // plain `ip:port fp` lines with prefixed ones, and a bare address as
             // the first token must not be mistaken for a CMETHOD.
-            val transports = if (isVanilla) mutableListOf<String>() else
+            val allTransports = if (isVanilla) mutableListOf<String>() else
                 usablePreLines.mapNotNull { it.split(WHITESPACE).firstOrNull()?.lowercase() }
                     .filter { it in PLUGGABLE_TRANSPORTS }
                     .distinct()
@@ -364,16 +326,36 @@ class TorRunner(
                 if (file.exists()) file.delete()
             }
 
+            // Snowflake is served by our in-process Go client (from golibs-full AAR),
+            // not by lyrebird (obfs4proxy binary does not speak snowflake).
+            val hasSnowflake = allTransports.contains(TRANSPORT_SNOWFLAKE)
+            if (hasSnowflake) {
+                val sfLines = usablePreLines.filter { it.startsWith("$TRANSPORT_SNOWFLAKE ") }
+                val sfResult = startSnowflakeClient(sfLines)
+                if (sfResult.isFailure) {
+                    val err = sfResult.exceptionOrNull()?.message ?: "unknown"
+                    Log.w(tag, "Snowflake client failed to start: $err")
+                    usablePreLines = usablePreLines.filterNot { it.startsWith("$TRANSPORT_SNOWFLAKE ") }
+                    if (usablePreLines.isEmpty() && !isDirect) {
+                        stop()
+                        return Result.failure(RuntimeException("$tag: snowflake failed to start ($err)"))
+                    }
+                }
+            }
+
+            // Pluggable transports for lyrebird (obfs4, webtunnel, meek_lite).
+            val lyrebirdTransports = allTransports.filter { it != TRANSPORT_SNOWFLAKE }.toMutableList()
+
             // The lines Tor is finally given. Narrowed below when lyrebird turns
             // out not to speak every transport the list asked for.
             var usableLines = usablePreLines
 
-            if (transports.isNotEmpty()) {
+            if (lyrebirdTransports.isNotEmpty()) {
                 val ptBinary = getObfs4proxyPath()
                     ?: return Result.failure(RuntimeException("$tag: lyrebird (obfs4proxy) binary not found"))
-                val result = startLyrebird(ptBinary, transports)
+                val result = startLyrebird(ptBinary, lyrebirdTransports)
                 if (result.isFailure) return result
-                val missing = transports.filter { it !in lyrebirdCmethods }
+                val missing = lyrebirdTransports.filter { it !in lyrebirdCmethods }
                 if (missing.isNotEmpty()) {
                     // lyrebird here is obfs4proxy: it serves obfs4, webtunnel and
                     // meek-lite, and it has no snowflake. A list that mixes a
@@ -382,7 +364,7 @@ class TorRunner(
                     // transport are dropped and the runner goes on. Only a list that
                     // needs nothing else is a real failure.
                     Log.w(tag, "Lyrebird cannot serve $missing; dropping those bridge line(s)")
-                    transports.removeAll(missing.toSet())
+                    lyrebirdTransports.removeAll(missing.toSet())
                     usableLines = usablePreLines.filterNot { line ->
                         line.split(WHITESPACE).firstOrNull()?.lowercase() in missing
                     }
@@ -436,7 +418,7 @@ class TorRunner(
                 }
             }, "$name-tor-output").also { it.isDaemon = true; it.start() }
 
-            Log.i(tag, "Started Tor on $listenHost:$torSocksPort ($name, ${transports.joinToString(",") ?: "vanilla"} transport)")
+            Log.i(tag, "Started Tor on $listenHost:$torSocksPort ($name, ${allTransports.joinToString(",").ifBlank { "vanilla" }} transport)")
             return Result.success(Unit)
         } catch (e: Exception) {
             Log.e(tag, "Start failed", e)
@@ -464,6 +446,7 @@ class TorRunner(
             put("TOR_PT_CLIENT_TRANSPORTS", transports.joinToString(","))
             put("TOR_PT_STATE_LOCATION", ptStateDir.absolutePath + "/")
             put("TOR_PT_EXIT_ON_STDIN_CLOSE", "1")
+            put("TOR_PT_UTLS_CLIENT_HELLO_ID", Config.uTlsFingerprint)
         }
 
         val process: Process
@@ -601,6 +584,64 @@ class TorRunner(
         return rewritten
     }
 
+    // --- Snowflake in-process client ---
+
+    /**
+     * Start the in-process Go Snowflake SOCKS5 client.
+     *
+     * Tor connects to this local SOCKS5 proxy via `ClientTransportPlugin snowflake socks5 127.0.0.1:<port>`,
+     * and the client handles the WebRTC rendezvous and data channel tunneling to Snowflake proxies.
+     */
+    private fun startSnowflakeClient(snowflakeLines: List<String>): Result<Int> {
+        return try {
+            val port = freeEphemeralPort()
+            val listenAddr = "$listenHost:$port"
+
+            var brokerUrl = SNOWFLAKE_BROKER_URL
+            var frontDomains = SNOWFLAKE_FRONT_DOMAINS
+            var stunUrls = SNOWFLAKE_STUN_URLS
+            var utlsId = SNOWFLAKE_UTLS_CLIENT_ID
+            var ampCacheUrl = ""
+
+            val firstLine = snowflakeLines.firstOrNull()
+            if (firstLine != null) {
+                val tokens = firstLine.split(WHITESPACE).drop(2)
+                val args = tokens.associate { token ->
+                    val i = token.indexOf('=')
+                    if (i > 0) token.substring(0, i).lowercase() to token.substring(i + 1)
+                    else token.lowercase() to ""
+                }
+                args["url"]?.takeIf { it.isNotBlank() }?.let { brokerUrl = it }
+                args["fronts"]?.takeIf { it.isNotBlank() }?.let { frontDomains = it }
+                args["ice"]?.takeIf { it.isNotBlank() }?.let { stunUrls = it }
+                args["utls-imitate"]?.takeIf { it.isNotBlank() }?.let { utlsId = it }
+                args["ampcache"]?.takeIf { it.isNotBlank() }?.let { ampCacheUrl = it }
+            }
+
+            Log.i(tag, "Starting Snowflake Go client on $listenAddr (broker=$brokerUrl, fronts=$frontDomains)")
+            val client = Snowflake.newClient(listenAddr, brokerUrl, frontDomains, stunUrls, utlsId, ampCacheUrl)
+            client.start()
+
+            val deadline = System.currentTimeMillis() + SNOWFLAKE_START_TIMEOUT_MS
+            while (!client.isRunning && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+            if (!client.isRunning) {
+                runCatching { client.stop() }
+                return Result.failure(RuntimeException("Snowflake client failed to report running within ${SNOWFLAKE_START_TIMEOUT_MS}ms"))
+            }
+
+            snowflakeClient = client
+            snowflakePort = port
+            noteLog("snowflake: client up on $listenAddr")
+            Log.i(tag, "Snowflake client running on $listenAddr")
+            Result.success(port)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to start Snowflake client: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
     // --- torrc ---
 
     private fun writeTorrc(cleanLines: List<String>, isVanilla: Boolean, isDirect: Boolean = false): String {
@@ -634,11 +675,19 @@ class TorRunner(
         val pluginDirectives = StringBuilder()
         if (!isVanilla) {
             for (transport in transports) {
-                val addr = lyrebirdCmethods[transport]
-                if (addr != null) {
-                    pluginDirectives.appendLine("ClientTransportPlugin $transport socks5 $addr")
+                if (transport == TRANSPORT_SNOWFLAKE) {
+                    if (snowflakePort > 0) {
+                        pluginDirectives.appendLine("ClientTransportPlugin snowflake socks5 $listenHost:$snowflakePort")
+                    } else {
+                        Log.w(tag, "Snowflake requested but snowflakePort is 0")
+                    }
                 } else {
-                    Log.w(tag, "No lyrebird CMETHOD for transport: $transport")
+                    val addr = lyrebirdCmethods[transport]
+                    if (addr != null) {
+                        pluginDirectives.appendLine("ClientTransportPlugin $transport socks5 $addr")
+                    } else {
+                        Log.w(tag, "No lyrebird CMETHOD for transport: $transport")
+                    }
                 }
             }
         }
@@ -657,17 +706,18 @@ class TorRunner(
         // the first boot is unrestricted (fast), and the country rules are
         // pushed in once the runner is already at 100%: Tor then steers new
         // circuits into the selected countries without the slow cold start.
-        val exitCodes = ExitNodes.currentCodes()
-            .map { it.trim().uppercase() }
-            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
-            .distinct()
-        if (exitCodes.isNotEmpty()) {
-            controlPort = freeEphemeralPort()
-        }
+        //
+        // The control port itself is opened on EVERY runner, not just the ones
+        // that steer at bootstrap: the main screen's "New Identity" button and
+        // the live location switch both talk to the winner of the race over
+        // this port, through [TorControl], whatever the user has picked so far.
+        // Authentication is Tor's own default for ControlPort (cookie, written
+        // into [dataDir]); the client reads it from there.
+        controlPort = freeEphemeralPort()
 
-        val templateLines = TorrcSettings.templateLines()
+        val templateLines = TorrcSettings.mobileConfluxLines(TorrcSettings.isMobileData(context))
         val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n" +
-            (if (exitCodes.isNotEmpty()) "ControlPort $listenHost:$controlPort\n" else "")
+            "ControlPort $listenHost:$controlPort\n"
         torrcFile.writeText(torrcContent)
         try {
             File(context.filesDir, "tor_last.torrc").writeText(torrcContent)
@@ -695,10 +745,20 @@ class TorRunner(
      * without a word, so say so instead of pretending the exit is pinned.
      */
     private fun prepareGeoIp() {
-        val codes = ExitNodes.currentCodes()
-            .map { it.trim().uppercase() }
-            .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
-            .distinct()
+        prepareGeoIp(
+            ExitNodes.currentCodes()
+                .map { it.trim().uppercase() }
+                .filter { it.length == 2 && it.all { c -> c in 'A'..'Z' } }
+                .distinct()
+        )
+    }
+
+    /**
+     * Build the geoip database for exactly [codes]. The live re-steer calls this
+     * with whatever the user has just selected, which may be a country that was
+     * not in the database at process start.
+     */
+    private fun prepareGeoIp(codes: List<String>) {
         if (codes.isEmpty()) {
             // No country chosen: drop a stale database so nothing points at it.
             GeoIpFile.discard(dataDir)
@@ -736,6 +796,14 @@ class TorRunner(
         dnstts.forEach { client -> runCatching { client.stop() } }
         if (dnstts.isNotEmpty()) {
             Log.i(tag, "stopped ${dnstts.size} dnstt client(s)")
+        }
+
+        val sf = snowflakeClient
+        snowflakeClient = null
+        snowflakePort = 0
+        if (sf != null) {
+            runCatching { sf.stop() }
+            Log.i(tag, "stopped snowflake client")
         }
 
         lyrebirdCmethods.clear()
@@ -823,6 +891,12 @@ class TorRunner(
         private const val CACHED_MARKER = "(cached): \$"
         private const val FRESH_MARKER = "(fresh): \$"
         private const val DNSTT_PREFIX = "dnstt"
+        private const val TRANSPORT_SNOWFLAKE = "snowflake"
+        private const val SNOWFLAKE_START_TIMEOUT_MS = 4_000L
+        private const val SNOWFLAKE_BROKER_URL = "https://1098762253.rsc.cdn77.org/"
+        private const val SNOWFLAKE_FRONT_DOMAINS = "www.cdn77.com"
+        private const val SNOWFLAKE_STUN_URLS = "stun:stun.antisip.com:3478,stun:stun.epygi.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.mixvoip.com:3478,stun:stun.nextcloud.com:3478,stun:stun.bethesda.net:3478,stun:stun.nextcloud.com:443,stun:stun.sipgate.net:3478,stun:stun.sipgate.net:10000,stun:stun.sonetel.com:3478,stun:stun.voipia.net:3478,stun:stun.ucsb.edu:3478,stun:stun.schlund.de:3478"
+        private const val SNOWFLAKE_UTLS_CLIENT_ID = "hellorandomizedalpn"
         private val WHITESPACE = Regex("\\s+")
         private val PLUGGABLE_TRANSPORTS = setOf("obfs4", "webtunnel", "snowflake", "meek_lite", "meek")
     }

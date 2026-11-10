@@ -7,19 +7,18 @@ import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.URL
+import java.util.Locale
 import javax.net.ssl.HttpsURLConnection
 
-/** Where the traffic leaves the Tor network. */
+/** Where the traffic leaves the Tor network or proxy chain. */
 data class ExitInfo(
     val ip: String,
     val countryCode: String = "",
     val countryName: String = "",
     val city: String = "",
     val asn: String = "",
-    /** True when the country came from ip2location rather than the offline GeoIP db. */
     val fromNetwork: Boolean = false
 ) {
-    /** "BE \u00b7 Belgium", or just the name when the code is unknown. */
     fun label(): String = when {
         countryCode.isNotBlank() && countryName.isNotBlank() -> "$countryCode \u00b7 $countryName"
         countryName.isNotBlank() -> countryName
@@ -29,11 +28,13 @@ data class ExitInfo(
 }
 
 /**
- * Resolves the public exit IP and country as seen through the app's SOCKS5
- * tunnel, i.e. through the Tor circuit rather than the device's own network.
+ * Resolves the true public exit IP and country.
+ * Always queries through the local SOCKS5 proxy bridge (127.0.0.1:proxyPort)
+ * to prevent real IP leaks (since DeltaTor itself is excluded from the VPN TUN
+ * to prevent routing loops, so raw direct sockets bypass the VPN).
  *
- * Primary source is ip2location.io; when that is rate limited or unreachable it
- * falls back to a plain-HTTP IP echo plus the bundled offline GeoIP database.
+ * Works for every exit path (direct Tor and Tor→chain/WARP/Amnezia/MASQUE/free
+ * nodes) because the probe rides the same SOCKS bridge the apps use.
  */
 object ExitLocator {
     private const val TAG = "ExitLocator"
@@ -41,62 +42,101 @@ object ExitLocator {
     private const val GEO_URL = "https://api.ip2location.io/"
     private val echoUrls = listOf(
         "https://api.ipify.org/",
+        "https://checkip.amazonaws.com/",
         "http://icanhazip.com/",
         "http://ifconfig.me/"
     )
 
     private val IPV4 = Regex("^(?:\\d{1,3}\\.){3}\\d{1,3}$")
+    /** Cloudflare/special markers that are not a geographic country. */
+    private val NON_GEO = setOf("T1", "XX", "A1", "A2", "O1")
 
-    /** Full lookup: country straight from the network, or from the offline db. */
     suspend fun locate(
         context: Context,
-        socksHost: String,
-        socksPort: Int,
-        timeoutMs: Int = 15000
+        socksHost: String = "127.0.0.1",
+        socksPort: Int = io.deltator.Config.proxyPort,
+        timeoutMs: Int = 8000
     ): ExitInfo? {
-        val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(socksHost, socksPort))
+        val socksProxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress(socksHost, socksPort))
+        return probeAll(context, socksProxy, timeoutMs)
+    }
 
-        geoLookup(proxy, timeoutMs)?.let { return it }
+    /** Probe without a SOCKS proxy (direct/VPN egress). */
+    suspend fun locateDirect(context: Context, timeoutMs: Int = 8000): ExitInfo? =
+        probeAll(context, Proxy.NO_PROXY, timeoutMs)
 
+    private suspend fun probeAll(context: Context, proxy: Proxy, timeoutMs: Int): ExitInfo? {
+        // Fast probe: Cloudflare trace (returns exact public IP + country marker).
+        // `loc=T1` means "Tor" (not geography) — resolve the real country by IP so
+        // exit-country matching and display work for Tor and any chained engine.
+        try {
+            val trace = fetch(proxy, "https://cloudflare.com/cdn-cgi/trace", timeoutMs)
+            val ip = trace.lineSequence().find { it.startsWith("ip=") }?.removePrefix("ip=")?.trim()
+            val loc = trace.lineSequence().find { it.startsWith("loc=") }?.removePrefix("loc=")?.trim()
+            if (!ip.isNullOrBlank() && (IPV4.matches(ip) || ip.contains(':'))) {
+                val (cc, name) = resolveCountry(context, ip, loc)
+                return ExitInfo(ip = ip, countryCode = cc, countryName = name, fromNetwork = true)
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Cloudflare trace probe failed: ${e.message}")
+        }
+
+        // Secondary: ip2location.io JSON
+        geoLookup(context, proxy, timeoutMs)?.let { return it }
+
+        // Fallback: plain-text echo services + offline GeoIP database
         for (url in echoUrls) {
             val ip = try {
                 val body = fetch(proxy, url, timeoutMs)
                 body.lineSequence().map { it.trim() }.firstOrNull { IPV4.matches(it) }
             } catch (e: Exception) {
-                Log.w(TAG, "Echo probe $url failed: ${e.message}")
                 null
             } ?: continue
-            val offline = runCatching { BridgeCountries.countryInfo(context, ip) }.getOrNull()
-            return ExitInfo(
-                ip = ip,
-                countryCode = offline?.first ?: "",
-                countryName = offline?.second ?: "",
-                fromNetwork = false
-            )
+
+            val (cc, name) = resolveCountry(context, ip, null)
+            return ExitInfo(ip = ip, countryCode = cc, countryName = name, fromNetwork = false)
         }
         return null
     }
 
+    /**
+     * Turn a raw marker [hint] (e.g. Cloudflare `loc`) + [ip] into a real
+     * (countryCode, countryName). Non-geo markers like T1 (Tor) fall back to the
+     * offline IP database so matching/selection works.
+     */
+    private suspend fun resolveCountry(context: Context, ip: String, hint: String?): Pair<String, String> {
+        val raw = hint?.trim()?.uppercase().orEmpty()
+        val isGeo = raw.length == 2 && raw.all { it in 'A'..'Z' } && raw !in NON_GEO
+        val offline = try { BridgeCountries.countryInfo(context, ip) } catch (e: Exception) { null }
+        return if (isGeo) {
+            val display = Locale("", raw).displayCountry
+            val name = if (display.isNotBlank() && !display.equals(raw, true)) display else (offline?.second ?: raw)
+            raw to name
+        } else {
+            if (offline != null) offline.first to offline.second else "" to ""
+        }
+    }
+
     // --- ip2location.io -------------------------------------------------------
 
-    private fun geoLookup(proxy: Proxy, timeoutMs: Int): ExitInfo? = try {
+    private suspend fun geoLookup(context: Context, proxy: Proxy, timeoutMs: Int): ExitInfo? = try {
         val body = fetch(proxy, GEO_URL, timeoutMs)
         val ip = json(body, "ip")
         if (ip.isNullOrBlank()) {
-            Log.w(TAG, "ip2location returned no ip: ${body.take(200)}")
             null
         } else {
+            val (cc, name) = resolveCountry(context, ip, json(body, "country_code"))
+            val apiName = json(body, "country_name").orEmpty()
             ExitInfo(
                 ip = ip,
-                countryCode = json(body, "country_code").orEmpty(),
-                countryName = json(body, "country_name").orEmpty(),
+                countryCode = cc,
+                countryName = if (name.isNotBlank()) name else apiName,
                 city = json(body, "city_name").orEmpty(),
                 asn = json(body, "as").orEmpty(),
                 fromNetwork = true
             )
         }
     } catch (e: Exception) {
-        Log.w(TAG, "ip2location lookup failed: ${e.message}")
         null
     }
 
@@ -106,10 +146,6 @@ object ExitLocator {
 
     // --- transport ------------------------------------------------------------
 
-    /**
-     * Fetch through the SOCKS5 tunnel. Android's HTTP stack hands the hostname
-     * to the SOCKS server, so the DNS lookup also happens on the exit.
-     */
     private fun fetch(proxy: Proxy, url: String, timeoutMs: Int): String {
         val conn = URL(url).openConnection(proxy)
         conn.connectTimeout = timeoutMs
