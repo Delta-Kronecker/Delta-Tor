@@ -23,7 +23,7 @@ jobs:
       # Tor Expert Bundle (tor/lyrebird/geoip) plus Se7enTun (the WinTUN +
       # tun2socks engine). Both are pinned and SHA-256 verified by the script;
       # it must run before dotnet build, which copies them into the app output.
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
+      - name: Fetch pinned official binaries (Tor Expert Bundle 16.0.1 + Se7enTun)
         run: ./Windows/fetch-binaries.ps1 -CI
         env:
           GITHUB_TOKEN: ${{ github.token }}

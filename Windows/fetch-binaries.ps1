@@ -2,7 +2,7 @@
 # and overlay its core with the Delta-Kronecker/tor fork build.
 #
 #   Base archive (official, pinned):
-#   https://dist.torproject.org/torbrowser/15.0.25/tor-expert-bundle-windows-x86_64-15.0.25.tar.gz
+#   https://dist.torproject.org/torbrowser/16.0.1/tor-expert-bundle-windows-x86_64-16.0.1.tar.gz
 #   -> provides lyrebird.exe (pluggable transports), torrc-defaults and the
 #      bundle directory layout the app resolves at runtime.
 #
@@ -15,14 +15,14 @@
 #
 #   The official archive is FLAT (no top-level directory): tor/, data/, docs/
 #   sit at the archive root. This script extracts it into
-#   Windows/vendor/tor-expert-bundle-windows-x86_64-15.0.25/ anyway, and
+#   Windows/vendor/tor-expert-bundle-windows-x86_64-16.0.1/ anyway, and
 #   Find-BundleRoot also tolerates any other layout by locating the directory
 #   that actually contains tor/tor.exe.
 #
 # Resolution order (first hit wins):
 #   1. already extracted -> Windows/vendor/**/ (bundle root with tor+lyrebird+geoip)
 #   2. local archive cache (repo root or Windows/) -> verify SHA-256 -> extract
-#   3. repo-root extracted cache (../tor-expert-bundle-windows-x86_64-15.0.25/) -> copy
+#   3. repo-root extracted cache (../tor-expert-bundle-windows-x86_64-16.0.1/) -> copy
 #   4. download from the pinned URL -> verify SHA-256 -> extract
 #   Then, on every path, the fork overlay runs unless the marker file says the
 #   currently published fork build is already applied.
@@ -47,7 +47,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$Version   = '15.0.25'
+$Version   = '16.0.1'
 $BaseName  = "tor-expert-bundle-windows-x86_64-$Version"
 $Archive   = "$BaseName.tar.gz"
 $Url       = "https://dist.torproject.org/torbrowser/$Version/$Archive"
@@ -55,8 +55,8 @@ $VendorDir = Join-Path $PSScriptRoot 'vendor'
 $TargetDir = Join-Path $VendorDir $BaseName
 
 # SHA-256 from the official signed checksums:
-# https://dist.torproject.org/torbrowser/15.0.25/sha256sums-signed-build.txt
-$ExpectedSha256 = 'c1988c701de2f24f7d098d1d6d7f507b58f27740d097f29c246e0524d639b252'
+# https://dist.torproject.org/torbrowser/16.0.1/sha256sums-signed-build.txt
+$ExpectedSha256 = '9eed3c3ff1fe43df034ce360196c9ec95472560d77ff55614d0cd5120edea27b'
 
 function Write-Step([string]$Message) { Write-Host "[fetch] $Message" }
 

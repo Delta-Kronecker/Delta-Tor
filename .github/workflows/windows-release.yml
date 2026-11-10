@@ -138,7 +138,7 @@ jobs:
             [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
           Write-Host "Certificate opens: subject=$($cert.Subject), thumbprint=$($cert.Thumbprint)"
 
-      - name: Fetch pinned official binaries (Tor Expert Bundle 15.0.25 + Se7enTun)
+      - name: Fetch pinned official binaries (Tor Expert Bundle 16.0.1 + Se7enTun)
         run: ./Windows/fetch-binaries.ps1 -CI
         env:
           GITHUB_TOKEN: ${{ github.token }}
