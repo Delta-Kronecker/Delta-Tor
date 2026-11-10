@@ -362,7 +362,7 @@ object TorSocksBridge {
 
         // For raw IP destinations on TLS port 443 (e.g. apps bypassing system DNS or direct IPs),
         // sniff SNI to recover the domain so Tor routes by hostname rather than blocked IP.
-        if (DomainRouter.isIpAddress(effectiveHost) && destPort == 443) {
+        if (DomainRouter.isIpAddress(effectiveHost) && (destPort == 443 || destPort == 80)) {
             clientOutput.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
             clientOutput.flush()
             clientSocket.soTimeout = 3000
