@@ -75,6 +75,43 @@ public sealed record VpnState
     public string SocksEndpoint { get; init; } = "";
 }
 
+/// <summary>
+/// Lifecycle of the proxy chain: Tor → (SOCKS) → SSTP → VPN Gate.
+///
+/// Kept out of <see cref="VpnState"/> on purpose. The chain is a second VPN
+/// interface that replaces the Tor one while the Tor cores underneath keep
+/// running, so mixing its phases into the connect spinner's state machine
+/// would make every consumer of <see cref="VpnState"/> reason about two
+/// connections at once. The UI collects this separately and renders it in its
+/// own card.
+/// </summary>
+public static class ChainStatus
+{
+    public const string Idle = "idle";
+    public const string Connecting = "connecting";
+    public const string Connected = "connected";
+    public const string Stopping = "stopping";
+    public const string Failed = "failed";
+}
+
+public sealed record ChainState
+{
+    public string Status { get; init; } = ChainStatus.Idle;
+    public string Host { get; init; } = "";
+    public int Port { get; init; }
+
+    /// <summary>Last line worth reading: a retry count, a drop reason, a failure.</summary>
+    public string Message { get; init; } = "";
+
+    /// <summary>URL-test latency measured through the live chain, -1 = not measured.</summary>
+    public int UrlMs { get; init; } = -1;
+
+    /// <summary>Batch reachability test progress, -1 = not running.</summary>
+    public int Tested { get; init; } = -1;
+
+    public int TestTotal { get; init; } = -1;
+}
+
 public sealed record BridgeState
 {
     public bool Updating { get; init; }
@@ -112,6 +149,7 @@ public static class AppState
 
     private static VpnState _state = new();
     private static BridgeState _bridgeState = new();
+    private static ChainState _chainState = new();
     private static ReleaseState _releaseState = new() { Checking = true };
     private static string _mode = "";
     private static volatile bool _vpnStarted;
@@ -144,6 +182,20 @@ public static class AppState
     public static BridgeState BridgeState
     {
         get { lock (Lock) return _bridgeState; }
+    }
+
+    public static ChainState Chain
+    {
+        get { lock (Lock) return _chainState; }
+    }
+
+    public static void UpdateChain(Func<ChainState, ChainState> block)
+    {
+        lock (Lock)
+        {
+            _chainState = block(_chainState);
+        }
+        Changed?.Invoke();
     }
 
     public static ReleaseState ReleaseState

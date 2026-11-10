@@ -78,6 +78,15 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <!-- The same wintun.dll, also next to DeltaTor.exe: the chain's own data
+         plane P/Invokes it by name (DeltaTor.Native.WintunTun), while
+         Se7enTun's tun2socks.exe finds its copy under Resources\tun2socks\. -->
+    <Content Include="..\..\libs\se7entun\Resources\tun2socks\wintun.dll"
+             Condition="Exists('..\..\libs\se7entun\Resources\tun2socks\wintun.dll')">
+      <Link>wintun.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>

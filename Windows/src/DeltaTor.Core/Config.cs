@@ -268,4 +268,54 @@ public static class Config
             SetString("auto_transports", string.Join(",", clean));
         }
     }
+
+    // --- Proxy chain: Tor → SOCKS → SSTP → VPN Gate ---------------------------
+
+    /// <summary>
+    /// The port an SSTP server line opens on when the host list carries none of
+    /// its own. VPN Gate's default is 443, and the list honours that: a line
+    /// may still override it with an explicit <c>host:port</c>.
+    /// </summary>
+    public const int DefaultSstpPort = 443;
+
+    public static int SstpPort
+    {
+        get => GetInt("sstp_default_port", DefaultSstpPort);
+        set => SetInt("sstp_default_port", Math.Clamp(value, 1, 65535));
+    }
+
+    /// <summary>
+    /// Whether the chain checks the server's certificate against the system
+    /// trust store. Off by default: VPN Gate hands out self-signed
+    /// certificates, so verification on would refuse almost every server in
+    /// the pool. The tunnel is authenticated by the PPP layer either way.
+    /// </summary>
+    public static bool ChainVerifyTlsCert
+    {
+        get => GetBool("chain_verify_tls_cert", false);
+        set => SetBool("chain_verify_tls_cert", value);
+    }
+
+    /// <summary>What the live chain is measured with once it exists.</summary>
+    public static string ChainTestUrl
+    {
+        get
+        {
+            var v = GetString("chain_test_url", ProxyChainManager.DefaultTestUrl);
+            return v.Length == 0 ? ProxyChainManager.DefaultTestUrl : v;
+        }
+        set => SetString("chain_test_url",
+            value.Length == 0 ? ProxyChainManager.DefaultTestUrl : value);
+    }
+
+    /// <summary>
+    /// Whether a dying chain is allowed to pick its own next server. Off, and
+    /// a failure reports back instead of silently moving the device to
+    /// another country.
+    /// </summary>
+    public static bool ChainAutoFallback
+    {
+        get => GetBool("chain_auto_fallback", true);
+        set => SetBool("chain_auto_fallback", value);
+    }
 }

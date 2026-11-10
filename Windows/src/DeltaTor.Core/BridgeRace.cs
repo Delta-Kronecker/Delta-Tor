@@ -691,6 +691,16 @@ public static class BridgeRace
             AppLog.I(TAG, "Ignoring stop: proxy mode is on, use Disconnect to shut the proxy down");
             return;
         }
+        // In chain mode the tunnel to stop is the chain's: end it the way a
+        // user cancel does - which also puts a plain-Tor tunnel back up - and
+        // skip the TUN teardown meant for Tor's own interface, which the chain
+        // never owned.
+        if (_chainEngine is { IsActive: true } chain)
+        {
+            AppLog.I(TAG, "Stopping the chain; the plain Tor VPN comes back");
+            chain.Stop();
+            return;
+        }
         var s = AppState.State;
         if (!s.Connected && !s.Connecting && !s.Reconnecting)
         {
@@ -727,6 +737,195 @@ public static class BridgeRace
                 NotifyRemove();
             }
         });
+    }
+
+    // ------------------------------------------------------------------
+    // Proxy chain: Tor → SOCKS → SSTP → VPN Gate → internet
+    // ------------------------------------------------------------------
+
+    /// <summary>Live when a chain engine exists; <see cref="SstpChainEngine.IsActive"/> is the truth.</summary>
+    private static SstpChainEngine? _chainEngine;
+
+    private static SstpChainEngine GetChainEngine()
+    {
+        var engine = _chainEngine;
+        if (engine is null)
+        {
+            engine = new SstpChainEngine(
+                () => _activeRunner,
+                OnChainEstablished,
+                OnChainExhausted,
+                OnChainStoppedByUser,
+                OnChainStateChanged);
+            _chainEngine = engine;
+        }
+
+        return engine;
+    }
+
+    /// <summary>
+    /// A config was tapped in the sheet.
+    ///
+    /// Whatever VPN interface the service currently holds - Tor's tun2socks one
+    /// or an older chain - is given up first, because Windows allows only one.
+    /// Tor itself is deliberately untouched: the chain dials through its SOCKS
+    /// bridge, so the engines underneath stay exactly as bootstrapped.
+    /// </summary>
+    public static void ChainConnect(string host, int port)
+    {
+        if (string.IsNullOrWhiteSpace(host))
+        {
+            AppLog.W(TAG, "chain connect without a host; ignoring");
+            return;
+        }
+        if (AppState.State.Stopping)
+        {
+            AppLog.I(TAG, "Ignoring chain connect: a stop is tearing the cores down");
+            return;
+        }
+        if (!TorSocksBridge.IsRunning())
+        {
+            AppLog.W(TAG, "chain connect without a Tor bridge; ignoring");
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            var engine = GetChainEngine();
+            if (engine.IsActive)
+            {
+                // Another config tapped while connected: a switch, not a stop.
+                engine.SwitchTo(host, port);
+                return;
+            }
+
+            AppLog.I(TAG, $"chain connect: {host}:{port} via SOCKS 127.0.0.1:{Config.ProxyPort}");
+            TeardownVpn();
+            engine.Start(host, port);
+        });
+    }
+
+    public static void ChainDisconnect()
+    {
+        var engine = _chainEngine;
+        if (engine is null || !engine.IsActive)
+        {
+            AppLog.I(TAG, "chain disconnect: nothing running");
+            return;
+        }
+
+        AppLog.I(TAG, "chain disconnect requested");
+        engine.Stop();
+    }
+
+    /// <summary>The chain's tunnel is carrying packets: the interface is ours now.</summary>
+    private static void OnChainEstablished(string host, int port)
+    {
+        if (!AppState.VpnStarted) AppState.MarkStarted();
+        AppLog.I(TAG, $"chain established: {host}:{port}");
+        // The one number a probe cannot predict: what the live chain does with
+        // a real HTTP request. Best effort; -1 means it was not measurable.
+        _ = Task.Run(async () =>
+        {
+            var ms = await ProxyChainManager.MeasureChainUrlAsync().ConfigureAwait(false);
+            AppState.UpdateChain(state => state with { UrlMs = ms });
+            OnChainStateChanged();
+        });
+    }
+
+    /// <summary>
+    /// Every server and every retry is spent. Put the device back where it was
+    /// before the chain was opened: the plain Tor VPN, whose engines never
+    /// stopped running.
+    /// </summary>
+    private static void OnChainExhausted(string reason)
+    {
+        AppLog.W(TAG, $"chain exhausted: {reason} \u2014 restoring plain Tor VPN");
+        AppState.UpdateChain(state => state with
+        {
+            Status = ChainStatus.Failed,
+            Message = $"back to Tor: {reason}"
+        });
+        RestoreTorVpn();
+    }
+
+    /// <summary>The user cancelled the chain: back to the plain Tor VPN as well.</summary>
+    private static void OnChainStoppedByUser()
+    {
+        AppLog.I(TAG, "chain stopped by user \u2014 restoring plain Tor VPN");
+        // The pings this session measured were for the chain that just ended;
+        // a fresh chain owes the sheet fresh numbers, not yesterday's memory.
+        ProxyChainManager.ClearProbes();
+        AppState.UpdateChain(_ => new ChainState());
+        RestoreTorVpn();
+    }
+
+    /// <summary>
+    /// Give the interface back to Tor without paying for a re-bootstrap: the
+    /// bridge and the surviving runner are still alive, so the VPN is established
+    /// straight over them, the way <see cref="StartVpn"/> does after a plain
+    /// stop. Only when nothing survived does a full connect run again.
+    /// </summary>
+    private static void RestoreTorVpn()
+    {
+        _ = Task.Run(async () =>
+        {
+            if (AppState.VpnStarted) AppState.MarkStopped();
+            var w = _activeRunner;
+            if (w is null || !w.IsReady() || !TorSocksBridge.IsRunning())
+            {
+                AppLog.I(TAG, "chain restore: engines not reusable, running a full connect");
+                Connect();
+            }
+            else
+            {
+                AppLog.I(TAG, "chain restore: establishing the VPN on the live engines");
+                AppState.Update(s => s with
+                {
+                    Stopping = false,
+                    Connecting = false,
+                    Reconnecting = false,
+                    TorRunning = true,
+                    Connected = false,
+                    Error = null,
+                    SocksEndpoint = ""
+                });
+                Notify("DeltaTor", "Tor running \u00b7 VPN on", progress: false, progressValue: 0);
+                try
+                {
+                    await EstablishTunnelAsync(w, "127.0.0.1", Config.ProxyPort);
+                }
+                catch (Exception e)
+                {
+                    AppLog.E(TAG, "chain restore failed", e);
+                    Fail($"Restore failed: {e.Message}");
+                }
+            }
+        });
+    }
+
+    /// <summary>Ambient keep: mirror the chain state into the notification.</summary>
+    private static void OnChainStateChanged()
+    {
+        var chain = AppState.Chain;
+        switch (chain.Status)
+        {
+            case ChainStatus.Connecting:
+                Notify("DeltaTor",
+                    $"Chain \u2192 {chain.Host}:{chain.Port}" +
+                    (chain.Message.Length > 0 ? $" \u00b7 {chain.Message}" : ""),
+                    progress: true, progressValue: 0);
+                break;
+            case ChainStatus.Connected:
+                Notify("DeltaTor",
+                    $"DeltaTor \u00b7 chain \u2192 {chain.Host}" +
+                    (chain.UrlMs >= 0 ? $" \u00b7 {chain.UrlMs}ms" : ""),
+                    progress: false, progressValue: 0);
+                break;
+            case ChainStatus.Stopping:
+                Notify("DeltaTor", "Chain stopping...", progress: true, progressValue: 0);
+                break;
+        }
     }
 
     // --- Link loss and recovery ------------------------------------------------
@@ -1388,7 +1587,12 @@ public static class BridgeRace
             return;
         }
         var s = AppState.State;
-        if (!s.Connected && !s.Connecting && !s.Reconnecting && !s.TorRunning && s.SocksEndpoint.Length == 0)
+        // The chain is a second VPN on top of Tor, but it never shows up in
+        // VpnState — its interface is its own. Without counting it a tap on
+        // Disconnect landed in this guard and dropped, leaving the button
+        // staring back dead while the tunnel carried on.
+        var chainLive = _chainEngine is { IsActive: true };
+        if (!chainLive && !s.Connected && !s.Connecting && !s.Reconnecting && !s.TorRunning && s.SocksEndpoint.Length == 0)
         {
             AppLog.I(TAG, "Nothing to disconnect");
             return;
@@ -1405,6 +1609,9 @@ public static class BridgeRace
             SocksEndpoint = ""
         });
         Notify("DeltaTor", "Stopping", progress: true, progressValue: 0);
+        // Whatever pings this session measured belong to a connection that is
+        // about to be nothing; drop them together with the tunnel.
+        ProxyChainManager.ClearProbes();
         _ = Task.Run(async () =>
         {
             Teardown();
@@ -1445,6 +1652,9 @@ public static class BridgeRace
 
     private static void Teardown()
     {
+        // A live chain owns the interface teardown is about to replace, and the
+        // chain's engines must not outlive the service that dialled them.
+        try { _chainEngine?.Shutdown(); } catch { /* already gone */ }
         TeardownVpn();
         // System proxy mode pointed WinINET at Tor; put the machine back
         // before the SOCKS listener it points at disappears.

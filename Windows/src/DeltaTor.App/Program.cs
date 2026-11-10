@@ -30,6 +30,12 @@ internal static class Program
         Task.Run(BridgeStore.AutoUpdateIfStale);
         Task.Run(ReleaseChecker.Check);
         Task.Run(InstallCounter.CountInstall);
+        // Proxy chain: restore the persisted VPN Gate pool, then refresh it if
+        // the day has turned and keep the daily rhythm while the app is open
+        // (Android's ProxyChainWorker + scheduleProxyChainDailyUpdate).
+        ProxyChainManager.Init();
+        _ = Task.Run(ProxyChainManager.UpdateIfNeededAsync);
+        _ = Task.Run(() => ProxyChainManager.DailyLoopAsync());
         MaybeShowFirstRunNotice();
 
         // The tun2socks engine behind TunnelEngine: Se7enTun owns the Wintun
@@ -39,6 +45,11 @@ internal static class Program
         TunnelEngine.Impl = new Se7enTunnel();
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TunnelEngine.Stop();
         AppDomain.CurrentDomain.UnhandledException += (_, _) => TunnelEngine.Stop();
+
+        // The chain's data plane: a dedicated Wintun adapter driven over the
+        // raw Wintun API (the counterpart of Android's VpnService.Builder).
+        // Null here would make every chain connect report "adapter unavailable".
+        SstpTun.Factory = () => new WintunTun();
 
         Application.Run(new MainForm());
     }

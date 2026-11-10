@@ -76,6 +76,49 @@ public sealed partial class TorRunner
     public int TorSocksPort { get; }
 
     /// <summary>
+    /// The bridge lines this runner was started with, as Tor reads them. The
+    /// proxy chain pins their endpoints to the physical route before its
+    /// default route comes up (see ChainNetwork).
+    /// </summary>
+    public IReadOnlyList<string> ActiveBridgeLines() =>
+        ParallelTorManager.SplitLines(_bridgeLines)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 0)
+            .ToList();
+
+    /// <summary>
+    /// Pin Tor's outbound connections to one local address over the control
+    /// port. The proxy chain sets this to the machine's physical IPv4 so Tor
+    /// keeps leaving through the interface it bootstrapped on instead of
+    /// following the chain's new default route into its own tunnel.
+    /// Pass null to clear it again (before teardown).
+    /// </summary>
+    public bool SetOutboundBindAddress(string? address)
+    {
+        var port = Volatile.Read(ref _controlPort);
+        if (port <= 0) return false;
+
+        var line = address is null
+            ? "RESETCONF OutboundBindAddress"
+            : $"SETCONF OutboundBindAddress=\"{address}\"";
+        try
+        {
+            var ok = SendControl(port, new[]
+            {
+                new ControlCommand("AUTHENTICATE", Optional: false),
+                new ControlCommand(line, Optional: false)
+            });
+            AppLog.I(_tag, $"[{_name}] {line} -> {(ok ? "ok" : "not applied")}");
+            return ok;
+        }
+        catch (Exception e)
+        {
+            AppLog.W(_tag, $"[{_name}] {line} failed: {e.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
     /// Where this Tor listens for HTTP CONNECT tunneling (torrc
     /// HTTPTunnelPort). Windows/Edge reach the machine proxy over plain HTTP
     /// CONNECT, while Tor's SocksPort only speaks SOCKS5 — HTTPTunnelPort is
