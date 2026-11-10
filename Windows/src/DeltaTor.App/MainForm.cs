@@ -13,6 +13,7 @@ namespace DeltaTor.App;
 public sealed class MainForm : Form
 {
     private VpnState _state = AppState.State;
+    private ChainState _chain = AppState.Chain;
 
     // The state color and the subline color animate over 450ms
     // (animateColorAsState(sc, tween(450))).
@@ -44,11 +45,13 @@ public sealed class MainForm : Form
     // soon as the connect ends (peakPct, MainActivity 1181).
     private int _peak;
     private bool _wasConnecting;
+    private bool _wasConnectingFolded;
     private bool _wasGlow;
 
     private RectangleF _menuRect;
     private RectangleF _ringRect;
     private RectangleF _bannerRect;
+    private RectangleF _chainCardRect;
     private bool _noticeOpen;
 
     // Bottom-panel action pills: live controls laid over the painted rows.
@@ -265,13 +268,25 @@ public sealed class MainForm : Form
     private static bool SysProxyLive(VpnState s) =>
         Config.SystemProxyMode && !Config.ProxyOnlyMode && s.SocksEndpoint.Length > 0;
 
+    // ---- chain folding ------------------------------------------------------
+    // While the chain is in flight the plain VPN state is empty on purpose —
+    // its interface was torn down before the SSTP negotiation — so the ring,
+    // the state word and the header fold the chain in, exactly as
+    // MainScreen's `connecting`/`connected` do.
+
+    private bool ChainConnecting => _chain.Status == ChainStatus.Connecting;
+    private bool ChainConnected => _chain.Status == ChainStatus.Connected;
+    private bool ChainFailed => _chain.Status == ChainStatus.Failed;
+    private bool FoldedConnecting => _state.Connecting || ChainConnecting;
+    private bool FoldedConnected => _state.Connected || ChainConnected;
+
     private void RefreshFromState()
     {
-        var prev = _state;
         _state = AppState.State;
+        _chain = AppState.Chain;
         var now = Environment.TickCount64;
 
-        var sc = UiHelpers.StateColor(_state);
+        var sc = UiHelpers.StateColor(_state, _chain);
         if (SysProxyLive(_state)) sc = DeltaTorTheme.Green;
         var sub = SubColor(_state);
         if (sc != _scTo || sub != _subTo)
@@ -285,7 +300,8 @@ public sealed class MainForm : Form
         }
 
         // peakPct: reset on both edges of connecting, keep the high water
-        // mark while a connect is running.
+        // mark while a connect is running. Bootstrap percentages exist only
+        // for Tor's own connect, so this reads the raw VPN flag.
         var connecting = _state.Connecting;
         if (connecting && !_wasConnecting) _peak = 0;
         if (!connecting) _peak = 0;
@@ -298,14 +314,18 @@ public sealed class MainForm : Form
         }
         _wasConnecting = connecting;
 
-        if (connecting && !prev.Connecting)
+        // The pulse, rotation and breathe loops follow the folded flag: a
+        // chain in flight owns the ring even while the VPN flag is empty.
+        var folded = FoldedConnecting;
+        if (folded && !_wasConnectingFolded)
         {
             _pulseStart = now;
             _rotStart = now;
             _breathStart = now;
         }
+        _wasConnectingFolded = folded;
 
-        var glow = connecting || _state.Connected;
+        var glow = folded || FoldedConnected;
         if (glow && !_wasGlow) _ringPulseStart = now;
         _wasGlow = glow;
 
@@ -344,6 +364,10 @@ public sealed class MainForm : Form
             // The modal loop kept pumping events, so a notice may have been
             // cleared or replaced while the dialog was up.
             _state = AppState.State;
+            // The intro stands between the card and its list: closing it
+            // (button, Esc - all of them mean "understood") is what opens the
+            // server sheet.
+            if (notice.Kind == NoticeKind.ChainIntro) OpenChainSheet();
         }
     }
 
@@ -376,7 +400,7 @@ public sealed class MainForm : Form
             invalidate = true;
         }
 
-        if (_state.Connecting)
+        if (FoldedConnecting)
             invalidate = true; // bg pulse, ring rotation and breathe
         else if (GlowLit)
             invalidate = true; // ring halo pulse stays lit while connected
@@ -385,7 +409,7 @@ public sealed class MainForm : Form
         else _tick.Stop();
     }
 
-    private bool GlowLit => _state.Connecting || _state.Connected;
+    private bool GlowLit => FoldedConnecting || FoldedConnected;
 
     private static Color LerpColor(Color a, Color b, float t) => Color.FromArgb(
         (int)(a.R + (b.R - a.R) * t),
@@ -397,7 +421,7 @@ public sealed class MainForm : Form
     {
         get
         {
-            if (!_state.Connecting) return 0.5f;
+            if (!FoldedConnecting) return 0.5f;
             var phase = (Environment.TickCount64 - _pulseStart) % (PulseDuration * 2L);
             var p = phase < PulseDuration
                 ? (float)phase / PulseDuration
@@ -407,7 +431,7 @@ public sealed class MainForm : Form
     }
 
     private float RingRotation =>
-        _state.Connecting
+        FoldedConnecting
             ? (Environment.TickCount64 - _rotStart) % RotDuration * 360f / RotDuration
             : 0f;
 
@@ -415,7 +439,7 @@ public sealed class MainForm : Form
     {
         get
         {
-            if (!_state.Connecting) return 1f;
+            if (!FoldedConnecting) return 1f;
             var phase = (Environment.TickCount64 - _breathStart) % (BreathDuration * 2L);
             var p = phase < BreathDuration
                 ? (float)phase / BreathDuration
@@ -459,11 +483,48 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (_chainCardRect.Width > 0 && _chainCardRect.Contains(e.Location))
+        {
+            ChainCardTap();
+            return;
+        }
+
         if (_ringRect.Contains(e.Location))
         {
             PrimaryAction();
         }
     }
+
+    /// <summary>ProxyChainCard's onClick (MainActivity 1826): a live chain is
+    /// ended by the card exactly as the ring would; an idle card raises the
+    /// intro notice, which opens the sheet when dismissed.</summary>
+    private void ChainCardTap()
+    {
+        if (ChainConnecting || ChainConnected)
+        {
+            PrimaryAction();
+            return;
+        }
+        AppState.PostNoticeBlocks(NoticeKind.ChainIntro, "", ChainIntroNoticeBlocks());
+    }
+
+    /// <summary>chainIntroNoticeBlocks (MainActivity 324): what the chain is
+    /// for, and what it costs, in the three languages the app speaks.</summary>
+    private static IReadOnlyList<NoticeBlock> ChainIntroNoticeBlocks() => new[]
+    {
+        new NoticeBlock(
+            Lead: "فقط برای سرویسهایی مثل جمنای",
+            Text: "این قابلیت فقط برای دسترسی به سرویسهایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم میکند؛ فقط در صورت نیاز استفاده کنید.",
+            Rtl: true),
+        new NoticeBlock(
+            Lead: "Only for services like Gemini",
+            Text: "This feature exists to reach services like Gemini that Tor cannot access. " +
+                "It slows the connection down; use it only when you need it."),
+        new NoticeBlock(
+            Lead: "Только для сервисов вроде Gemini",
+            Text: "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor " +
+                "недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно.")
+    };
 
     /// <summary>MainScreen's onPrimary (MainActivity 162): each state gets
     /// the only action that actually does something.</summary>
@@ -471,6 +532,13 @@ public sealed class MainForm : Form
     {
         var s = AppState.State;
         if (s.Stopping) return;
+        // A chain in flight owns the ring: pressing it ends the chain, and the
+        // plain Tor VPN it interrupted comes back by itself afterwards.
+        if (ChainConnecting || ChainConnected)
+        {
+            Task.Run(BridgeRace.ChainDisconnect);
+            return;
+        }
         // A live SOCKS endpoint means proxy mode, where there is no VPN to
         // start. Must be checked before torRunning, which is also true in
         // this state and would otherwise send a start the engine declines.
@@ -598,7 +666,7 @@ public sealed class MainForm : Form
         // hairline, 9px state dot, labelSmall bold in the state color.
         var label = SysProxyLive(_state)
             ? "CONNECTED"
-            : UiHelpers.StatusLabel(_state);
+            : UiHelpers.StatusLabel(_state, _chain);
         using var capFont = new Font(
             DeltaTorTheme.FontFamilyName, DeltaTorTheme.CaptionPt, FontStyle.Bold);
         var textH = g.MeasureString(label, capFont).Height;
@@ -682,16 +750,17 @@ public sealed class MainForm : Form
     private void PaintStateBlock(Graphics g)
     {
         var s = _state;
-        var hasError = s.Error != null;
+        var hasError = s.Error != null || ChainFailed;
         var sysLive = SysProxyLive(s);
         var word = sysLive
             ? "CONNECTED"
             : UiHelpers.WordFor(
-                s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping, hasError);
+                FoldedConnecting, s.TorRunning, FoldedConnected, s.Reconnecting, s.Stopping,
+                hasError);
         var sub = sysLive
             ? "SYSTEM PROXY ACTIVE"
             : UiHelpers.SublineFor(
-                s.Connecting, s.TorRunning, s.Connected, s.Reconnecting, s.Stopping,
+                FoldedConnecting, s.TorRunning, FoldedConnected, s.Reconnecting, s.Stopping,
                 s.Transport, _peak, hasError);
 
         using var wordFont = new Font(DeltaTorTheme.FontFamilyName, 20f, FontStyle.Bold);
@@ -752,7 +821,7 @@ public sealed class MainForm : Form
         var cy = ClientSize.Height / 2f;
         _ringRect = new RectangleF(cx - 76f, cy - 76f, 152f, 152f);
 
-        var connecting = _state.Connecting;
+        var connecting = FoldedConnecting;
         var glow = GlowLit ? _scCurrent : (Color?)null;
         var scale = connecting ? RingBreathe : 1f;
 
@@ -833,7 +902,7 @@ public sealed class MainForm : Form
         var rg = inner * 0.46f;
         var gp = 9f;
         var glyphColor = UiHelpers.GlyphColor(connecting,
-            _state.Connected || SysProxyLive(_state), _state.Stopping);
+            FoldedConnected || SysProxyLive(_state), _state.Stopping);
         using (var pen = new Pen(glyphColor, gp)
         {
             StartCap = System.Drawing.Drawing2D.LineCap.Round,
@@ -857,7 +926,7 @@ public sealed class MainForm : Form
     /// DISCONNECT / START VPN / CONNECT, or the error itself in red.</summary>
     private void PaintPrimaryLabel(Graphics g)
     {
-        var text = UiHelpers.LabelText(_state);
+        var text = UiHelpers.LabelText(_state, _chain);
         if (text.Length == 0) return;
 
         using var font = new Font(DeltaTorTheme.FontFamilyName, 10.5f, FontStyle.Regular);
@@ -894,6 +963,13 @@ public sealed class MainForm : Form
         var busy = s.Connecting || s.Stopping;
         _proxyLive = s.SocksEndpoint.Length > 0;
 
+        // The chain card sits first, right where the finger already is: it is
+        // only meaningful once Tor is connected, and its own state decides
+        // what a tap does - open the sheet while idle, end the chain while it
+        // is in flight.
+        var showChainCard = _chain.Status != ChainStatus.Idle || s.Connected;
+        var chainBlockH = showChainCard ? 48f + 8f : 0f;
+
         // The action row is never removed. During teardown the left pill keeps
         // its slot and just relabels to START VPN, dimmed until the cores are
         // gone: a start click there would race the teardown for the ports, but
@@ -904,12 +980,22 @@ public sealed class MainForm : Form
         // after it closes.
         var pillsVisible = (s.Connected || s.TorRunning || s.Stopping) && !_drawer.IsOpen;
         var pillsH = pillsVisible ? 34f + 6f : 0f;
-        var total = 4f + pillsH + statH + 6f + statH + 6f + infoH + 10f;
-        var y = ClientSize.Height - total;
+        var total = 4f + chainBlockH + pillsH + statH + 6f + statH + 6f + infoH + 10f;
+        var y = ClientSize.Height - total + 4f;
+
+        if (showChainCard)
+        {
+            _chainCardRect = new RectangleF(padX, y, rowW, 48f);
+            DrawChainCard(g, _chain, s.Connected);
+            y += 48f + 8f;
+        }
+        else
+        {
+            _chainCardRect = RectangleF.Empty;
+        }
 
         if (pillsVisible)
         {
-            var py = y + 4f;
             // Live endpoint: system-proxy mode turns this pill into the
             // machine-proxy switch (no address dump); no-VPN mode keeps
             // showing where to point the apps.
@@ -922,13 +1008,12 @@ public sealed class MainForm : Form
                     : "START VPN";
             _pillAction.Visible = true;
             _pillAction.Enabled = !busy;
-            _pillAction.SetBounds(
-                (int)padX, (int)py, (int)halfW, 34);
+            _pillAction.SetBounds((int)padX, (int)y, (int)halfW, 34);
             _pillDisconnect.Visible = true;
             _pillDisconnect.Enabled = !busy;
             _pillDisconnect.SetBounds(
-                (int)(padX + halfW + 10f), (int)py, (int)halfW, 34);
-            y = py + 34f + 6f;
+                (int)(padX + halfW + 10f), (int)y, (int)halfW, 34);
+            y += 34f + 6f;
         }
         else
         {
@@ -966,6 +1051,127 @@ public sealed class MainForm : Form
                 : "--";
         DrawInfoPill(g, padX, y, statW, infoH, "UP TIME", uptime, capBold, valueBold);
         DrawInfoPill(g, padX + statW + 8f, y, statW, infoH, "EXIT", exit, capBold, valueBold);
+    }
+
+    /// <summary>ProxyChainCard (MainActivity 2052): a 48px row whose own state
+    /// decides what a tap does. Negotiation is amber "connecting…", never
+    /// green, and the host stays out of the card until the tunnel is live.</summary>
+    private void DrawChainCard(Graphics g, ChainState chain, bool connected)
+    {
+        var rect = _chainCardRect;
+        var active = chain.Status == ChainStatus.Connecting ||
+                     chain.Status == ChainStatus.Connected ||
+                     chain.Status == ChainStatus.Stopping;
+        var failed = chain.Status == ChainStatus.Failed;
+
+        using (var path = DrawUtil.RoundedRect(rect, 14f))
+        {
+            using var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
+                rect, DeltaTorTheme.Surface, DeltaTorTheme.SurfaceAlt, 0f);
+            g.FillPath(brush, path);
+            using var pen = new Pen(DeltaTorTheme.BorderLight);
+            g.DrawPath(pen, path);
+        }
+
+        string? headline = chain.Status switch
+        {
+            ChainStatus.Connecting => "connecting\u2026",
+            ChainStatus.Connected => chain.UrlMs >= 0
+                ? $"on \u00b7 {chain.UrlMs}ms \u2014 tap to disconnect"
+                : "on \u2014 tap to disconnect",
+            ChainStatus.Stopping => "stopping the chain\u2026",
+            ChainStatus.Failed =>
+                chain.Message.Length > 0 ? chain.Message : "failed \u00b7 back on Tor",
+            _ => connected ? null : "connect with Tor first"
+        };
+        var headlineColor = failed
+            ? DeltaTorTheme.Red
+            : chain.Status == ChainStatus.Connecting
+                ? DeltaTorTheme.Amber
+                : chain.Status == ChainStatus.Connected
+                    ? DeltaTorTheme.Green
+                    : DeltaTorTheme.Muted;
+
+        // Position and size swap on request: the big bold words read
+        // "PROXY CHAIN", the small muted line carries the status.
+        using var titleFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
+        using var headFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.SmallPt, FontStyle.Bold);
+        var titleH = g.MeasureString("A", titleFont).Height;
+        var headH = headline != null ? g.MeasureString("A", headFont).Height : 0f;
+        var blockH = titleH + (headline != null ? 2f + headH : 0f);
+        var ty = rect.Y + (rect.Height - blockH) / 2f;
+        using (var brush = new SolidBrush(DeltaTorTheme.Text))
+            DrawUtil.DrawSpaced(g, "PROXY CHAIN", titleFont, brush,
+                rect.X + 16f, ty, rect.Width - 60f, 0f);
+        if (headline != null)
+        {
+            using var brush = new SolidBrush(headlineColor);
+            DrawUtil.DrawSpaced(g, headline, headFont, brush,
+                rect.X + 16f, ty + titleH + 2f, rect.Width - 60f, 0.6f);
+        }
+
+        // Trailing glyph: connected reads as a dot, any active state as an
+        // ellipsis, an idle card as a chevron.
+        var glyph = chain.Status == ChainStatus.Connected
+            ? "\u25CF"
+            : active ? "\u2026" : "\u25B8";
+        var glyphColor = chain.Status == ChainStatus.Connecting
+            ? DeltaTorTheme.Amber
+            : chain.Status == ChainStatus.Connected
+                ? DeltaTorTheme.Green
+                : failed ? DeltaTorTheme.Red : DeltaTorTheme.Accent;
+        using var glyphFont = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
+        using var glyphBrush = new SolidBrush(glyphColor);
+        var glyphW = DrawUtil.SpacedWidth(glyph, glyphFont, 1.2f);
+        var glyphLineH = g.MeasureString(glyph, glyphFont).Height;
+        DrawUtil.DrawSpaced(g, glyph, glyphFont, glyphBrush,
+            rect.Right - 16f - glyphW, rect.Y + (rect.Height - glyphLineH) / 2f,
+            glyphW + 2f, 1.2f);
+    }
+
+    /// <summary>
+    /// Raise the server sheet (MainScreen's showChainSheet): a modal child, so
+    /// the log-open latch keeps the notice queue and the animation loop calm
+    /// while it is up. A pick either dials the chain, or, in no-VPN proxy mode,
+    /// asks first - switching modes is the user's call, not the app's.
+    /// </summary>
+    private void OpenChainSheet()
+    {
+        if (_modalChildOpen) return;
+        _modalChildOpen = true;
+        try
+        {
+            using var sheet = new ChainSheet();
+            if (sheet.ShowDialog(this) == DialogResult.OK && sheet.PickedHost.Length > 0)
+            {
+                var host = sheet.PickedHost;
+                var port = sheet.PickedPort;
+                if (Config.ProxyOnlyMode)
+                {
+                    // Proxy mode holds no VPN interface, and the chain is a
+                    // VPN. Rather than running one underneath the other and
+                    // calling that a chain, ask.
+                    using var warn = new ChainWarningDialog();
+                    if (warn.ShowDialog(this) == DialogResult.OK)
+                    {
+                        Config.ProxyOnlyMode = false;
+                        Task.Run(() => BridgeRace.ChainConnect(host, port));
+                    }
+                }
+                else
+                {
+                    Task.Run(() => BridgeRace.ChainConnect(host, port));
+                }
+            }
+        }
+        finally
+        {
+            _modalChildOpen = false;
+            RefreshFromState();
+        }
     }
 
     /// <summary>Kotlin substringAfter("://"): the endpoint without its scheme.</summary>

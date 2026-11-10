@@ -11,8 +11,18 @@ namespace DeltaTor.App;
 /// </summary>
 public static class UiHelpers
 {
-    public static Color StateColor(VpnState state)
+    public static Color StateColor(VpnState state, ChainState? chain = null)
     {
+        // The chain drives the ring whenever it is in flight: the plain VPN
+        // state sits empty behind it, because its interface was the one torn
+        // down.
+        switch (chain?.Status)
+        {
+            case ChainStatus.Connecting: return DeltaTorTheme.Amber;
+            case ChainStatus.Stopping: return DeltaTorTheme.Amber;
+            case ChainStatus.Connected: return DeltaTorTheme.Green;
+            case ChainStatus.Failed: return DeltaTorTheme.Red;
+        }
         if (state.Stopping) return DeltaTorTheme.Amber;
         if (state.Connecting) return DeltaTorTheme.Amber;
         if (state.Reconnecting) return DeltaTorTheme.AmberLight;
@@ -21,8 +31,14 @@ public static class UiHelpers
         return DeltaTorTheme.Muted;
     }
 
-    public static string StatusLabel(VpnState state)
+    public static string StatusLabel(VpnState state, ChainState? chain = null)
     {
+        switch (chain?.Status)
+        {
+            case ChainStatus.Connecting: return "CHAIN CONNECTING";
+            case ChainStatus.Connected: return "CONNECTED";
+            case ChainStatus.Stopping: return "";
+        }
         if (state.Stopping) return "";
         if (state.Connecting) return "CONNECTING";
         if (state.Connected) return "CONNECTED";
@@ -38,8 +54,16 @@ public static class UiHelpers
         return DeltaTorTheme.Text;
     }
 
-    public static string LabelText(VpnState state)
+    public static string LabelText(VpnState state, ChainState? chain = null)
     {
+        // The ring ends the chain while it is in flight, so its label has to
+        // say that instead of offering a start that would be ignored anyway.
+        switch (chain?.Status)
+        {
+            case ChainStatus.Connecting: return "CANCEL";
+            case ChainStatus.Connected: return "DISCONNECT";
+            case ChainStatus.Stopping: return "";
+        }
         // Nothing here. The only STOPPING the user sees is the big word at the top.
         if (state.Stopping) return "";
         if (state.Error != null) return state.Error;

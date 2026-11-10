@@ -11,7 +11,14 @@ public enum NoticeKind
     AutoRecovery,
 
     /// <summary>One-time explainer shown the first time the app is ever opened.</summary>
-    FirstRun
+    FirstRun,
+
+    /// <summary>
+    /// What the proxy chain is for, and what it costs, raised the first time
+    /// the chain card is tapped. Dismissing it opens the server sheet; the two
+    /// are deliberately split so the warning is never skipped.
+    /// </summary>
+    ChainIntro
 }
 
 /// <summary>
