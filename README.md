@@ -129,6 +129,9 @@ ported to .NET 8 / WinForms and shipped as a portable zip:
 - **System proxy** (default) — Tor runs and the system points at it; no elevation needed.
 - **Full tunnel** — the whole machine routes through Tor over a TUN adapter, with bypass
   routes for Tor's own traffic so the tunnel never loops into itself. Asks for elevation.
+- **Proxy chain over VPN Gate** — the same second hop as on Android: Tor → SSTP → a public
+  VPN Gate server, with the country-sorted server sheet, live per-server latency tests and
+  automatic fallback. Runs on its own Wintun adapter; asks for elevation.
 - **Tray icon** with live state, actions and update notices; minimize-to-tray.
 - **Known limitation:** Snowflake does not work through the Windows full tunnel (its
   STUN/DTLS peers cannot be bypassed reliably); use system-proxy mode for Snowflake.
