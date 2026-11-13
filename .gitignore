@@ -48,3 +48,12 @@ runs.json
 # Windows port: fetched Se7enTun engine (extracted dir + archive), never committed
 /Windows/libs/se7entun/
 /Se7enTun-*.zip
+
+# Android port: fetched fork core (libtor.so) + default torrc + archive and
+# digest marker, never committed. libobfs4proxy.so (lyrebird) is not part of
+# those releases and stays tracked. Android/fetch-tor.sh repopulates libtor.so
+# and assets/torrc on every build.
+/Android/app/src/main/jniLibs/*/libtor.so
+/Android/app/src/main/jniLibs/.libtor-digest
+/Android/app/src/main/assets/torrc
+/tor-android-*.zip

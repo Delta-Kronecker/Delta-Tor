@@ -211,16 +211,18 @@ fail.
 
 ### What is inside the apps
 
-On Android, `libtor` (the fork), `libobfs4proxy` (lyrebird) and `hev-socks5-tunnel`
-(tun2socks) are compiled into the APK with the NDK — no external Tor install, no companion
-app. On Windows, both platforms run the same fork core: the `tor-windows-x86_64` build from
-the [Delta-Kronecker/tor](https://github.com/Delta-Kronecker/tor) releases overlays the
-pinned official Tor Expert Bundle (which still provides lyrebird and the bundle layout),
-verified against the digest the release publishes; `wintun.dll` comes from wintun.net. All
-of it is fetched and SHA-256 verified at build time (`Windows/fetch-binaries.ps1`), never
-committed, and `hev-socks5-tunnel.dll` is built in CI from the same vendored sources with
-MinGW. The app's own traffic is excluded from its tunnel on both platforms
-(`addDisallowedApplication` on Android, per-destination `/32` bypass routes on Windows).
+On Android, `libtor` is the fork core fetched at build time per ABI from the
+[Delta-Kronecker/tor](https://github.com/Delta-Kronecker/tor) releases and verified against
+the digest the release publishes (`Android/fetch-tor.sh`); `libobfs4proxy` (lyrebird) ships
+as a committed binary, and `hev-socks5-tunnel` (tun2socks) is compiled into the APK with the
+NDK — no external Tor install, no companion app. On Windows, both platforms run the same
+fork core: the `tor-windows-x86_64` build from the same releases overlays the pinned
+official Tor Expert Bundle (which still provides lyrebird and the bundle layout), verified
+against the digest the release publishes; `wintun.dll` comes from wintun.net. All of it is
+fetched and SHA-256 verified at build time, never committed, and `hev-socks5-tunnel.dll` is
+built in CI from the same vendored sources with MinGW. The app's own traffic is excluded
+from its tunnel on both platforms (`addDisallowedApplication` on Android, per-destination
+`/32` bypass routes on Windows).
 
 ### Building
 
@@ -228,6 +230,7 @@ Everything is built by Gradle and the NDK from `Android/`; the toolchain is pinn
 build files (`compileSdk 36`, `ndk 29.0.14206865`, JDK 17).
 
 ```bash
+bash Android/fetch-tor.sh                      # fetch libtor.so per ABI (verified)
 ./Android/gradlew -p Android assembleDebug     # per-ABI debug APKs
 ./Android/gradlew -p Android assembleRelease   # signed per-ABI release APKs + universal
 ```

@@ -1,0 +1,3 @@
+# Keep shell scripts on LF endings. Windows checkouts default to autocrlf, and a
+# CRLF shell script fails at the first line under bash ("\r: command not found").
+*.sh text eol=lf

@@ -12,18 +12,22 @@ import android.content.SharedPreferences
  * are always part of the generated file. Later lines win in torrc, so the template
  * overrides the forced defaults in [TorRunner] when it declares them.
  *
+ * The default is the fork's own torrc, fetched from the Delta-Kronecker/tor release
+ * into `assets/torrc` at build time (Android/fetch-tor.sh), so the tuning the core
+ * was built with is the tuning the app starts from, and it tracks every new core.
+ * [builtinTemplate] is only a last-resort copy for a build that skipped the fetch.
+ *
+ * [init] strips blank and comment lines before the asset becomes the template: the
+ * release torrc carries prose, and the template is shown verbatim in an editable
+ * text field and written into the user's torrc, where that prose does not belong.
+ * Tor ignores blanks and comments either way, so nothing is lost.
+ *
  * The prefs key carries a version suffix: bumping it hands every existing install
  * the new default template instead of leaving it on the values it was shipped with.
  *
- * The shipped template carries no comments, because it is shown verbatim in an
- * editable text field and prose about the config is not what someone editing a
- * config is looking for. The reasoning lives here instead, where it does not get
- * written into the user's torrc.
- *
- * The values are the ones the Windows build ships with, kept verbatim so both
- * clients behave the same. The directives below are deliberately absent: they
- * either do not exist on Android, or [TorRunner] already supplies them and a
- * second copy here would win and break them (torrc is last-wins).
+ * The directives below are deliberately absent from any default. They either do
+ * not exist on Android, or [TorRunner] already supplies them and a second copy
+ * here would win and break them (torrc is last-wins):
  *
  *  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort` /
  *    `CookieAuthentication`, ever. Three Tor processes run in parallel and the app
@@ -38,14 +42,31 @@ import android.content.SharedPreferences
  *  - No `ClientTransportPlugin`: the app appends lyrebird's `socks5` line for each
  *    transport it launched. The Windows pluggable-transport executables those
  *    directives point at do not exist here.
+ *
+ * The release torrc already honors all of these, so it is adopted verbatim.
  */
 object TorrcSettings {
 
     private const val PREFS = "deltator"
     private const val KEY_TEMPLATE = "torrc_template_v6"
+    private const val SHIPPED_ASSET = "torrc"
     private lateinit var prefs: SharedPreferences
 
-    val defaultTemplate: String = """SocksPolicy accept 127.0.0.1
+    /** The fork's own torrc, fetched into assets at build time; null until [init]. */
+    private var shippedTemplate: String? = null
+
+    /**
+     * The default torrc: the core's own, fetched into `assets/torrc` by
+     * Android/fetch-tor.sh, or [builtinTemplate] when that asset is absent.
+     */
+    val defaultTemplate: String
+        get() = shippedTemplate ?: builtinTemplate
+
+    /**
+     * Last-resort copy for a build that skipped the fetch. Kept in sync with the
+     * fork's release torrc by hand; the fetched asset is what normally ships.
+     */
+    private val builtinTemplate: String = """SocksPolicy accept 127.0.0.1
 SocksPolicy reject *
 CircuitPadding 0
 ConnectionPadding 0
@@ -136,7 +157,22 @@ MaxClientCircuitsPending 128"""
 
     fun init(context: Context) {
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        shippedTemplate = readShippedTemplate(context)
     }
+
+    /**
+     * The fetched asset, stripped of blank and comment lines. Returns null (and
+     * leaves [builtinTemplate] in charge) when the asset is missing, i.e. a build
+     * that never ran Android/fetch-tor.sh.
+     */
+    private fun readShippedTemplate(context: Context): String? = runCatching {
+        context.assets.open(SHIPPED_ASSET).bufferedReader().use { it.readText() }
+    }.getOrNull()
+        ?.lines()
+        ?.map { it.trim() }
+        ?.filter { it.isNotBlank() && !it.startsWith("#") }
+        ?.joinToString("\n")
+        ?.takeIf { it.isNotBlank() }
 
     /** Current torrc template (falls back to the bundled default). */
     fun template(): String = prefs.getString(KEY_TEMPLATE, null) ?: defaultTemplate

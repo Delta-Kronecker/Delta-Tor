@@ -106,6 +106,14 @@ jobs:
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+      - name: Fetch the Tor core (libtor.so) for every ABI
+        # The core is not committed: it is fetched from the Delta-Kronecker/tor
+        # release and pinned by the SHA-256 the release publishes, so a release
+        # always ships the newest fork core.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash Android/fetch-tor.sh --ci
+
       - name: Make gradlew executable
         run: chmod +x Android/gradlew
 
