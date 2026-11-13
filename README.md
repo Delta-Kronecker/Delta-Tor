@@ -213,14 +213,21 @@ fail.
 
 On Android, `libtor` is the fork core fetched at build time per ABI from the
 [Delta-Kronecker/tor](https://github.com/Delta-Kronecker/tor) releases and verified against
-the digest the release publishes (`Android/fetch-tor.sh`); `libobfs4proxy` (lyrebird) ships
-as a committed binary, and `hev-socks5-tunnel` (tun2socks) is compiled into the APK with the
-NDK — no external Tor install, no companion app. On Windows, both platforms run the same
-fork core: the `tor-windows-x86_64` build from the same releases overlays the pinned
-official Tor Expert Bundle (which still provides lyrebird and the bundle layout), verified
-against the digest the release publishes; `wintun.dll` comes from wintun.net. All of it is
-fetched and SHA-256 verified at build time, never committed, and `hev-socks5-tunnel.dll` is
-built in CI from the same vendored sources with MinGW. The app's own traffic is excluded
+the digest the release publishes (`Android/fetch-tor.sh`). The fork packages a *shared
+library* named `libtor.so` (no entry point) alongside the runnable `tor` program; the app
+execs the file `nativeLibraryDir/libtor.so` directly, so the script installs the runnable
+`tor` under that name and fails the build if the installed file is not executable. The same
+release's default `torrc` becomes the app's template, with the options the shipped core does
+not implement dropped at connect time — the fork's own torrc ships `HardwareAcceleration`,
+which the core rejects as fatal, so the app asks the core for its real option list
+(`--list-torrc-options`, `TorCoreOptions`) and prunes the template to it. `libobfs4proxy`
+(lyrebird) ships as a committed binary, and `hev-socks5-tunnel` (tun2socks) is compiled into
+the APK with the NDK — no external Tor install, no companion app. On Windows, both platforms
+run the same fork core: the `tor-windows-x86_64` build from the same releases overlays the
+pinned official Tor Expert Bundle (which still provides lyrebird and the bundle layout),
+verified against the digest the release publishes; `wintun.dll` comes from wintun.net. All of
+it is fetched and SHA-256 verified at build time, never committed, and `hev-socks5-tunnel.dll`
+is built in CI from the same vendored sources with MinGW. The app's own traffic is excluded
 from its tunnel on both platforms (`addDisallowedApplication` on Android, per-destination
 `/32` bypass routes on Windows).
 
@@ -230,7 +237,7 @@ Everything is built by Gradle and the NDK from `Android/`; the toolchain is pinn
 build files (`compileSdk 36`, `ndk 29.0.14206865`, JDK 17).
 
 ```bash
-bash Android/fetch-tor.sh                      # fetch libtor.so per ABI (verified)
+bash Android/fetch-tor.sh                      # fetch the runnable tor core + default torrc per ABI (verified)
 ./Android/gradlew -p Android assembleDebug     # per-ABI debug APKs
 ./Android/gradlew -p Android assembleRelease   # signed per-ABI release APKs + universal
 ```

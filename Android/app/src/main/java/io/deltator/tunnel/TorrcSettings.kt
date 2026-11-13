@@ -43,12 +43,15 @@ import android.content.SharedPreferences
  *    transport it launched. The Windows pluggable-transport executables those
  *    directives point at do not exist here.
  *
- * The release torrc already honors all of these, so it is adopted verbatim.
+ * The release torrc already honors all of these, so it is adopted as-is. It is
+ * still run through [TorCoreOptions] before being written, because the fork's own
+ * torrc ships options its core does not implement and Tor refuses to start on an
+ * unknown one.
  */
 object TorrcSettings {
 
     private const val PREFS = "deltator"
-    private const val KEY_TEMPLATE = "torrc_template_v6"
+    private const val KEY_TEMPLATE = "torrc_template_v7"
     private const val SHIPPED_ASSET = "torrc"
     private lateinit var prefs: SharedPreferences
 

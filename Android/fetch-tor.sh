@@ -10,11 +10,17 @@
 #   Release assets (moving 'latest' tag):
 #     https://github.com/Delta-Kronecker/tor/releases/download/latest/tor-android-<abi>.zip
 #
-# Each zip carries libtor.so and torrc at its ROOT (alongside a `tor` executable
-# and data/geoip*). libtor.so lands in jniLibs and torrc in the app's assets,
-# where it becomes the default template the settings screen edits; the tor
-# executable and the geoip tables are unused (the app execs libtor.so itself and
-# generates its own geoip from its bundled range table), so they stay in the zip.
+# Each zip carries, at its ROOT, a `libtor.so` that is NOT runnable, a `tor`
+# executable, a `torrc` and data/geoip*. The fork's Android build links libtor.so
+# with `clang -shared`, so it is a shared library with no entry point (e_entry = 0)
+# and no PT_INTERP; exec'ing it jumps to address 0 and the process dies with
+# SIGSEGV (exit 139). The `tor` entry is the real, self-contained PIE executable
+# (DT_NEEDED is only libc/libdl/libm). The app execs the file named libtor.so
+# straight out of nativeLibraryDir, so THE `tor` ENTRY IS INSTALLED AS libtor.so
+# and the zip's library is ignored ([assert_runnable] fails the build if the
+# installed file ever stops being runnable). torrc lands in the app's assets,
+# where it becomes the default template the settings screen edits. The geoip
+# tables are unused (the app generates its own from its bundled range table).
 #
 # The 'latest' tag moves with every fork build, so the pin is the SHA-256 the
 # GitHub API publishes for each asset. Every archive is verified against it and
@@ -54,6 +60,10 @@ JNILIBS="$SCRIPT_DIR/app/src/main/jniLibs"
 ASSETS="$SCRIPT_DIR/app/src/main/assets"
 TORRC_ASSET="$ASSETS/torrc"
 MARKER="$JNILIBS/.libtor-digest"
+# Bump when the extraction recipe changes (e.g. which zip entry becomes
+# libtor.so). An older marker then no longer suppresses a re-extract, so a dev
+# checkout fixes itself instead of keeping the file the old recipe produced.
+MARKER_VERSION=2
 
 log()  { echo "[fetch-tor] $*"; }
 fail() { echo "[fetch-tor] error: $*" >&2; exit 1; }
@@ -101,19 +111,42 @@ sys.exit(1)
   fi
 }
 
-# Extract libtor.so into the ABI's jniLibs dir and torrc into the app's assets.
+# An executable ELF (PIE program) has a non-zero entry point; a plain shared
+# library has e_entry = 0. e_entry sits at byte offset 24 in both ELF32 and
+# ELF64 headers, so one 4-byte read decides it.
+assert_runnable() {
+  local f="$1" entry
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$f" <<'PY'
+import struct, sys
+with open(sys.argv[1], "rb") as fh:
+    d = fh.read(32)
+if d[:4] != b"\x7fELF":
+    sys.exit(1)
+entry = struct.unpack_from("<Q", d, 24)[0] if d[4] == 2 else struct.unpack_from("<I", d, 24)[0]
+sys.exit(0 if entry else 1)
+PY
+  else
+    entry="$(od -An -tx1 -j24 -N4 "$f" 2>/dev/null | tr -d ' \n')"
+    [ -n "$entry" ] && [ "$entry" != "00000000" ]
+  fi
+}
+
+# Install the runnable `tor` entry as libtor.so (see the header) and the torrc
+# into the app's assets.
 extract_core() {
   local zip="$1" so_dest="$2"
   mkdir -p "$so_dest" "$ASSETS"
   if command -v unzip >/dev/null 2>&1; then
-    unzip -o -j -q "$zip" libtor.so -d "$so_dest"
+    unzip -o -j -q "$zip" tor -d "$so_dest"
+    mv -f "$so_dest/tor" "$so_dest/libtor.so"
     unzip -o -j -q "$zip" torrc -d "$ASSETS"
   elif command -v python3 >/dev/null 2>&1; then
     python3 - "$zip" "$so_dest" "$ASSETS" <<'PY'
 import os, sys, zipfile
 zf, so_dest, assets = sys.argv[1], sys.argv[2], sys.argv[3]
 with zipfile.ZipFile(zf) as z:
-    so = z.read("libtor.so")
+    so = z.read("tor")
     torrc = z.read("torrc")
 os.makedirs(so_dest, exist_ok=True)
 os.makedirs(assets, exist_ok=True)
@@ -137,7 +170,14 @@ prev_digest() {
   awk -v abi="$1" '$1 == abi { print $2 }' "$MARKER" | tail -1
 }
 
+# The recipe version recorded by the previous run; a mismatch forces a re-extract.
+marker_version() {
+  [ -f "$MARKER" ] || return 1
+  head -1 "$MARKER" | awk '{print $2}'
+}
+
 : > "$MARKER.new"
+echo "# v$MARKER_VERSION" >> "$MARKER.new"
 for abi in "${ABIS[@]}"; do
   asset="tor-android-${abi}.zip"
   dest="$JNILIBS/$abi"
@@ -156,7 +196,9 @@ for abi in "${ABIS[@]}"; do
     fail "cannot resolve the SHA-256 of $asset and $target does not exist; cannot continue"
   fi
 
-  if [ -f "$target" ] && [ -f "$TORRC_ASSET" ] && [ "$(prev_digest "$abi" || true)" = "$digest" ]; then
+  if [ "$(marker_version || true)" = "v$MARKER_VERSION" ] \
+    && [ -f "$target" ] && [ -f "$TORRC_ASSET" ] \
+    && [ "$(prev_digest "$abi" || true)" = "$digest" ]; then
     log "$abi: already up to date ($digest)"
     echo "$abi $digest" >> "$MARKER.new"
     continue
@@ -194,8 +236,11 @@ for abi in "${ABIS[@]}"; do
 
   extract_core "$archive" "$dest"
   [ -s "$target" ] || fail "$target missing or empty after extraction"
+  chmod +x "$target" 2>/dev/null || true
+  assert_runnable "$target" \
+    || fail "$target is not a runnable executable (e_entry = 0); the release packaging changed"
   [ -s "$TORRC_ASSET" ] || fail "$TORRC_ASSET missing or empty after extraction"
-  log "$abi: libtor.so -> $target"
+  log "$abi: tor -> $target (runnable)"
   log "$abi: torrc -> $TORRC_ASSET"
   echo "$abi $digest" >> "$MARKER.new"
 done

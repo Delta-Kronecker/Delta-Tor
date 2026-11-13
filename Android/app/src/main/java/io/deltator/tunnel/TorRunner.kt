@@ -665,7 +665,7 @@ class TorRunner(
             controlPort = freeEphemeralPort()
         }
 
-        val templateLines = TorrcSettings.templateLines()
+        val templateLines = supportedTemplateLines(TorrcSettings.templateLines())
         val torrcContent = "$common\n${templateLines.joinToString("\n")}\n${pluginDirectives.toString().trim()}\n${bridgeDirectives.toString().trim()}\n" +
             (if (exitCodes.isNotEmpty()) "ControlPort $listenHost:$controlPort\n" else "")
         torrcFile.writeText(torrcContent)
@@ -679,6 +679,31 @@ class TorRunner(
         }
         Log.d(tag, "--- End torrc ($name) ---")
         return torrcFile.absolutePath
+    }
+
+    /**
+     * Drop template lines whose option this core does not accept.
+     *
+     * The template is the fork's release torrc (see [TorrcSettings]), and that file
+     * ships options its own core does not implement -- `HardwareAcceleration` today.
+     * Tor treats an unknown option as fatal, so a single stale line kills the
+     * process before it can bootstrap and every transport dies with it. The set of
+     * accepted options is read from the core itself, not hard-coded, so the template
+     * keeps tracking new cores. A failed probe returns null and the template is
+     * written exactly as it is: a missing filter is safe, a wrong one is not.
+     */
+    private fun supportedTemplateLines(lines: List<String>): List<String> {
+        val supported = TorCoreOptions.supported(context) ?: return lines
+        val kept = ArrayList<String>(lines.size)
+        for (line in lines) {
+            val option = line.split(WHITESPACE).firstOrNull()?.lowercase().orEmpty()
+            if (option.isNotEmpty() && option in supported) {
+                kept.add(line)
+            } else {
+                Log.w(tag, "Dropping torrc option this core does not accept: $line")
+            }
+        }
+        return kept
     }
 
     // --- Helpers ---
