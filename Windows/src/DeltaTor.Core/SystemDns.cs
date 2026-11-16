@@ -26,7 +26,7 @@ public static class SystemDns
     private static readonly object Gate = new();
 
     /// <summary>What an adapter looked like before it was pointed at Tor.</summary>
-    private sealed record AdapterState(bool DhcpV4, bool DhcpV6, string[] V4, string[] V6);
+    private sealed record AdapterState(bool DhcpV4, string[] V4, string[] V6);
 
     /// <summary>Adapters we changed, and what to put back. Only these are restored.</summary>
     private static readonly Dictionary<string, AdapterState> Saved = new(StringComparer.Ordinal);
@@ -209,7 +209,7 @@ public static class SystemDns
 
     private static bool TryCapture(string name, out AdapterState state)
     {
-        state = new AdapterState(false, false, Array.Empty<string>(), Array.Empty<string>());
+        state = new AdapterState(false, Array.Empty<string>(), Array.Empty<string>());
         var nic = Find(name);
         if (nic is null) return false;
         try
@@ -219,11 +219,11 @@ public static class SystemDns
                 .Select(a => a.ToString()).Distinct(StringComparer.Ordinal).ToArray();
             var v6 = props.DnsAddresses.Where(a => a.AddressFamily == AddressFamily.InterNetworkV6)
                 .Select(a => a.ToString()).Distinct(StringComparer.Ordinal).ToArray();
+            // .NET exposes DHCP state for IPv4 only; IPv6 is restored from the
+            // captured servers themselves (an empty list means source=dhcp).
             var dhcp4 = false;
-            var dhcp6 = false;
             try { dhcp4 = props.GetIPv4Properties().IsDhcpEnabled; } catch { /* no IPv4 config */ }
-            try { dhcp6 = props.GetIPv6Properties().IsDhcpEnabled; } catch { /* no IPv6 config */ }
-            state = new AdapterState(dhcp4, dhcp6, v4, v6);
+            state = new AdapterState(dhcp4, v4, v6);
             return true;
         }
         catch (Exception e)
@@ -305,7 +305,7 @@ public static class SystemDns
 
     private static void RestoreV6(string name, AdapterState state)
     {
-        if (state.DhcpV6 || state.V6.Length == 0)
+        if (state.V6.Length == 0)
         {
             ChainNetwork.RunNetsh($"interface ipv6 set dnsservers name=\"{name}\" source=dhcp");
             return;
