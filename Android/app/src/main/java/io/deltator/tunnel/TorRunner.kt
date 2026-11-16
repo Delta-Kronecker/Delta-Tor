@@ -626,7 +626,12 @@ class TorRunner(
             // mode -- the TUN datapath forwards the payloads, chain mode intercepts
             // them -- so a lookup is resolved anonymously by Tor, never by a public
             // resolver reached over Tor and never by a VPN Gate resolver.
+            // AutomapHostsOnResolve gives .onion names a synthetic address, and the
+            // virtual range is moved off 127.0.0.0/8 so those answers stay reachable
+            // (matching the Windows torrc exactly).
             appendLine("DNSPort $listenHost:$dnsPort")
+            appendLine("AutomapHostsOnResolve 1")
+            appendLine("VirtualAddrNetworkIPv4 10.192.0.0/10")
             appendLine("DataDirectory ${dataDir.absolutePath}")
             appendLine("UseBridges ${if (isDirect) 0 else 1}")
             val geoipFile = File(dataDir, "geoip")
