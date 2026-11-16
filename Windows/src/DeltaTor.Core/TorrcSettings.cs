@@ -5,7 +5,7 @@ namespace DeltaTor.Core;
 /// <summary>
 /// User-editable torrc as a single, ready-made template (Windows counterpart
 /// of Android TorrcSettings; SharedPreferences key "deltator" /
-/// "torrc_template_v6" lives in the same prefs file as <see cref="Config"/>).
+/// "torrc_template_v7" lives in the same prefs file as <see cref="Config"/>).
 ///
 /// Only this one block is exposed for editing in Settings. On every connect it
 /// is written to the real torrc verbatim, and the pluggable transports
@@ -18,9 +18,11 @@ namespace DeltaTor.Core;
 /// install the new default template instead of leaving it on the values it was
 /// shipped with.
 ///
-/// The shipped template carries no comments, because it is edited as plain
-/// text (the EDIT TORRC card opens it in Notepad). The reasoning lives here
-/// instead:
+/// The shipped default is the fork's torrc-windows, fetched by
+/// Windows/fetch-binaries.ps1 into torrc-default next to the exe. The loader
+/// strips its comments, blanks and engine-owned directives, so what the user
+/// edits is plain text (the EDIT TORRC card opens the template in Notepad).
+/// The reasoning for what stays lives here instead:
 ///
 ///  - No fixed `SocksPort` / `HTTPTunnelPort` / `DNSPort` / `ControlPort`,
 ///    ever. Three Tor processes run in parallel and the app owns the only
@@ -55,9 +57,17 @@ namespace DeltaTor.Core;
 /// </summary>
 public static class TorrcSettings
 {
-    private const string KeyTemplate = "torrc_template_v6";
+    private const string KeyTemplate = "torrc_template_v7";
 
-    public const string DefaultTemplate = @"SocksPolicy accept 127.0.0.1
+    /// <summary>Name of the shipped default torrc, copied next to the exe by the
+    /// App csproj from Windows/assets/torrc-default.</summary>
+    private const string ShippedDefaultFile = "torrc-default";
+
+    /// <summary>
+    /// Last-resort default for a build that skipped the fetch. Kept in sync with
+    /// the fork's torrc-windows by hand; the fetched torrc-default ships normally.
+    /// </summary>
+    private const string BuiltinTemplate = @"SocksPolicy accept 127.0.0.1
 SocksPolicy reject *
 
 CircuitPadding 0
@@ -103,6 +113,68 @@ ConfluxNumLinkedSets 32
 ConfluxNumLegs 2
 ConfluxSetSelection 1
 ConfluxSetRttPct 10";
+
+    /// <summary>
+    /// The shipped default template: the fork's torrc-windows fetched into
+    /// torrc-default next to the exe (Windows/fetch-binaries.ps1), stripped of
+    /// blank lines, comments and the engine-owned directives (see
+    /// <see cref="EngineOwned"/>). Falls back to <see cref="BuiltinTemplate"/>
+    /// when the file is absent, i.e. a build that skipped the fetch.
+    /// </summary>
+    public static string DefaultTemplate => LoadShippedTemplate() ?? BuiltinTemplate;
+
+    /// <summary>
+    /// Directives the engine owns: TorRunner always writes its own line for these
+    /// into the real torrc (a dynamic port, an absolute path, the lyrebird
+    /// CMETHOD) and a shipped copy would win over it because torrc is last-wins.
+    /// Stripped from the shipped default only, never from a user's template.
+    /// </summary>
+    private static readonly HashSet<string> EngineOwned = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "SocksPort", "HTTPTunnelPort", "DNSPort", "ControlPort",
+        "CookieAuthentication", "DataDirectory", "GeoIPFile", "GeoIPv6File",
+        "ClientTransportPlugin"
+    };
+
+    private static readonly char[] OptionSeparators = { ' ', '\t' };
+
+    private static string? _shippedDefault;
+    private static bool _shippedDefaultLoaded;
+
+    /// <summary>
+    /// The fetched torrc-default, stripped as described on
+    /// <see cref="DefaultTemplate"/>, or null when it is absent or empty. Read
+    /// once and cached; the file does not change while the app runs (a new build
+    /// brings its own).
+    /// </summary>
+    private static string? LoadShippedTemplate()
+    {
+        if (_shippedDefaultLoaded) return _shippedDefault;
+        _shippedDefaultLoaded = true;
+        try
+        {
+            var path = Path.Combine(AppPaths.Root, ShippedDefaultFile);
+            if (!File.Exists(path)) return _shippedDefault = null;
+            var lines = File.ReadAllLines(path)
+                .Select(l => l.Trim())
+                .Where(l => l.Length > 0 && !l.StartsWith("#", StringComparison.Ordinal))
+                .Where(l => !EngineOwned.Contains(OptionName(l)))
+                .ToArray();
+            var text = string.Join("\n", lines);
+            _shippedDefault = text.Length > 0 ? text : null;
+        }
+        catch
+        {
+            _shippedDefault = null;
+        }
+        return _shippedDefault;
+    }
+
+    private static string OptionName(string line)
+    {
+        var idx = line.IndexOfAny(OptionSeparators);
+        return idx < 0 ? line : line[..idx];
+    }
 
     /// <summary>The editable torrc template as a plain file: EDIT TORRC opens
     /// it in Notepad, and while it exists it wins over the prefs copy — what

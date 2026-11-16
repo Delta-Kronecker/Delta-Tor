@@ -7,10 +7,12 @@
 #   Android/app/src/main/jniLibs/armeabi-v7a/libtor.so
 #   Android/app/src/main/assets/torrc
 #
-#   Release assets (moving 'latest' tag):
+#   Core release assets (moving 'latest' tag):
 #     https://github.com/Delta-Kronecker/tor/releases/download/latest/tor-android-<abi>.zip
+#   Default torrc (branch file, fetched on every run):
+#     https://github.com/Delta-Kronecker/tor/raw/refs/heads/main/torrc-android
 #
-# Each zip carries, at its ROOT, a `libtor.so` that is NOT runnable, a `tor`
+# Each core zip carries, at its ROOT, a `libtor.so` that is NOT runnable, a `tor`
 # executable, a `torrc` and data/geoip*. The fork's Android build links libtor.so
 # with `clang -shared`, so it is a shared library with no entry point (e_entry = 0)
 # and no PT_INTERP; exec'ing it jumps to address 0 and the process dies with
@@ -18,13 +20,17 @@
 # (DT_NEEDED is only libc/libdl/libm). The app execs the file named libtor.so
 # straight out of nativeLibraryDir, so THE `tor` ENTRY IS INSTALLED AS libtor.so
 # and the zip's library is ignored ([assert_runnable] fails the build if the
-# installed file ever stops being runnable). torrc lands in the app's assets,
-# where it becomes the default template the settings screen edits. The geoip
-# tables are unused (the app generates its own from its bundled range table).
+# installed file ever stops being runnable). The zip's `torrc` is IGNORED: the
+# default template comes from the branch file above instead, so it tracks the
+# branch and not the release. It lands in the app's assets, where it becomes the
+# default template the settings screen edits. The geoip tables are unused (the
+# app generates its own from its bundled range table).
 #
 # The 'latest' tag moves with every fork build, so the pin is the SHA-256 the
 # GitHub API publishes for each asset. Every archive is verified against it and
-# a mismatch always fails.
+# a mismatch always fails. The branch torrc has no release asset to pin by, so it
+# is downloaded on every run; a failed download is fatal in CI and keeps the
+# existing copy on a dev machine otherwise.
 #
 # libobfs4proxy.so (lyrebird) is NOT part of these releases and stays a
 # committed binary; this script never touches it.
@@ -44,6 +50,7 @@ TOR_REPO="Delta-Kronecker/tor"
 TOR_TAG="latest"
 API_URL="https://api.github.com/repos/${TOR_REPO}/releases/tags/${TOR_TAG}"
 DOWNLOAD_BASE="https://github.com/${TOR_REPO}/releases/download/${TOR_TAG}"
+TORRC_URL="https://github.com/${TOR_REPO}/raw/refs/heads/main/torrc-android"
 ABIS=(arm64-v8a armeabi-v7a)
 
 CI=0
@@ -63,7 +70,7 @@ MARKER="$JNILIBS/.libtor-digest"
 # Bump when the extraction recipe changes (e.g. which zip entry becomes
 # libtor.so). An older marker then no longer suppresses a re-extract, so a dev
 # checkout fixes itself instead of keeping the file the old recipe produced.
-MARKER_VERSION=2
+MARKER_VERSION=3
 
 log()  { echo "[fetch-tor] $*"; }
 fail() { echo "[fetch-tor] error: $*" >&2; exit 1; }
@@ -132,28 +139,23 @@ PY
   fi
 }
 
-# Install the runnable `tor` entry as libtor.so (see the header) and the torrc
-# into the app's assets.
+# Install the runnable `tor` entry as libtor.so (see the header). The zip's
+# torrc is not touched: the default template is fetched from the branch instead.
 extract_core() {
   local zip="$1" so_dest="$2"
-  mkdir -p "$so_dest" "$ASSETS"
+  mkdir -p "$so_dest"
   if command -v unzip >/dev/null 2>&1; then
     unzip -o -j -q "$zip" tor -d "$so_dest"
     mv -f "$so_dest/tor" "$so_dest/libtor.so"
-    unzip -o -j -q "$zip" torrc -d "$ASSETS"
   elif command -v python3 >/dev/null 2>&1; then
-    python3 - "$zip" "$so_dest" "$ASSETS" <<'PY'
+    python3 - "$zip" "$so_dest" <<'PY'
 import os, sys, zipfile
-zf, so_dest, assets = sys.argv[1], sys.argv[2], sys.argv[3]
+zf, so_dest = sys.argv[1], sys.argv[2]
 with zipfile.ZipFile(zf) as z:
     so = z.read("tor")
-    torrc = z.read("torrc")
 os.makedirs(so_dest, exist_ok=True)
-os.makedirs(assets, exist_ok=True)
 with open(os.path.join(so_dest, "libtor.so"), "wb") as fh:
     fh.write(so)
-with open(os.path.join(assets, "torrc"), "wb") as fh:
-    fh.write(torrc)
 PY
   else
     fail "no unzip and no python3 to extract $zip"
@@ -163,6 +165,34 @@ PY
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
 mkdir -p "$JNILIBS"
+
+# The default template is the fork's own torrc-android, fetched from the branch
+# on every run (there is no release asset to pin it by, unlike the cores). A
+# failed download is fatal in CI; a dev machine keeps a previously fetched copy,
+# and only a machine that has neither fails.
+fetch_torrc() {
+  mkdir -p "$ASSETS"
+  local tmp="$TORRC_ASSET.tmp"
+  if curl -fsSL --retry 3 --retry-delay 2 -o "$tmp" "$TORRC_URL" \
+    && [ -s "$tmp" ]; then
+    mv -f "$tmp" "$TORRC_ASSET"
+    log "torrc -> $TORRC_ASSET (from $TORRC_URL)"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
+if ! fetch_torrc; then
+  if [ "$CI" = 1 ]; then
+    fail "cannot download the default torrc from $TORRC_URL; refusing to build"
+  fi
+  if [ -s "$TORRC_ASSET" ]; then
+    log "warning: cannot download the default torrc; keeping the existing $TORRC_ASSET"
+  else
+    fail "cannot download the default torrc and $TORRC_ASSET does not exist"
+  fi
+fi
 
 # The archive digest recorded by the previous successful run for one ABI.
 prev_digest() {
@@ -239,9 +269,7 @@ for abi in "${ABIS[@]}"; do
   chmod +x "$target" 2>/dev/null || true
   assert_runnable "$target" \
     || fail "$target is not a runnable executable (e_entry = 0); the release packaging changed"
-  [ -s "$TORRC_ASSET" ] || fail "$TORRC_ASSET missing or empty after extraction"
   log "$abi: tor -> $target (runnable)"
-  log "$abi: torrc -> $TORRC_ASSET"
   echo "$abi $digest" >> "$MARKER.new"
 done
 

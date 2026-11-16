@@ -57,3 +57,7 @@ runs.json
 /Android/app/src/main/jniLibs/.libtor-digest
 /Android/app/src/main/assets/torrc
 /tor-android-*.zip
+
+# Windows port: fetched default torrc (from the fork's branch), never committed
+# Windows/fetch-binaries.ps1 repopulates it on every build.
+/Windows/assets/torrc-default

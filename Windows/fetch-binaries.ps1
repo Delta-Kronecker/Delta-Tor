@@ -13,6 +13,13 @@
 #      Verified against the asset digest the GitHub API publishes for the
 #      release, which is the pin for a tag that moves.
 #
+#   Default torrc (branch file, fetched on every run):
+#   https://github.com/Delta-Kronecker/tor/raw/refs/heads/main/torrc-windows
+#   -> Windows/assets/torrc-default, which the App csproj copies next to the exe
+#      and DeltaTor.Core.TorrcSettings reads as the shipped default template.
+#      There is no release asset to pin, so it is fetched on every run; a failed
+#      download is fatal in CI and keeps the existing copy otherwise.
+#
 #   The official archive is FLAT (no top-level directory): tor/, data/, docs/
 #   sit at the archive root. This script extracts it into
 #   Windows/vendor/tor-expert-bundle-windows-x86_64-16.0.1/ anyway, and
@@ -53,6 +60,10 @@ $Archive   = "$BaseName.tar.gz"
 $Url       = "https://dist.torproject.org/torbrowser/$Version/$Archive"
 $VendorDir = Join-Path $PSScriptRoot 'vendor'
 $TargetDir = Join-Path $VendorDir $BaseName
+
+# Default torrc from the fork's branch (see the header).
+$TorrcUrl  = 'https://github.com/Delta-Kronecker/tor/raw/refs/heads/main/torrc-windows'
+$TorrcDest = Join-Path $PSScriptRoot 'assets/torrc-default'
 
 # SHA-256 from the official signed checksums:
 # https://dist.torproject.org/torbrowser/16.0.1/sha256sums-signed-build.txt
@@ -153,6 +164,36 @@ else {
     if (-not (Test-Path $Se7enDll)) { throw "Se7enTun.dll missing after extraction: $Se7enDll" }
     if (-not (Test-Path $Se7enPlane)) { throw "tun2socks.exe missing after extraction: $Se7enPlane" }
     Write-Step "Se7enTun -> $Se7enLibDir"
+}
+
+# ---------------------------------------------------------------------------
+# Default torrc: the fork's own torrc-windows, from the branch (not the release
+# zip), into Windows/assets/torrc-default. Fetched on every run; a failed
+# download is fatal in CI and keeps the existing copy otherwise.
+# ---------------------------------------------------------------------------
+$torrcDir = Split-Path -Parent $TorrcDest
+New-Item -ItemType Directory -Force -Path $torrcDir | Out-Null
+$torrcTmp = "$TorrcDest.tmp"
+$torrcOk  = $false
+try {
+    curl.exe -fsSL --retry 3 --retry-delay 2 -o $torrcTmp $TorrcUrl
+    if ($LASTEXITCODE -eq 0 -and (Test-Path $torrcTmp) -and ((Get-Item $torrcTmp).Length -gt 0)) {
+        Move-Item -Force $torrcTmp $TorrcDest
+        $torrcOk = $true
+        Write-Step "Default torrc -> $TorrcDest (from $TorrcUrl)"
+    }
+}
+finally {
+    Remove-Item -Force $torrcTmp -ErrorAction SilentlyContinue
+}
+if (-not $torrcOk) {
+    if ($CI) { throw "Cannot download the default torrc from $TorrcUrl; refusing to build" }
+    if (Test-Path $TorrcDest) {
+        Write-Warning "Cannot download the default torrc; keeping the existing $TorrcDest"
+    }
+    else {
+        Write-Warning "Cannot download the default torrc and none is present; the built-in default will be used"
+    }
 }
 
 # ---------------------------------------------------------------------------

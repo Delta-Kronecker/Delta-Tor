@@ -29,10 +29,11 @@ jobs:
             "build-tools;36.0.0" \
             "ndk;29.0.14206865"
 
-      - name: Fetch the Tor core (libtor.so) for every ABI
-        # The core is not committed: it is fetched from the Delta-Kronecker/tor
-        # release and pinned by the SHA-256 the release publishes, so the app
-        # always builds on the newest fork core.
+      - name: Fetch the Tor core (libtor.so) and the default torrc for every ABI
+        # Neither is committed: the core is fetched from the Delta-Kronecker/tor
+        # release and pinned by the SHA-256 the release publishes, and the default
+        # torrc comes from the fork's branch (torrc-android), so the app always
+        # builds on the newest fork core and its matching default config.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: bash Android/fetch-tor.sh --ci

@@ -61,6 +61,16 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
+    <!-- The shipped default torrc: the fork's torrc-windows, fetched from the
+         branch by Windows/fetch-binaries.ps1. TorrcSettings reads it next to the
+         exe and falls back to its built-in copy when it is absent (a build that
+         skipped the fetch), so the condition keeps such a build working. -->
+    <Content Include="..\..\assets\torrc-default"
+             Condition="Exists('..\..\assets\torrc-default')">
+      <Link>torrc-default</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <!-- Se7enTun: the engine DLL next to DeltaTor.exe, and its data plane
