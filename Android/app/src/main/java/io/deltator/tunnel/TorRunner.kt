@@ -30,6 +30,13 @@ class TorRunner(
     private val context: Context,
     val name: String,
     val torSocksPort: Int,
+    /**
+     * The loopback port Tor opens for its own resolver (`DNSPort`). Every DNS
+     * request the device makes is answered through it, in every mode -- see
+     * [TorDns]. It is derived from [torSocksPort] by the caller so it is
+     * reserved and never races another runner.
+     */
+    val dnsPort: Int,
     private val bridgeLines: String,
     private val listenHost: String = "127.0.0.1"
 ) {
@@ -615,6 +622,11 @@ class TorRunner(
         val torrcFile = File(dataDir, "torrc")
         val common = buildString {
             appendLine("SocksPort $listenHost:$torSocksPort")
+            // Tor's own resolver. The device's DNS is answered from here in every
+            // mode -- the TUN datapath forwards the payloads, chain mode intercepts
+            // them -- so a lookup is resolved anonymously by Tor, never by a public
+            // resolver reached over Tor and never by a VPN Gate resolver.
+            appendLine("DNSPort $listenHost:$dnsPort")
             appendLine("DataDirectory ${dataDir.absolutePath}")
             appendLine("UseBridges ${if (isDirect) 0 else 1}")
             val geoipFile = File(dataDir, "geoip")

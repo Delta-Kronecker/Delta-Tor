@@ -46,9 +46,11 @@ private const val FALLBACK_SERVERS = 2
  *     apps → [chain TUN] → SSTP/TLS → SOCKS5 → Tor → VPN Gate → internet
  *
  * The tunnel itself is the vendored kittoku core ([Controller] with a fresh
- * [VpnService.Builder]); DNS comes from IPCP or a public fallback, and the app's
- * own package is excluded from the TUN so Tor's own outbound links never loop
- * back into the tunnel they sit under.
+ * [VpnService.Builder]); DNS is answered by Tor's own resolver rather than by
+ * the far end -- [IPTerminal] intercepts UDP/53 off the chain TUN and forwards
+ * it through Tor's DNSPort, so a name is never resolved by the VPN Gate server
+ * behind the chain. The app's own package is excluded from the TUN so Tor's own
+ * outbound links never loop back into the tunnel they sit under.
  *
  * Failure policy, in order: reconnect the same server [RETRIES_PER_HOST] times,
  * then try the next best pinged server, then restore the plain Tor VPN — done
@@ -255,7 +257,10 @@ class SstpChainEngine(private val service: TorVpnService) {
                 username = VPN_GATE_USER,
                 password = VPN_GATE_PASS,
                 doVerifyCert = Config.chainVerifyTlsCert,
-                ownPackageName = service.packageName
+                ownPackageName = service.packageName,
+                // DNS read off the chain TUN is answered by Tor's own resolver,
+                // never by the IPCP/VPN Gate resolver the far end would use.
+                dnsResolver = { payload -> service.resolveDnsViaTor(payload) }
             ),
             scope = sessionScope,
             builder = service.chainBuilderForSstp(),

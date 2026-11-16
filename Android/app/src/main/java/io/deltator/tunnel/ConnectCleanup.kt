@@ -45,7 +45,7 @@ import java.net.ServerSocket
  *     files -- and it is killed with SIGKILL. The UID check is what makes the
  *     scan safe to run: a Tor bundled by another app runs under another UID,
  *     and the sweep neither identifies nor kills it.
- *  4. verify the whole port reservation basePort..basePort+19 is bindable and,
+ *  4. verify the whole port reservation basePort..basePort+39 is bindable and,
  *     for any port still held, map the listening socket to a pid through
  *     `/proc/net/tcp` + `/proc/[pid]/fd`, kill holders that are ours, and wait.
  *     One budget covers the whole range; a holder that belongs to another app

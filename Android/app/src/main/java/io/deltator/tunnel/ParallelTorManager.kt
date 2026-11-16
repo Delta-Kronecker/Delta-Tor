@@ -205,14 +205,25 @@ object ParallelTorManager {
     private const val PORT_FREE_POLL_MS = 250L
 
     /** Runners take basePort+1 .. basePort+[MAX_PORT_OFFSET]. */
-    private const val MAX_PORT_OFFSET = 19
+    private const val MAX_PORT_OFFSET = 39
+
+    /**
+     * A runner's `DNSPort` is its `SocksPort` plus this offset. The socks ports
+     * cover +1..+19, so the resolver ports land on +21..+39: disjoint, and both
+     * ends of the range fit inside [MAX_PORT_OFFSET] so the pre-connect sweep and
+     * the teardown wait cover them exactly like the socks ports.
+     */
+    const val DNS_PORT_OFFSET = 20
+
+    /** The `DNSPort` that belongs to a runner listening on [socksPort]. */
+    fun dnsPortFor(socksPort: Int): Int = socksPort + DNS_PORT_OFFSET
 
     /**
      * The whole port reservation of a connect: [basePort] itself, the app's
-     * TUN<->Tor bridge port, plus the nineteen runner offsets [runnerPorts]
-     * maps onto it. Every single source that asserts this range -- the
-     * teardown wait in [stopAllAndWait] and the pre-connect sweep in
-     * [ConnectCleanup] -- reads it from here, so a change to
+     * TUN<->Tor bridge port, plus every runner offset [runnerPorts] maps onto it
+     * and each runner's `DNSPort` ([dnsPortFor]). Every single source that
+     * asserts this range -- the teardown wait in [stopAllAndWait] and the
+     * pre-connect sweep in [ConnectCleanup] -- reads it from here, so a change to
      * [MAX_PORT_OFFSET] cannot leave a second copy of the range behind.
      */
     fun reservedPorts(basePort: Int): List<Int> =
@@ -466,7 +477,13 @@ object ParallelTorManager {
         val gen = beginRunners()
 
         preparedPlans.forEach { (name, bridgeLines) ->
-            val runner = TorRunner(context, name, allPorts.getValue(name), bridgeLines)
+            val runner = TorRunner(
+                context,
+                name,
+                allPorts.getValue(name),
+                dnsPortFor(allPorts.getValue(name)),
+                bridgeLines
+            )
             synchronized(runnersLock) { runners[name] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
             Log.transport(sessionId, name, 'I', TAG, "starting ($bridgeCount bridges)")
@@ -681,7 +698,13 @@ object ParallelTorManager {
         val recorded = mutableSetOf<String>()
         var lastSeen = emptyMap<String, TorRunner>()
         plans.forEach { (planName, bridgeLines) ->
-            val runner = TorRunner(context, planName, ports.getValue(planName), bridgeLines)
+            val runner = TorRunner(
+                context,
+                planName,
+                ports.getValue(planName),
+                dnsPortFor(ports.getValue(planName)),
+                bridgeLines
+            )
             synchronized(runnersLock) { runners[planName] = runner }
             val bridgeCount = bridgeLines.lines().count { it.isNotBlank() }
             Log.transport(sessionId, planName, 'I', TAG, "recovery restart ($bridgeCount bridges)")

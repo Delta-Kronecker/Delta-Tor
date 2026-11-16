@@ -216,6 +216,7 @@ object AppLog {
         "KotlinTunnelManager",
         "NaiveSocksBridge",
         "TorSocksBridge",
+        "TorDns",
         "SlipstreamBridge",
         "DnsttBridge",
         "NaiveBridge",

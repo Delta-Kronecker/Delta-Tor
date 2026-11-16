@@ -39,4 +39,10 @@ internal class SstpParams(
     /** Excluded from the chain tunnel so the app (and with it Tor's own
      *  outbound links) never loops back into the tun it created. */
     val ownPackageName: String? = null,
+    /**
+     * Answers a raw DNS payload with Tor's own resolver, so DNS read off the
+     * chain TUN is resolved by Tor and never by the VPN Gate resolver at the far
+     * end. Null disables interception (probe sessions, which own no TUN).
+     */
+    val dnsResolver: ((ByteArray) -> ByteArray?)? = null,
 )

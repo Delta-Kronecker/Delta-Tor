@@ -22,6 +22,7 @@ import io.deltator.tunnel.ExitNodes
 import io.deltator.tunnel.HevSocks5Tunnel
 import io.deltator.tunnel.ParallelTorManager
 import io.deltator.tunnel.SstpChainEngine
+import io.deltator.tunnel.TorDns
 import io.deltator.tunnel.TorRunner
 import io.deltator.tunnel.TorSocksBridge
 import io.deltator.tunnel.TorrcSettings
@@ -185,6 +186,21 @@ class TorVpnService : VpnService() {
      */
     private var establishFailureReason: String? = null
     private var activeRunner: TorRunner? = null
+
+    /**
+     * Answer one raw DNS payload with Tor's own resolver.
+     *
+     * This is the single resolver every mode funnels through: TUN mode reaches it
+     * from [TorSocksBridge], chain mode from the SSTP core's TUN. It always uses
+     * the winning runner's `DNSPort`, so the query is resolved anonymously by Tor
+     * and never by a public resolver reached over Tor nor by the remote end of a
+     * chain. A null is a failed-closed lookup, not a prompt to try elsewhere.
+     */
+    fun resolveDnsViaTor(payload: ByteArray): ByteArray? {
+        val port = activeRunner?.dnsPort ?: return null
+        return TorDns.query(port, payload)
+    }
+
     private var statsJob: Job? = null
     private var linkWatchJob: Job? = null
     private var exitLocatorJob: Job? = null
@@ -563,6 +579,7 @@ class TorVpnService : VpnService() {
         }
         val bridgeResult = TorSocksBridge.start(
             torSocksPort = w.torSocksPort,
+            torDnsPort = w.dnsPort,
             torHost = "127.0.0.1",
             listenPort = proxyPort,
             listenHost = proxyHost
@@ -1101,6 +1118,9 @@ class TorVpnService : VpnService() {
                 .setSession("DeltaTor")
                 .setMtu(VPN_MTU)
                 .addAddress(VPN_ADDRESS, 32)
+                // The address here is only a route target: every DNS datagram the
+                // TUN captures is handed to TorSocksBridge and answered by Tor's
+                // own resolver (see TorDns). It is never sent to this address.
                 .addDnsServer(DEFAULT_DNS)
             val picks = Config.splitTunnelSelected.filter { it != packageName }
             val vpnOnly = Config.splitTunnelMode == Config.SPLIT_MODE_VPN
@@ -1250,7 +1270,7 @@ class TorVpnService : VpnService() {
                 TAG,
                 tunSection {
                     line("establish", if (tun == null) "returned null" else "ok fd=${tun.fd}")
-                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS")
+                    line("session", "DeltaTor mtu=$VPN_MTU addr=$VPN_ADDRESS/32 dns=$DEFAULT_DNS (answered by Tor DNSPort ${activeRunner?.dnsPort ?: 0})")
                 }
             )
             tun
@@ -1634,7 +1654,7 @@ class TorVpnService : VpnService() {
                 return
             }
 
-            TorSocksBridge.repoint(winner.torSocksPort)
+            TorSocksBridge.repoint(winner.torSocksPort, winner.dnsPort)
             activeRunner = winner
             AppState.update {
                 it.copy(

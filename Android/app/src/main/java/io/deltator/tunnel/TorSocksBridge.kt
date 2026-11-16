@@ -15,22 +15,26 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * SOCKS5 bridge for Snowflake (Tor) tunnel type.
+ * SOCKS5 bridge for the Tor tunnel types.
  *
  * Sits between hev-socks5-tunnel and Tor's SOCKS5 proxy:
  * - CONNECT (0x01): chains to Tor SOCKS5 (no auth)
- * - FWD_UDP (0x05) DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT
+ * - CONNECT (0x01) to port 53: answered locally as DNS-over-TCP, shimmed to
+ *   Tor's own resolver ([TorDns]) so no name leaves through another resolver
+ * - FWD_UDP (0x05) DNS (port 53): forwarded to Tor's own resolver ([TorDns]),
+ *   never to a public resolver reached over Tor
  * - FWD_UDP (0x05) non-DNS: dropped silently (browser falls back to TCP CONNECT)
  *
  * DNS optimization:
  * - Concurrent: 8-thread pool for parallel DNS resolution
  * - Cached: answers are reused for 5 minutes, so a busy page rarely re-asks
- * - Failover: several resolvers in turn, all reached over Tor
+ * - Fail-closed: when Tor's resolver does not answer, the query gets no answer
+ *   rather than one from a resolver outside Tor
  *
  * Traffic flow:
  * App -> TUN -> hev-socks5-tunnel -> TorSocksBridge (proxyPort)
- *   TCP: -> SOCKS5 CONNECT (no auth) -> Tor SOCKS5 (proxyPort+1) -> Tor circuit -> Server
- *   DNS: -> FWD_UDP -> DNS-over-TCP via Tor SOCKS5 CONNECT -> resolver:53
+ *   TCP: -> SOCKS5 CONNECT (no auth) -> Tor SOCKS (proxyPort+1) -> Tor circuit -> Server
+ *   DNS: -> FWD_UDP -> UDP to Tor's DNSPort -> Tor circuit -> resolved by the exit
  */
 object TorSocksBridge {
     private const val TAG = "TorSocksBridge"
@@ -41,11 +45,13 @@ object TorSocksBridge {
     private const val BIND_RETRY_DELAY_MS = 200L
     private const val BUFFER_SIZE = 32768
     private const val TCP_CONNECT_TIMEOUT_MS = 30000
-    private const val DNS_TIMEOUT_MS = 15000
     private const val DNS_CACHE_TTL_MS = 300_000L
+    private const val DNS_TCP_PORT = 53
 
     private var torHost: String = "127.0.0.1"
     private var torSocksPort: Int = 0
+    /** The winning runner's `DNSPort`; 0 until [start] wires it. */
+    private var torDnsPort: Int = 0
     private var localAuthUsername: String? = null
     private var localAuthPassword: String? = null
     private var serverSocket: ServerSocket? = null
@@ -60,6 +66,7 @@ object TorSocksBridge {
 
     fun start(
         torSocksPort: Int,
+        torDnsPort: Int = 0,
         torHost: String = "127.0.0.1",
         listenPort: Int,
         listenHost: String = "127.0.0.1",
@@ -69,6 +76,7 @@ object TorSocksBridge {
         Log.i(TAG, "========================================")
         Log.i(TAG, "Starting Tor SOCKS5 bridge")
         Log.i(TAG, "  Tor SOCKS5: $torHost:$torSocksPort")
+        Log.i(TAG, "  Tor DNS (DNSPort): $torHost:$torDnsPort")
         Log.i(TAG, "  Listen: $listenHost:$listenPort")
         Log.i(TAG, "  Local auth: ${if (!localAuthUsername.isNullOrEmpty()) "enabled" else "disabled"}")
         Log.i(TAG, "========================================")
@@ -76,6 +84,7 @@ object TorSocksBridge {
         stop()
         this.torHost = torHost
         this.torSocksPort = torSocksPort
+        this.torDnsPort = torDnsPort
         this.localAuthUsername = localAuthUsername
         this.localAuthPassword = localAuthPassword
 
@@ -143,10 +152,14 @@ object TorSocksBridge {
      * the new runner. This is what makes a recovery invisible, the tunnel never
      * goes down while a replacement Tor boots on the same bridge.
      */
-    fun repoint(torSocksPort: Int) {
+    fun repoint(torSocksPort: Int, torDnsPort: Int = 0) {
         if (this.torSocksPort != torSocksPort) {
             Log.i(TAG, "Repointing bridge: $torHost:${this.torSocksPort} -> $torHost:$torSocksPort")
             this.torSocksPort = torSocksPort
+        }
+        if (torDnsPort > 0 && this.torDnsPort != torDnsPort) {
+            Log.i(TAG, "Repointing bridge DNS: $torHost:${this.torDnsPort} -> $torHost:$torDnsPort")
+            this.torDnsPort = torDnsPort
         }
         // Cached answers were resolved over the circuit that just went away, so
         // drop them: a recovery reuses the same runner port, and returning early
@@ -261,6 +274,18 @@ object TorSocksBridge {
                     if (cmd == 0x05) {
                         socket.soTimeout = 0
                         handleFwdUdp(input, output)
+                        return@Thread
+                    }
+
+                    // DNS-over-TCP to any resolver is answered by Tor's own
+                    // resolver, not chained through to the resolver itself.
+                    // Tor's DNSPort is UDP-only, so the length-prefixed query is
+                    // shimmed to it and the answer re-framed for TCP; that keeps
+                    // a truncation retry inside Tor instead of leaking the name
+                    // to a public resolver.
+                    if (destPort == DNS_TCP_PORT) {
+                        socket.soTimeout = 0
+                        handleDnsOverTcp(input, output)
                         return@Thread
                     }
 
@@ -488,8 +513,9 @@ object TorSocksBridge {
 
     /**
      * Handle FWD_UDP (cmd 0x05) — same wire format as other bridges.
-     * DNS (port 53): DNS-over-TCP through Tor SOCKS5 CONNECT, so no query ever
-     * leaves the device in the clear. Non-DNS UDP: dropped silently.
+     * DNS (port 53): forwarded to Tor's own resolver, so no query ever leaves
+     * the device in the clear and none is answered by a public resolver either.
+     * Non-DNS UDP: dropped silently.
      *
      * DNS queries are dispatched to a thread pool for concurrent resolution.
      * Responses are cached for 5 minutes to keep repeat lookups off the wire.
@@ -541,7 +567,7 @@ object TorSocksBridge {
                         logd("DNS: cache hit")
                         cached
                     } else {
-                        val remote = resolveThroughTor(payloadCopy)
+                        val remote = resolveViaTorDns(payloadCopy)
                         if (remote != null) cacheDnsResponse(payloadCopy, remote)
                         remote
                     }
@@ -611,104 +637,78 @@ object TorSocksBridge {
         }
     }
 
-    // --- DNS-over-TCP via Tor SOCKS5 ---
+    // --- DNS via Tor's own resolver ---
 
     /**
-     * Resolvers tried in order, all of them reached over Tor. One being slow,
-     * blocked at the exit or simply broken should not take name resolution down
-     * with it.
+     * Ask Tor's own resolver (the winning runner's `DNSPort`) about [payload].
+     *
+     * A null means Tor did not answer in time. The caller must *not* fall back to
+     * a resolver outside Tor, so a lookup that Tor cannot answer fails closed.
      */
-    private val DNS_FALLBACK_RESOLVERS = listOf(
-        byteArrayOf(8, 8, 8, 8),   // Google
-        byteArrayOf(1, 1, 1, 1),   // Cloudflare
-        byteArrayOf(9, 9, 9, 9)    // Quad9
-    )
-
-    /** Ask each resolver in turn over Tor; null when none answers. */
-    private fun resolveThroughTor(payload: ByteArray): ByteArray? {
-        for (resolver in DNS_FALLBACK_RESOLVERS) {
-            val response = forwardDnsTcp(resolver, payload)
-            if (response != null) return response
+    private fun resolveViaTorDns(payload: ByteArray): ByteArray? {
+        val port = torDnsPort
+        if (port <= 0) {
+            Log.w(TAG, "DNS: no Tor DNSPort wired yet; failing the query closed")
+            return null
         }
-        Log.w(TAG, "DNS: no resolver answered over Tor")
-        return null
+        return TorDns.query(port, payload)
     }
 
     /**
-     * Forward DNS query as DNS-over-TCP through Tor's SOCKS5 CONNECT to
-     * [resolver]:53. Each call opens a new SOCKS5 connection (no persistent
-     * connections to keep it simple).
+     * Serve DNS-over-TCP (a resolver's truncation retry) from Tor's own resolver.
+     *
+     * Tor's `DNSPort` answers UDP only, so each length-prefixed query is shimmed
+     * to it and the answer framed back for TCP. Nothing is ever sent to the
+     * resolver named in the CONNECT, so a truncated UDP answer cannot pull the
+     * name out of Tor.
      */
-    private fun forwardDnsTcp(resolver: ByteArray, payload: ByteArray): ByteArray? {
-        var socket: Socket? = null
-        try {
-            // Connect to Tor SOCKS5
-            socket = Socket()
-            socket.connect(InetSocketAddress(torHost, torSocksPort), DNS_TIMEOUT_MS)
-            socket.soTimeout = DNS_TIMEOUT_MS
-            socket.tcpNoDelay = true
+    private fun handleDnsOverTcp(input: InputStream, output: OutputStream) {
+        // Acknowledge the SOCKS5 CONNECT before serving, exactly like the
+        // tunnelled path: hev-socks5-tunnel waits for this reply.
+        output.write(byteArrayOf(0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0))
+        output.flush()
+        logd("CONNECT: DNS-over-TCP served by Tor's own resolver")
 
-            val input = socket.getInputStream()
-            val output = socket.getOutputStream()
+        while (running.get() && !Thread.currentThread().isInterrupted) {
+            val lenBuf = ByteArray(2)
+            try {
+                input.readFully(lenBuf)
+            } catch (_: Exception) {
+                break
+            }
+            val len = ((lenBuf[0].toInt() and 0xFF) shl 8) or (lenBuf[1].toInt() and 0xFF)
+            if (len <= 0) break
 
-            // SOCKS5 greeting (no auth)
-            output.write(byteArrayOf(0x05, 0x01, 0x00))
+            val query = ByteArray(len)
+            try {
+                input.readFully(query)
+            } catch (_: Exception) {
+                break
+            }
+
+            val cached = getCachedDns(query)
+            val response = if (cached != null) {
+                logd("DNS/TCP: cache hit")
+                cached
+            } else {
+                val answer = resolveViaTorDns(query)
+                if (answer != null) cacheDnsResponse(query, answer)
+                answer
+            }
+            if (response == null || response.isEmpty()) {
+                // Fail closed: closing makes the client retry, rather than hand
+                // it an answer resolved outside Tor.
+                break
+            }
+
+            output.write(
+                byteArrayOf(
+                    ((response.size shr 8) and 0xFF).toByte(),
+                    (response.size and 0xFF).toByte()
+                )
+            )
+            output.write(response)
             output.flush()
-
-            val greetResp = ByteArray(2)
-            input.readFully(greetResp)
-            if (greetResp[0] != 0x05.toByte()) {
-                logd("DNS: Tor SOCKS5 greeting failed")
-                return null
-            }
-
-            // SOCKS5 CONNECT to the resolver on port 53
-            output.write(byteArrayOf(0x05, 0x01, 0x00, 0x01) + resolver + byteArrayOf(0x00, 0x35))
-            output.flush()
-
-            // Read CONNECT response
-            val connResp = ByteArray(4)
-            input.readFully(connResp)
-            if (connResp[1] != 0x00.toByte()) {
-                logd("DNS: SOCKS5 CONNECT rejected (rep=${connResp[1]})")
-                return null
-            }
-
-            // Skip remaining response bytes based on address type
-            when (connResp[3].toInt() and 0xFF) {
-                0x01 -> { val rest = ByteArray(6); input.readFully(rest) }
-                0x03 -> { val len = input.read(); val rest = ByteArray(len + 2); input.readFully(rest) }
-                0x04 -> { val rest = ByteArray(18); input.readFully(rest) }
-            }
-
-            // Send DNS query as TCP (2-byte length prefix per RFC 1035 section 4.2.2)
-            output.write(byteArrayOf(
-                ((payload.size shr 8) and 0xFF).toByte(),
-                (payload.size and 0xFF).toByte()
-            ))
-            output.write(payload)
-            output.flush()
-
-            // Read DNS response (2-byte length prefix)
-            val respLenBuf = ByteArray(2)
-            input.readFully(respLenBuf)
-            val respLen = ((respLenBuf[0].toInt() and 0xFF) shl 8) or (respLenBuf[1].toInt() and 0xFF)
-
-            if (respLen <= 0 || respLen > 65535) {
-                logd("DNS: invalid response length: $respLen")
-                return null
-            }
-
-            val response = ByteArray(respLen)
-            input.readFully(response)
-
-            logd("DNS: resolved via Tor (${response.size} bytes)")
-            return response
-        } catch (e: Exception) {
-            logd("DNS-over-TCP failed: ${e.message}")
-            return null
-        } finally {
-            try { socket?.close() } catch (_: Exception) {}
         }
     }
 
