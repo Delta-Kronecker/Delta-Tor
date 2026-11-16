@@ -77,7 +77,7 @@ public static class ChainNetwork
         }
     }
 
-    private static bool IsTunnelLike(NetworkInterface nic)
+    internal static bool IsTunnelLike(NetworkInterface nic)
     {
         if (nic.Name.StartsWith("DeltaTor", StringComparison.OrdinalIgnoreCase)) return true;
         var description = nic.Description;
@@ -232,17 +232,24 @@ public static class ChainNetwork
     public static bool SetAdapterMtu(int mtu) =>
         RunNetsh($"interface ipv4 set subinterface \"{AdapterName}\" mtu={mtu} store=persistent");
 
-    public static bool SetAdapterDns(IReadOnlyList<string> servers)
+    public static bool SetAdapterDns(IReadOnlyList<string> servers) =>
+        SetAdapterDns(AdapterName, servers);
+
+    /// <summary>
+    /// The same setter against any adapter, so the TUN data plane can point its
+    /// own interface at Tor's resolver without going through the chain helpers.
+    /// </summary>
+    public static bool SetAdapterDns(string adapterName, IReadOnlyList<string> servers)
     {
         if (servers.Count == 0) return true;
 
         var ok = RunNetsh(
-            $"interface ipv4 set dnsservers name=\"{AdapterName}\" source=static " +
+            $"interface ipv4 set dnsservers name=\"{adapterName}\" source=static " +
             $"address={servers[0]} register=primary validate=no");
         for (var i = 1; i < servers.Count; i++)
         {
             RunNetsh(
-                $"interface ipv4 add dnsservers name=\"{AdapterName}\" address={servers[i]} " +
+                $"interface ipv4 add dnsservers name=\"{adapterName}\" address={servers[i]} " +
                 $"index={i + 1} validate=no");
         }
 
@@ -320,9 +327,9 @@ public static class ChainNetwork
         return false;
     }
 
-    private static bool RunNetsh(string arguments) => Run("netsh", arguments);
+    internal static bool RunNetsh(string arguments) => Run("netsh", arguments);
 
-    private static bool Run(string fileName, string arguments)
+    internal static bool Run(string fileName, string arguments)
     {
         try
         {

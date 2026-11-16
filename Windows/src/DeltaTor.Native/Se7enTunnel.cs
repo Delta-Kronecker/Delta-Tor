@@ -24,7 +24,7 @@ public sealed class Se7enTunnel : ISocksTunnel
     private const string Tag = "Se7enTunnel";
 
     /// <summary>Wintun adapter alias Se7enTun creates ("se7en_tun").</summary>
-    private const string AdapterAlias = "se7en_tun";
+    private const string AdapterAlias = TunnelEngine.TunAdapterAlias;
 
     /// <summary>Processes kept outside the tunnel (Windows' addDisallowedApplication).</summary>
     private static readonly string[] ExcludedProcesses = { "tor", "tor.exe", "lyrebird", "lyrebird.exe", "DeltaTor", "DeltaTor.exe" };

@@ -28,7 +28,17 @@ internal sealed class IpTerminal
         var builder = _bridge.Builder!;
         builder.AddAddress(_bridge.CurrentIPv4, 32);
 
-        if (!IsZero(_bridge.CurrentProposedDns))
+        // The chain's DNS is Tor's own resolver too: the relay in TorDns, on
+        // loopback, forwards to the winning runner's DNSPort. It is loopback,
+        // so it can never be carried by the chain's default route into the
+        // tunnel. Only when the relay is down (a probe that never reaches the
+        // machine half) does the IPCP resolver, or the public fallback, apply.
+        var relay = TorDns.AddressV4Bytes;
+        if (relay != null)
+        {
+            builder.AddDnsServer(relay);
+        }
+        else if (!IsZero(_bridge.CurrentProposedDns))
         {
             builder.AddDnsServer(_bridge.CurrentProposedDns);
         }

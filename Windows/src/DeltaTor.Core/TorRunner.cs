@@ -129,6 +129,17 @@ public sealed partial class TorRunner
     public const int HttpPortOffset = 20;
     public int HttpProxyPort => TorSocksPort + HttpPortOffset;
 
+    /// <summary>
+    /// Where this Tor listens for raw DNS (torrc <c>DNSPort</c>). Offset from
+    /// the SOCKS port so every racing runner gets its own resolver, exactly
+    /// like HTTPTunnelPort, and the port stays a function of the dynamically
+    /// assigned base: it is never a fixed number. +40 lands clear of the SOCKS
+    /// range (+1..+15) and the HTTP range (+21..+35). <see cref="TorDns"/>
+    /// forwards the machine's queries here; Tor resolves them over the network.
+    /// </summary>
+    public const int DnsPortOffset = 40;
+    public int DnsPort => TorSocksPort + DnsPortOffset;
+
     public bool Ready => _ready;
     public bool Started => _started;
     public bool ConfirmedStopped => _confirmedStopped;
@@ -825,6 +836,15 @@ public sealed partial class TorRunner
         var common = new StringBuilder();
         common.Append($"SocksPort {_listenHost}:{TorSocksPort}\n");
         common.Append($"HTTPTunnelPort {_listenHost}:{HttpProxyPort}\n");
+        // Tor's own resolver, on its own dynamic port. The machine is pointed at
+        // it through the loopback relay in TorDns, never at a public resolver.
+        // AutomapHostsOnResolve gives .onion names a synthetic address, which
+        // is why the virtual range is moved off 127.0.0.0/8: Windows treats
+        // every 127.x address as loopback, so the default 127.192.0.0/10 would
+        // make those synthetic answers unreachable.
+        common.Append($"DNSPort {_listenHost}:{DnsPort}\n");
+        common.Append("AutomapHostsOnResolve 1\n");
+        common.Append("VirtualAddrNetworkIPv4 10.192.0.0/10\n");
         common.Append($"DataDirectory {Quote(_dataDir)}\n");
         common.Append($"UseBridges {(isDirect ? 0 : 1)}\n");
         if (File.Exists(TorBinaries.GeoIp)) common.Append($"GeoIPFile {Quote(TorBinaries.GeoIp)}\n");

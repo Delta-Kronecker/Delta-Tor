@@ -533,6 +533,16 @@ public static class BridgeRace
         // "No VPN and System Proxy" (ProxyOnlyMode) is the manual variant: same
         // no-tunnel outcome, but the machine proxy is left untouched.
         var sysProxy = Config.SystemProxyMode;
+        if (!Config.ProxyOnlyMode)
+        {
+            // Every resolver the machine has is pointed at Tor in every mode
+            // that captures or redirects traffic (system proxy, TUN, chain).
+            // Proxy-only is the deliberate exception: its whole point is that
+            // the machine is left untouched. The relay binds on loopback, so a
+            // query to it can never fall into the tunnel it is feeding.
+            TorDns.Start(w.DnsPort);
+            TorDns.ApplyPhysical();
+        }
         if (Config.ProxyOnlyMode || sysProxy)
         {
             var endpoint = $"socks5://{proxyHost}:{proxyPort}";
@@ -583,6 +593,11 @@ public static class BridgeRace
 
         // Wait for tun2socks to establish its data path.
         TunnelEngine.WaitForTraffic(TimeSpan.FromSeconds(5));
+
+        // The data plane owns its adapter's resolver and answers DNS itself
+        // through the tunnel; point that adapter at Tor's relay instead so the
+        // queries are resolved by Tor, not by a public resolver behind it.
+        TorDns.ApplyTunnelAdapter(TunnelEngine.TunAdapterAlias);
 
         if (AppState.State.Stopping) return;
 
@@ -801,6 +816,15 @@ public static class BridgeRace
 
             AppLog.I(TAG, $"chain connect: {host}:{port} via SOCKS 127.0.0.1:{Config.ProxyPort}");
             TeardownVpn();
+            // The chain resolves through Tor's own DNS too: point the physical
+            // adapters (and the relay) at the winning runner before the chain
+            // adapter comes up, where IpTerminal picks the relay address.
+            var w = _activeRunner;
+            if (w != null)
+            {
+                TorDns.Start(w.DnsPort);
+                TorDns.ApplyPhysical();
+            }
             engine.Start(host, port);
         });
     }
@@ -1224,6 +1248,13 @@ public static class BridgeRace
 
             TorSocksBridge.Repoint(winner.TorSocksPort);
             _activeRunner = winner;
+            // A fresh winner means a fresh DNSPort: the relay follows it, and
+            // the adapters keep pointing at the relay (nothing else to change).
+            if (!Config.ProxyOnlyMode)
+            {
+                TorDns.Repoint(winner.DnsPort);
+                TorDns.ApplyPhysical();
+            }
             // The system proxy still points at the dead runner's HTTP port;
             // re-aim it at the fresh winner's HTTPTunnelPort.
             if (Config.SystemProxyMode && !Config.ProxyOnlyMode)
@@ -1390,6 +1421,11 @@ public static class BridgeRace
         {
             while (!ct.IsCancellationRequested)
             {
+                // Keep every resolver pointed at Tor. The TUN data plane can
+                // re-assert its own DNS on a reconnect; this re-checks what the
+                // adapters actually have and only writes when it drifted.
+                if (TorDns.IsRunning) TorDns.KeepApplied();
+
                 var stats = TunnelEngine.GetStats();
                 // No tunnel in the proxy modes: the traffic flows through Tor's
                 // own ports, so the winning Tor's byte accounting over its
@@ -1661,6 +1697,9 @@ public static class BridgeRace
         // chain's engines must not outlive the service that dialled them.
         try { _chainEngine?.Shutdown(); } catch { /* already gone */ }
         TeardownVpn();
+        // Every adapter's resolver goes back before the relay it pointed at
+        // disappears, so name resolution never sees a dead loopback port.
+        TorDns.Stop();
         // System proxy mode pointed WinINET at Tor; put the machine back
         // before the SOCKS listener it points at disappears.
         SystemProxy.Clear();

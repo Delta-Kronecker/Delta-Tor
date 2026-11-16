@@ -36,6 +36,13 @@ public static class TunnelEngine
     /// <summary>The real implementation; the app sets it at startup. Null = tunnel unavailable.</summary>
     public static ISocksTunnel? Impl { get; set; }
 
+    /// <summary>
+    /// Interface alias of the TUN adapter the data plane creates ("se7en_tun").
+    /// Shared so the DNS layer can point that adapter's resolver at Tor without
+    /// the core having to know which data plane is installed.
+    /// </summary>
+    public const string TunAdapterAlias = "se7en_tun";
+
     // Start returns null on SUCCESS, so the "engine unavailable" fallback must
     // test Impl for null explicitly: `Impl?.Start(...) ?? new ...` would treat a
     // successful (null) start as "no engine" and fail the connect.

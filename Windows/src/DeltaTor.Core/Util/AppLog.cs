@@ -261,7 +261,7 @@ public static class AppLog
         // The proxy chain counts: its server list, its routes and every SSTP/PPP
         // step are the only record of why a chain attempt failed.
         if (tag is "TunEngine" or "RouteManager" or "HevTunnelApi" or "TorVpnService" or "ExitNode"
-            or "Chain" or "ChainNet" or "ChainList")
+            or "Chain" or "ChainNet" or "ChainList" or "TorDns")
         {
             TunLog.Write(tag, $"[{level}] {msg}");
         }

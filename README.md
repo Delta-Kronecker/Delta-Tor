@@ -132,6 +132,11 @@ ported to .NET 8 / WinForms and shipped as a portable zip:
 - **Proxy chain over VPN Gate** — the same second hop as on Android: Tor → SSTP → a public
   VPN Gate server, with the country-sorted server sheet, live per-server latency tests and
   automatic fallback. Runs on its own Wintun adapter; asks for elevation.
+- **DNS through Tor** — in every mode that captures or redirects traffic (system proxy, full
+  tunnel, proxy chain) each adapter's resolver is pointed at Tor's own `DNSPort` through a
+  loopback relay on port 53, so no query ever goes to the ISP or a public resolver. It is
+  always on, with no setting; "No VPN and System Proxy" is the deliberate exception, since its
+  whole point is to leave the machine untouched.
 - **Tray icon** with live state, actions and update notices; minimize-to-tray.
 - **Known limitation:** Snowflake does not work through the Windows full tunnel (its
   STUN/DTLS peers cannot be bypassed reliably); use system-proxy mode for Snowflake.

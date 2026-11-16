@@ -45,6 +45,11 @@ internal static class Program
         TunnelEngine.Impl = new Se7enTunnel();
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TunnelEngine.Stop();
         AppDomain.CurrentDomain.UnhandledException += (_, _) => TunnelEngine.Stop();
+        // The DNS relay holds every adapter's resolver host, so it must come
+        // down with the process too: leaving the machine pointed at a loopback
+        // port nobody listens on would take name resolution down with it.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => TorDns.Stop();
+        AppDomain.CurrentDomain.UnhandledException += (_, _) => TorDns.Stop();
 
         // The chain's data plane: a dedicated Wintun adapter driven over the
         // raw Wintun API (the counterpart of Android's VpnService.Builder).
