@@ -53,6 +53,7 @@ public sealed class MainForm : Form
     private RectangleF _bannerRect;
     private RectangleF _chainCardRect;
     private bool _noticeOpen;
+    private bool _closeNoticeOpen;
 
     // Bottom-panel action pills: live controls laid over the painted rows.
     private readonly GradientPill _pillAction = new()
@@ -174,6 +175,82 @@ public sealed class MainForm : Form
         // maximize/restore and programmatic size changes.
         Invalidate();
     }
+
+    /// <summary>
+    /// Hold the close button while the engine still has work to do. Windows
+    /// shutdown, Task Manager and Application.Exit keep their right to end
+    /// the process; only a user close is turned into the stop-first notice.
+    /// </summary>
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        var userClose = e.CloseReason is CloseReason.UserClosing or CloseReason.None;
+        if (userClose && EngineActive())
+        {
+            e.Cancel = true;
+            // A notice or another modal already owns the message loop; the
+            // user can close again once it is dismissed. Queue the dialog so
+            // it opens after this close message has been handled.
+            if (!_closeNoticeOpen && !_noticeOpen && !_modalChildOpen)
+            {
+                _closeNoticeOpen = true;
+                try
+                {
+                    BeginInvoke(ShowCloseBlockedNotice);
+                }
+                catch (InvalidOperationException)
+                {
+                    _closeNoticeOpen = false;
+                }
+            }
+        }
+        base.OnFormClosing(e);
+    }
+
+    /// <summary>True while Tor, the tunnel or the chain is up or changing state.</summary>
+    private static bool EngineActive()
+    {
+        var s = AppState.State;
+        if (s.Connecting || s.Stopping || s.TorRunning || s.Connected || s.Reconnecting)
+            return true;
+        return AppState.Chain.Status is ChainStatus.Connecting
+            or ChainStatus.Connected
+            or ChainStatus.Stopping;
+    }
+
+    private void ShowCloseBlockedNotice()
+    {
+        // This dialog is a notice too: marking it open keeps ShowNoticeIfAny
+        // from stacking a queued startup/recovery notice on top of it while
+        // the engine keeps posting state changes underneath.
+        _noticeOpen = true;
+        try
+        {
+            var notice = new Notice(
+                -1, NoticeKind.CloseBlocked, "", CloseBlockedNoticeBlocks());
+            new NoticeDialog(notice).ShowDialog(this);
+        }
+        finally
+        {
+            _noticeOpen = false;
+            _closeNoticeOpen = false;
+        }
+    }
+
+    private static IReadOnlyList<NoticeBlock> CloseBlockedNoticeBlocks() => NoticeLocalization.Pick(
+        english: new NoticeBlock(
+            Lead: "Stop DeltaTor before closing the window",
+            Text: "DeltaTor is still running. Stop it in the main window first, " +
+                "wait for it to shut down, then close the window."),
+        russian: new NoticeBlock(
+            Lead: "Остановите DeltaTor перед закрытием окна",
+            Text: "DeltaTor всё ещё работает. Сначала остановите его в главном окне, " +
+                "дождитесь завершения, затем закройте окно."),
+        persian: new NoticeBlock(
+            Lead: "قبل از بستن پنجره، دلتاتور را متوقف کنید",
+            Text: "دلتاتور هنوز در حال اجراست. ابتدا آن را از پنجرهٔ اصلی متوقف کنید، " +
+                "سپس پنجره را ببندید.",
+            Rtl: true)
+    );
 
     // ---- state plumbing -----------------------------------------------------
 

@@ -28,6 +28,13 @@ public enum NoticeKind
     SystemProxy,
 
     /// <summary>
+    /// Raised instead of closing the window while the engine is still running:
+    /// the user has to stop DeltaTor first so the Tor cores and the machine
+    /// proxy are torn down cleanly.
+    /// </summary>
+    CloseBlocked,
+
+    /// <summary>
     /// What the proxy chain is for, and what it costs, raised the first time
     /// the chain card is tapped. Dismissing it opens the server sheet; the two
     /// are deliberately split so the warning is never skipped.

@@ -492,6 +492,7 @@ public static class BridgeRace
             case NoticeKind.FirstRun:
             case NoticeKind.RouteSpeed:
             case NoticeKind.SystemProxy:
+            case NoticeKind.CloseBlocked:
                 return;
         }
 
