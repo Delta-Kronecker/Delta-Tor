@@ -996,6 +996,12 @@ public sealed class MainForm : Form
             _pillDisconnect.Enabled = !busy;
             _pillDisconnect.SetBounds(
                 (int)(padX + halfW + 10f), (int)y, (int)halfW, 34);
+            // A pill that became visible during this paint is not guaranteed a
+            // paint message of its own; the action pill invalidates itself
+            // through its label assignment above, the disconnect one has a
+            // constant label. Without this it can be left at its never-painted
+            // (black) buffer in proxy modes.
+            _pillDisconnect.Invalidate();
             y += 34f + 6f;
         }
         else

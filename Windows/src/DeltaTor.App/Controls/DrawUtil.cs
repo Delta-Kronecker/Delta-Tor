@@ -105,6 +105,22 @@ internal static class DrawUtil
         Graphics g, string text, Font font, Brush brush,
         float x, float y, float maxWidth, float spacing)
     {
+        // Joined scripts (Persian, Arabic, Hebrew) must be drawn as one run.
+        // Stepping them glyph by glyph breaks their letterforms and lays the
+        // word out front to back, so the pitch has to give way to shaping.
+        if (HasRtlScript(text))
+        {
+            var color = brush is SolidBrush solid ? solid.Color : SystemColors.ControlText;
+            var width = maxWidth >= 100_000f ? 100_000 : (int)Math.Ceiling(maxWidth);
+            TextRenderer.DrawText(g, text, font,
+                new Rectangle((int)Math.Round(x), (int)Math.Round(y), width,
+                    (int)Math.Ceiling(font.GetHeight(g))),
+                color,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine |
+                TextFormatFlags.RightToLeft | TextFormatFlags.Left);
+            return;
+        }
+
         var line = Ellipsize(text, font, spacing, maxWidth);
         if (line.Length == 0) return;
         if (spacing <= 0f)
@@ -132,11 +148,45 @@ internal static class DrawUtil
     public static void DrawSpacedCentered(
         Graphics g, string text, Font font, Brush brush, RectangleF bounds, float spacing)
     {
+        if (HasRtlScript(text))
+        {
+            var color = brush is SolidBrush solid ? solid.Color : SystemColors.ControlText;
+            var size = TextRenderer.MeasureText(text, font, Size.Empty,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine |
+                TextFormatFlags.RightToLeft);
+            TextRenderer.DrawText(g, text, font,
+                new Rectangle((int)Math.Round(bounds.X),
+                    (int)Math.Round(bounds.Y + (bounds.Height - size.Height) / 2f),
+                    (int)Math.Round(bounds.Width), size.Height),
+                color,
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine |
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.RightToLeft);
+            return;
+        }
+
         var line = Ellipsize(text, font, spacing, bounds.Width);
         var w = SpacedWidth(line, font, spacing);
         var lineSize = g.MeasureString(line, font);
         var x = bounds.X + (bounds.Width - w) / 2f;
         var y = bounds.Y + (bounds.Height - lineSize.Height) / 2f;
         DrawSpaced(g, line, font, brush, x, y, float.MaxValue, spacing);
+    }
+
+    /// <summary>
+    /// Whether the text is written in an RTL/complex script that GDI+ cannot
+    /// shape on its own (Arabic, Persian, Hebrew and their presentation forms).
+    /// </summary>
+    private static bool HasRtlScript(string text)
+    {
+        foreach (var ch in text)
+        {
+            if (ch >= '\u0590' && ch <= '\u05FF') return true; // Hebrew
+            if (ch >= '\u0600' && ch <= '\u06FF') return true; // Arabic + Persian
+            if (ch >= '\u0750' && ch <= '\u077F') return true; // Arabic Supplement
+            if (ch >= '\u08A0' && ch <= '\u08FF') return true; // Arabic Extended-A
+            if (ch >= '\uFB1D' && ch <= '\uFDFF') return true; // presentation forms
+            if (ch >= '\uFE70' && ch <= '\uFEFF') return true; // presentation forms-B
+        }
+        return false;
     }
 }

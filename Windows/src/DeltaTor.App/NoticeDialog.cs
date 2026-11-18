@@ -61,7 +61,10 @@ public sealed class NoticeDialog : Form
         {
             Filled = true,
             Radius = 13,
-            Label = "OK"
+            Label = "OK",
+            // No light hairline: on the dark card it reads as a stray white
+            // outline around the button rather than part of it.
+            ShowBorder = false
         };
 
         MeasureBlocks(_dialogW - Pad * 2);

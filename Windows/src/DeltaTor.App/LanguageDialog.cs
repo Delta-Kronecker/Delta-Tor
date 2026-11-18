@@ -69,7 +69,10 @@ public sealed class LanguageDialog : Form
         Radius = 13,
         TabIndex = tabIndex,
         AccessibleName = label,
-        Height = ButtonHeight
+        Height = ButtonHeight,
+        // No hairline around the choices: the user reads it as a stray light
+        // box around the label, not as part of the button.
+        ShowBorder = false
     };
 
     private void Pick(string code)
