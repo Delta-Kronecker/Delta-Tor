@@ -1074,7 +1074,8 @@ public sealed partial class DrawerPanel
     {
         try
         {
-            Directory.CreateDirectory(LogFiles.Root);
+            // Control exposes a Directory member, so qualify the IO type.
+            System.IO.Directory.CreateDirectory(LogFiles.Root);
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
             {
                 FileName = "explorer.exe",
