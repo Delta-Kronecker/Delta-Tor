@@ -9,9 +9,9 @@
       <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.14"/>
       <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="mint" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7DF3C0"/>
-      <stop offset="1" stop-color="#26C281"/>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8294DF"/>
+      <stop offset="1" stop-color="#536BCE"/>
     </linearGradient>
     <clipPath id="round">
       <rect x="1" y="1" width="458" height="74" rx="20"/>
@@ -25,9 +25,9 @@
     <rect x="0" y="0" width="460" height="36" fill="url(#sheen)"/>
   </g>
 
-  <circle cx="45" cy="38" r="21" fill="url(#mint)"/>
+  <circle cx="45" cy="38" r="21" fill="url(#blue)"/>
 
-  <g fill="none" stroke="#0A2A1D" stroke-width="3"
+  <g fill="none" stroke="#0D1633" stroke-width="3"
      stroke-linecap="round" stroke-linejoin="round">
     <path d="M45 26v18"/>
     <path d="M37 37l8 8 8-8"/>
