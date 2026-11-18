@@ -148,10 +148,12 @@ public static class Config
     }
 
     /// <summary>
-    /// Whether the connection log is recorded. Off by default: recording every
+    /// Whether the connection log is recorded. Off by default: writing every
     /// Tor line of every connect attempt across three Tor cores is the most
-    /// expensive thing the user never asked for. Bootstrap percentage and
-    /// failures still show without it — Tor's output is read either way.
+    /// expensive thing the user never asked for. When on, lines go to the
+    /// category folders under <see cref="AppPaths.LogsDir"/>. Bootstrap
+    /// percentage and failures still show without it — Tor's output is read
+    /// either way.
     /// </summary>
     public static bool LoggingEnabled
     {

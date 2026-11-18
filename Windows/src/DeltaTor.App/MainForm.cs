@@ -61,9 +61,9 @@ public sealed class MainForm : Form
     { Label = "DISCONNECT", Filled = false, ShowBorder = false };
     private bool _proxyLive;
 
-    // A modal child (the log screen) owns the message loop while it is up:
-    // the 60fps animation pauses and state notices are held until it closes,
-    // so the modal loop is not crowded out and no second modal can open
+    // A modal child (the chain sheet or a dialog) owns the message loop while it
+    // is up: the 60fps animation pauses and state notices are held until it
+    // closes, so the modal loop is not crowded out and no second modal can open
     // under the first one.
     private bool _modalChildOpen;
 
@@ -119,33 +119,6 @@ public sealed class MainForm : Form
             StopOrStartVpn();
         };
         _pillDisconnect.Clicked += (_, _) => Task.Run(BridgeRace.Disconnect);
-        _drawer.OpenLog += () =>
-        {
-            // The drawer slides away first (Android navigates out of the
-            // drawer before the log screen): otherwise its 1s rebuild timer
-            // keeps running under the modal, and the log would close back
-            // onto a drawer still covering the screen.
-            _drawer.Close();
-            _modalChildOpen = true;
-            // The log screen replaces the main screen (Android push-over).
-            // With the owner hidden, exactly one DeltaTor window is visible
-            // at a time — not the main window and the log side by side.
-            Hide();
-            try
-            {
-                using var log = new LogForm();
-                log.ShowDialog(this);
-            }
-            finally
-            {
-                Show();
-                Activate();
-                _modalChildOpen = false;
-                // A notice that arrived while the log was up was held; it
-                // shows now that the screen is ours again.
-                RefreshFromState();
-            }
-        };
         // The bottom pills step aside while the drawer owns the screen and
         // come back on the first paint after it has slid away.
         _drawer.Closed += () => Invalidate();
@@ -346,9 +319,9 @@ public sealed class MainForm : Form
     {
         while (!_noticeOpen)
         {
-            // A modal child (the log screen) is up: hold the notice. Showing
-            // it now would stack a second modal loop under the first and can
-            // strand the dialog behind the log window, eating every click.
+            // A modal child (the chain sheet or a dialog) is up: hold the notice.
+            // Showing it now would stack a second modal loop under the first and
+            // can strand the dialog behind the other window, eating every click.
             if (_modalChildOpen) return;
             var notice = _state.Notice;
             if (notice is null) return;
@@ -1142,7 +1115,7 @@ public sealed class MainForm : Form
 
     /// <summary>
     /// Raise the server sheet (MainScreen's showChainSheet): a modal child, so
-    /// the log-open latch keeps the notice queue and the animation loop calm
+    /// the modal-child latch keeps the notice queue and the animation loop calm
     /// while it is up. A pick either dials the chain, or, in no-VPN proxy mode,
     /// asks first - switching modes is the user's call, not the app's.
     /// </summary>

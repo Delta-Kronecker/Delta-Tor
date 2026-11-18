@@ -6,9 +6,9 @@ namespace DeltaTor.Core;
 /// is the Windows counterpart of Android's app-private filesDir.
 ///
 /// Everything stateful lives under <see cref="Root"/>: prefs.json,
-/// torrc.template, the bridge caches, the memory pool, the route snapshot
-/// and the per-runner tor data. Subfolders (bridges/, tor/, cache/) keep the
-/// top level from filling up.
+/// torrc.template, the bridge caches, the memory pool, the route snapshot,
+/// the recorded logs and the per-runner tor data. Subfolders (bridges/, tor/,
+/// cache/, logs/) keep the top level from filling up.
 ///
 /// <see cref="MigrateLegacy"/> copies the pre-portable locations
 /// (%APPDATA%\DeltaTor, %LOCALAPPDATA%\DeltaTor) in on first launch, so an
@@ -30,6 +30,12 @@ public static class AppPaths
 
     /// <summary>Bridge export zips (Android: cacheDir/exports).</summary>
     public static readonly string ExportDir = Path.Combine(Root, "cache", "exports");
+
+    /// <summary>
+    /// Recorded connection logs, one subfolder per transport category and one
+    /// file per day inside each. Written only while recording is on.
+    /// </summary>
+    public static readonly string LogsDir = Path.Combine(Root, "logs");
 
     /// <summary>Per-Tor-instance data directories (stage 2, TorRunner).</summary>
     public static string TorDataDir(string runnerName)

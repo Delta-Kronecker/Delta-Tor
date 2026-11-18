@@ -28,9 +28,6 @@ public sealed partial class DrawerPanel
     private DrawerEdit? _customBox;
     private Spinner? _storeSpinner;
 
-    /// <summary>MainForm hooks this to the log screen once it exists.</summary>
-    public event Action? OpenLog;
-
     /// <summary>Multi-line box inside the drawer: the wheel scrolls the
     /// drawer itself unless the box has focus, then it scrolls its own text.</summary>
     private sealed class DrawerEdit : TextBox
@@ -1028,22 +1025,16 @@ public sealed partial class DrawerPanel
         var titleTop = cy;
         cy += 2f + _cardTitleLineH + 4f;
 
-        const string desc = "Shows the live bootstrap; press COPY to share it.";
-        const float rowH = 64f;
-        var pillW = 16f + DrawUtil.SpacedWidth("VIEW LOG", _fLabel, 1.2f) + 16f;
-        var pillH = 10f + _labelLineH + 10f;
-        var rowRel = cy;
-        var descSize = Wrap(desc, _fBody, iw - pillW - 12f);
-        var colH = _rowLineH + 3f + descSize.Height;
-        var pillRel = rowRel + (rowH - pillH) / 2f;
-        var headRel = rowRel + (rowH - colH) / 2f;
-        cy += rowH;
+        const string desc = "Every Tor line of a connect is written to the logs folder " +
+            "next to DeltaTor.exe: one subfolder per transport and one file per day.";
+        var descSize = Wrap(desc, _fBody, iw);
+        var descRel = cy;
+        cy += descSize.Height + 10f;
 
         var recDesc = _loggingOn
-            ? "Keeps every Tor line of every connect. Turn it off to stop " +
-              "recording; the reason for a failure still shows on the screen."
-            : "Nothing is being recorded. The bootstrap still runs — it just " +
-              "is not kept, so a later log has nothing in it.";
+            ? "Recording. Lines are appended while the app is open; turn it off " +
+              "to stop writing."
+            : "Nothing is being recorded. Turn this on to save the log to disk.";
         var recRow = MakeToggle(x, iw, cy + 6f,
             "Record the log", recDesc,
             _loggingOn,
@@ -1057,32 +1048,43 @@ public sealed partial class DrawerPanel
             });
         cy += 6f + recRow.H;
 
+        var pathRel = cy + 4f;
+        cy += _tinyLineH + 4f;
+
         var cardH = cy + CardPadY;
 
         flow.Add(cardH + CardGap, (g, sy) =>
         {
             CardBg(g, CardMargin, sy, w - CardMargin * 2f, cardH);
             DrawCardTitle(g, sy + titleTop, x, iw, "CONNECTION LOG",
-                null, default, null, top + titleTop);
+                "OPEN FOLDER", DeltaTorTheme.AccentLight,
+                OpenLogsFolder, top + titleTop);
 
-            using (var b = new SolidBrush(DeltaTorTheme.Text))
-                DrawUtil.DrawSpaced(g, "View connection log", _fRow, b,
-                    x, sy + headRel, iw - pillW - 12f, 0.3f);
-            DrawWrap(g, desc, _fBody, DeltaTorTheme.Muted, x,
-                sy + headRel + _rowLineH + 3f, descSize);
-
-            var pillRect = new RectangleF(x + iw - pillW, sy + pillRel, pillW, pillH);
-            using (var path = DrawUtil.RoundedRect(pillRect, 12f))
-            using (var b = new System.Drawing.Drawing2D.LinearGradientBrush(
-                pillRect, DeltaTorTheme.AccentDark, DeltaTorTheme.Accent, 0f))
-                g.FillPath(b, path);
-            using (var b = new SolidBrush(Color.White))
-                DrawUtil.DrawSpacedCentered(g, "VIEW LOG", _fLabel, b, pillRect, 1.2f);
-            _scrollHits.Add((
-                new RectangleF(x + iw - pillW, top + pillRel, pillW, pillH),
-                () => OpenLog?.Invoke()));
-
+            DrawWrap(g, desc, _fBody, DeltaTorTheme.Muted, x, sy + descRel, descSize);
             DrawToggle(g, recRow, x, iw, sy, top);
+
+            using var b = new SolidBrush(Color.FromArgb(120, DeltaTorTheme.Muted));
+            DrawUtil.DrawSpaced(g, LogFiles.Root, _fTiny, b, x, sy + pathRel, iw, 0.4f);
         });
+    }
+
+    /// <summary>Reveal the log folder in Explorer, creating it so the action
+    /// works before the first recorded line.</summary>
+    private static void OpenLogsFolder()
+    {
+        try
+        {
+            Directory.CreateDirectory(LogFiles.Root);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = $"\"{LogFiles.Root}\"",
+                UseShellExecute = false
+            });
+        }
+        catch
+        {
+            // Explorer failing must not take the drawer with it.
+        }
     }
 }

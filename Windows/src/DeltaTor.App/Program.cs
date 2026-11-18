@@ -1,4 +1,5 @@
 using DeltaTor.Core;
+using DeltaTor.Core.Util;
 using DeltaTor.Native;
 
 namespace DeltaTor.App;
@@ -49,6 +50,9 @@ internal static class Program
         // port nobody listens on would take name resolution down with it.
         AppDomain.CurrentDomain.ProcessExit += (_, _) => TorDns.Stop();
         AppDomain.CurrentDomain.UnhandledException += (_, _) => TorDns.Stop();
+        // Close the recorded-log files on a clean exit. AutoFlush already put
+        // every line on disk; this just releases the handles.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) => LogFiles.Shutdown();
 
         // The chain's data plane: a dedicated Wintun adapter driven over the
         // raw Wintun API (the counterpart of Android's VpnService.Builder).
