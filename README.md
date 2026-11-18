@@ -82,8 +82,10 @@ that still gets through on heavily filtered networks.
   [Delta-Kronecker/Tor-Bridges-Collector](https://github.com/Delta-Kronecker/Tor-Bridges-Collector)
   with a bundled offline copy, per-mode bridge stats, and a zip export of the working
   list to move a known-good setup to another device.
-- **Built-in updater** — checks for new releases, downloads in the background with a
-  progress banner, and installs by itself; no browser needed.
+- **Update notice, no self-install** — checks GitHub for a new release and opens the
+  release page in your browser when there is one. DeltaTor never downloads or installs
+  APKs itself: the browser does the download and Android's installer does the install,
+  each with its own visible permission prompt.
 - **Stays out of your way** — live up/down speed and totals in the notification (even
   with the app swiped away, with disconnect actions right in the notification), a
   per-transport log viewer with filters on Android (Windows writes the same categories

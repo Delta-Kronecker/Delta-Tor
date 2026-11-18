@@ -181,17 +181,10 @@ object AppState {
     data class ReleaseState(
         val checking: Boolean = false,
         val latestVersion: String = "",
+        /** The APK for this device on GitHub, or the release page as fallback. */
         val latestUrl: String = "",
-        val newer: Boolean = false,
-        /** idle | downloading | ready | error */
-        val phase: String = "idle",
-        val bytes: Long = 0L,
-        val totalBytes: Long = 0L,
-        /** True when the APK was already downloaded in an earlier run, so the
-         *  install dialog should open by itself instead of waiting for a tap. */
-        val autoPrompt: Boolean = false,
-        /** Why the last install attempt did not open the installer, if it did not. */
-        val lastError: String = ""
+        /** True when GitHub advertises a version newer than this build. */
+        val newer: Boolean = false
     )
 
     private val _state = MutableStateFlow(VpnState())

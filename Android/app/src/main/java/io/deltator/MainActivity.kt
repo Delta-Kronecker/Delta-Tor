@@ -70,7 +70,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
@@ -127,9 +126,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import io.deltator.tunnel.BridgeExport
 import io.deltator.tunnel.BridgeStore
 import androidx.core.graphics.drawable.toBitmap
@@ -472,38 +468,17 @@ private fun MainScreen(
     var showChainSheet by remember { mutableStateOf(false) }
     var chainWarningFor by remember { mutableStateOf<Pair<String, Int>?>(null) }
 
-    // An APK downloaded in an earlier run opens the installer by itself as soon
-    // as this screen is up. The latch matters: without it a cancel would bring
-    // the dialog straight back on the next recomposition, and the intent of the
-    // automatic prompt is once per launch, not once per frame.
+    // A new release raises the dialog once per launch. The latch matters: without
+    // it, dismissing the dialog would bring it straight back on the next
+    // recomposition. The dialog is a hint, not a gate -- LATER is always there,
+    // and the update itself happens in the browser, never inside this app.
     var updateDialogShown by remember { mutableStateOf(false) }
     var showUpdateDialog by remember { mutableStateOf(false) }
-    var updateDialogStep by remember { mutableStateOf("intro") }
-    var awaitingInstallPermission by remember { mutableStateOf(false) }
-    LaunchedEffect(release.newer, release.phase) {
-        if (release.newer && release.phase == "ready" && !updateDialogShown) {
+    LaunchedEffect(release.newer) {
+        if (release.newer && !updateDialogShown) {
             updateDialogShown = true
             showUpdateDialog = true
-            updateDialogStep = "intro"
         }
-    }
-    // After the user taps "Open Settings" and grants the install permission,
-    // coming back to the app is the signal to carry on: kick the install off
-    // automatically so the system's own install confirmation appears without
-    // making them find the banner and tap again. The dialog stays up either
-    // way — cancelling the system confirmation just brings them back to it.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                if (awaitingInstallPermission && ReleaseChecker.canInstall(context)) {
-                    awaitingInstallPermission = false
-                    ReleaseChecker.installLatest(context)
-                }
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val connecting = state.connecting || chain.status == AppState.ChainStatus.CONNECTING
@@ -573,18 +548,8 @@ private fun MainScreen(
     if (showUpdateDialog) {
         UpdateAvailableDialog(
             version = release.latestVersion,
-            step = updateDialogStep,
-            onUpdate = {
-                if (ReleaseChecker.canInstall(context)) {
-                    ReleaseChecker.installLatest(context)
-                } else {
-                    updateDialogStep = "permission"
-                }
-            },
-            onOpenSettings = {
-                awaitingInstallPermission = true
-                ReleaseChecker.openUnknownSources(context)
-            }
+            onOpenRelease = { ReleaseChecker.openRelease(context, release.latestUrl) },
+            onLater = { showUpdateDialog = false }
         )
     }
 
@@ -653,18 +618,7 @@ private fun MainScreen(
             if (release.newer && release.latestVersion.isNotBlank()) {
                 UpdateBanner(
                     version = release.latestVersion,
-                    phase = release.phase,
-                    progress = if (release.totalBytes > 0L) {
-                        release.bytes.toFloat() / release.totalBytes.toFloat()
-                    } else 0f,
-                    error = release.lastError,
-                    onTap = {
-                        when (release.phase) {
-                            "ready" -> ReleaseChecker.installLatest(context)
-                            "downloading" -> Unit
-                            else -> ReleaseChecker.retryDownload(context)
-                        }
-                    },
+                    onTap = { ReleaseChecker.openRelease(context, release.latestUrl) },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
                         .offset(y = 98.dp)
@@ -1011,19 +965,13 @@ private fun NoticeButton(
 @Composable
 private fun UpdateAvailableDialog(
     version: String,
-    step: String,
-    onUpdate: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenRelease: () -> Unit,
+    onLater: () -> Unit
 ) {
-    // Mandatory update: no "not now", and neither a tap outside nor the back
-    // key dismisses it. The only way forward is the install path below.
-    Dialog(
-        onDismissRequest = {},
-        properties = DialogProperties(
-            dismissOnBackPress = false,
-            dismissOnClickOutside = false
-        )
-    ) {
+    // A hint, not a gate. Back, a tap outside and LATER all dismiss it, because
+    // an update the user cannot postpone is a dark pattern -- and one that
+    // Play Protect reasonably reads as coercive.
+    Dialog(onDismissRequest = onLater, properties = DialogProperties()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1056,44 +1004,34 @@ private fun UpdateAvailableDialog(
                 )
             }
             Spacer(Modifier.height(14.dp))
-            if (step == "permission") {
-                Text(
-                    "One more step",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 20.sp
-                    ),
-                    color = DeltaTor.Text
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Android needs you to allow DeltaTor to install apps from " +
-                        "this source before it can update itself. Tap Open " +
-                        "Settings, turn the switch on, then come back.",
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
-                    color = DeltaTor.Text
-                )
-            } else {
-                Text(
-                    "DeltaTor $version is available",
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        lineHeight = 20.sp
-                    ),
-                    color = DeltaTor.Text
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "A newer version has been downloaded and is ready to install.",
-                    style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
-                    color = DeltaTor.Text
-                )
-            }
+            Text(
+                "DeltaTor $version is available",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 20.sp
+                ),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Open the release page and the browser will download the APK for " +
+                    "this device. Android's installer handles the file from there: " +
+                    "DeltaTor never downloads or installs apps itself.",
+                style = MaterialTheme.typography.bodyMedium.copy(lineHeight = 20.sp),
+                color = DeltaTor.Text
+            )
             Spacer(Modifier.height(20.dp))
             NoticeButton(
-                label = if (step == "permission") "OPEN SETTINGS" else "UPDATE",
+                label = "OPEN RELEASE PAGE",
                 modifier = Modifier.fillMaxWidth(),
-                onClick = if (step == "permission") onOpenSettings else onUpdate
+                onClick = onOpenRelease
+            )
+            Spacer(Modifier.height(10.dp))
+            NoticeButton(
+                label = "LATER",
+                modifier = Modifier.fillMaxWidth(),
+                primary = false,
+                onClick = onLater
             )
         }
     }
@@ -3516,20 +3454,10 @@ private fun ScreenTopBar(
 @Composable
 private fun UpdateBanner(
     version: String,
-    phase: String,
-    progress: Float,
-    error: String,
     onTap: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(16.dp)
-    val downloading = phase == "downloading"
-    val status = when {
-        downloading -> "Downloading update\u2026 ${(progress.coerceIn(0f, 1f) * 100).toInt()}%"
-        phase == "ready" -> "Update downloaded \u00b7 tap to install"
-        phase == "error" -> "Download failed \u00b7 tap to retry"
-        else -> "Downloading update\u2026"
-    }
     Column(
         modifier
             .fillMaxWidth()
@@ -3548,13 +3476,7 @@ private fun UpdateBanner(
                 Modifier
                     .size(9.dp)
                     .clip(RoundedCornerShape(50))
-                    .background(
-                        when {
-                            phase == "error" -> DeltaTor.Red
-                            phase == "ready" -> DeltaTor.Green
-                            else -> DeltaTor.Amber
-                        }
-                    )
+                    .background(DeltaTor.Amber)
             )
             Spacer(Modifier.width(8.dp))
             Text(
@@ -3563,34 +3485,15 @@ private fun UpdateBanner(
                     letterSpacing = 1.3.sp,
                     fontWeight = FontWeight.Bold
                 ),
-                color = if (phase == "error") DeltaTor.Red else DeltaTor.GreenLight
+                color = DeltaTor.GreenLight
             )
         }
         Spacer(Modifier.height(5.dp))
         Text(
-            status,
+            "Update available \u00b7 tap to open the release page",
             style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
             color = DeltaTor.Muted
         )
-        if (error.isNotEmpty()) {
-            Spacer(Modifier.height(3.dp))
-            Text(
-                error,
-                style = MaterialTheme.typography.bodySmall.copy(letterSpacing = 0.2.sp),
-                color = DeltaTor.Amber
-            )
-        }
-        if (downloading) {
-            Spacer(Modifier.height(7.dp))
-            LinearProgressIndicator(
-                progress = { progress.coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp),
-                color = DeltaTor.Green,
-                trackColor = DeltaTor.Border
-            )
-        }
     }
 }
 

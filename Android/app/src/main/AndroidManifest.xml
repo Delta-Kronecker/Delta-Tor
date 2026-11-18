@@ -13,10 +13,12 @@
     <!-- Notification (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- The in-app updater installs the APK it downloaded; without this the
-         system refuses to open the installer for a package that is not a
-         package manager. -->
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- No REQUEST_INSTALL_PACKAGES on purpose. DeltaTor does not download and
+         install its own updates: the update check only opens the release page
+         in the user's browser, and Android's installer handles the APK from
+         there. Apps that self-update outside Play need this permission, and
+         Play Protect treats exactly that pattern -- a sideloaded app fetching
+         and running installers -- as a dropper. -->
 
     <!-- Split tunnelling: the app list has to name every installed app so the user
          can route each one. Android 11 (API 30) hides packages from
@@ -77,13 +79,5 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="vpn" />
         </service>
-
-        <receiver
-            android:name=".InstallResultReceiver"
-            android:exported="false" />
-
-        <receiver
-            android:name=".InstallTriggerReceiver"
-            android:exported="false" />
     </application>
 </manifest>
