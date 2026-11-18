@@ -51,7 +51,6 @@ public sealed class MainForm : Form
     private RectangleF _menuRect;
     private RectangleF _ringRect;
     private RectangleF _bannerRect;
-    private RectangleF _chainCardRect;
     private bool _noticeOpen;
     private bool _closeNoticeOpen;
 
@@ -123,6 +122,9 @@ public sealed class MainForm : Form
         // The bottom pills step aside while the drawer owns the screen and
         // come back on the first paint after it has slid away.
         _drawer.Closed += () => Invalidate();
+        // The chain card moved into the drawer; the drawer closes itself and
+        // then this runs, so its notice/sheet is never stacked over it.
+        _drawer.ChainTap += ChainCardTap;
 
         if (TrayIcon.LoadAppIcon() is { } appIcon) Icon = appIcon;
         _tray = new TrayIcon(this);
@@ -541,12 +543,6 @@ public sealed class MainForm : Form
             var rel = AppState.ReleaseState;
             if (rel.Newer && rel.LatestUrl.Length > 0)
                 ReleaseChecker.OpenInBrowser(rel.LatestUrl);
-            return;
-        }
-
-        if (_chainCardRect.Width > 0 && _chainCardRect.Contains(e.Location))
-        {
-            ChainCardTap();
             return;
         }
 
@@ -1023,13 +1019,8 @@ public sealed class MainForm : Form
         var busy = s.Connecting || s.Stopping;
         _proxyLive = s.SocksEndpoint.Length > 0;
 
-        // The chain card sits first, right where the finger already is: it is
-        // only meaningful once Tor is connected, and its own state decides
-        // what a tap does - open the sheet while idle, end the chain while it
-        // is in flight.
-        var showChainCard = _chain.Status != ChainStatus.Idle || s.Connected;
-        var chainBlockH = showChainCard ? 48f + 8f : 0f;
-
+        // The chain card lives in the left drawer now; the panel below the
+        // ring keeps only the action pills and the live statistics.
         // The action row is never removed. During teardown the left pill keeps
         // its slot and just relabels to START VPN, dimmed until the cores are
         // gone: a start click there would race the teardown for the ports, but
@@ -1040,19 +1031,8 @@ public sealed class MainForm : Form
         // after it closes.
         var pillsVisible = (s.Connected || s.TorRunning || s.Stopping) && !_drawer.IsOpen;
         var pillsH = pillsVisible ? 34f + 6f : 0f;
-        var total = 4f + chainBlockH + pillsH + statH + 6f + statH + 6f + infoH + 10f;
+        var total = 4f + pillsH + statH + 6f + statH + 6f + infoH + 10f;
         var y = ClientSize.Height - total + 4f;
-
-        if (showChainCard)
-        {
-            _chainCardRect = new RectangleF(padX, y, rowW, 48f);
-            DrawChainCard(g, _chain, s.Connected);
-            y += 48f + 8f;
-        }
-        else
-        {
-            _chainCardRect = RectangleF.Empty;
-        }
 
         if (pillsVisible)
         {
@@ -1117,85 +1097,6 @@ public sealed class MainForm : Form
                 : "--";
         DrawInfoPill(g, padX, y, statW, infoH, "UP TIME", uptime, capBold, valueBold);
         DrawInfoPill(g, padX + statW + 8f, y, statW, infoH, "EXIT", exit, capBold, valueBold);
-    }
-
-    /// <summary>ProxyChainCard (MainActivity 2052): a 48px row whose own state
-    /// decides what a tap does. Negotiation is amber "connecting…", never
-    /// green, and the host stays out of the card until the tunnel is live.</summary>
-    private void DrawChainCard(Graphics g, ChainState chain, bool connected)
-    {
-        var rect = _chainCardRect;
-        var active = chain.Status == ChainStatus.Connecting ||
-                     chain.Status == ChainStatus.Connected ||
-                     chain.Status == ChainStatus.Stopping;
-        var failed = chain.Status == ChainStatus.Failed;
-
-        using (var path = DrawUtil.RoundedRect(rect, 14f))
-        {
-            using var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
-                rect, DeltaTorTheme.Surface, DeltaTorTheme.SurfaceAlt, 0f);
-            g.FillPath(brush, path);
-            using var pen = new Pen(DeltaTorTheme.BorderLight);
-            g.DrawPath(pen, path);
-        }
-
-        string? headline = chain.Status switch
-        {
-            ChainStatus.Connecting => "connecting\u2026",
-            ChainStatus.Connected => chain.UrlMs >= 0
-                ? $"on \u00b7 {chain.UrlMs}ms \u2014 tap to disconnect"
-                : "on \u2014 tap to disconnect",
-            ChainStatus.Stopping => "stopping the chain\u2026",
-            ChainStatus.Failed =>
-                chain.Message.Length > 0 ? chain.Message : "failed \u00b7 back on Tor",
-            _ => connected ? null : "connect with Tor first"
-        };
-        var headlineColor = failed
-            ? DeltaTorTheme.Red
-            : chain.Status == ChainStatus.Connecting
-                ? DeltaTorTheme.Amber
-                : chain.Status == ChainStatus.Connected
-                    ? DeltaTorTheme.Green
-                    : DeltaTorTheme.Muted;
-
-        // Position and size swap on request: the big bold words read
-        // "PROXY CHAIN", the small muted line carries the status.
-        using var titleFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
-        using var headFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.SmallPt, FontStyle.Bold);
-        var titleH = g.MeasureString("A", titleFont).Height;
-        var headH = headline != null ? g.MeasureString("A", headFont).Height : 0f;
-        var blockH = titleH + (headline != null ? 2f + headH : 0f);
-        var ty = rect.Y + (rect.Height - blockH) / 2f;
-        using (var brush = new SolidBrush(DeltaTorTheme.Text))
-            DrawUtil.DrawSpaced(g, "PROXY CHAIN", titleFont, brush,
-                rect.X + 16f, ty, rect.Width - 60f, 0f);
-        if (headline != null)
-        {
-            using var brush = new SolidBrush(headlineColor);
-            DrawUtil.DrawSpaced(g, headline, headFont, brush,
-                rect.X + 16f, ty + titleH + 2f, rect.Width - 60f, 0.6f);
-        }
-
-        // Trailing glyph: connected reads as a dot, any active state as an
-        // ellipsis, an idle card as a chevron.
-        var glyph = chain.Status == ChainStatus.Connected
-            ? "\u25CF"
-            : active ? "\u2026" : "\u25B8";
-        var glyphColor = chain.Status == ChainStatus.Connecting
-            ? DeltaTorTheme.Amber
-            : chain.Status == ChainStatus.Connected
-                ? DeltaTorTheme.Green
-                : failed ? DeltaTorTheme.Red : DeltaTorTheme.Accent;
-        using var glyphFont = new Font(
-            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
-        using var glyphBrush = new SolidBrush(glyphColor);
-        var glyphW = DrawUtil.SpacedWidth(glyph, glyphFont, 1.2f);
-        var glyphLineH = g.MeasureString(glyph, glyphFont).Height;
-        DrawUtil.DrawSpaced(g, glyph, glyphFont, glyphBrush,
-            rect.Right - 16f - glyphW, rect.Y + (rect.Height - glyphLineH) / 2f,
-            glyphW + 2f, 1.2f);
     }
 
     /// <summary>

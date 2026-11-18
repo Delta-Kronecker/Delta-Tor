@@ -118,6 +118,7 @@ public sealed partial class DrawerPanel : Panel
     private readonly System.Windows.Forms.Timer _sync = new() { Interval = 1000 };
     private bool _open;
     private bool _closing;
+    private Action? _afterClose;
     private long _slideStart;
     private float _slideFrom;
 
@@ -167,6 +168,25 @@ public sealed partial class DrawerPanel : Panel
 
     /// <summary>Raised once a close slide finishes and the sheet hides.</summary>
     public event Action? Closed;
+
+    /// <summary>Raised when the chain card in the drawer is tapped. The card
+    /// closes the drawer first (see <see cref="CloseThen"/>), so whatever the
+    /// handler raises - a notice or the server sheet - is not stacked over a
+    /// drawer that would still cover the screen.</summary>
+    public event Action? ChainTap;
+
+    /// <summary>Slide the drawer out, then run <paramref name="after"/> when
+    /// the sheet is gone. Runs immediately if the drawer is already closed.</summary>
+    public void CloseThen(Action after)
+    {
+        if (!_open)
+        {
+            after();
+            return;
+        }
+        _afterClose = after;
+        Close();
+    }
 
     protected override void Dispose(bool disposing)
     {
@@ -258,6 +278,11 @@ public sealed partial class DrawerPanel : Panel
             Visible = false;
             _sync.Stop();
             Closed?.Invoke();
+            // A chain tap queued by the drawer runs only now: the notice or
+            // sheet it raises must not open while the sheet is still sliding.
+            var after = _afterClose;
+            _afterClose = null;
+            after?.Invoke();
         }
     }
 
@@ -439,6 +464,7 @@ public sealed partial class DrawerPanel : Panel
     {
         _dirty = false;
         var flow = new Flow(Width);
+        BuildChain(flow);
         BuildLocation(flow);
         flow.Add(1f, (g, sy) => PaintGradientLine(g, sy, Width));
         BuildAdvanced(flow);

@@ -520,6 +520,29 @@ private fun MainScreen(
     val closeDrawer: () -> Unit = remember { { scope.launch { drawerState.close() }; Unit } }
     BackHandler(enabled = drawerState.isOpen) { closeDrawer() }
 
+    // The chain card lives in the drawer now, so a tap has to leave the drawer
+    // before it can raise a notice or the sheet: closing first keeps those
+    // modals from opening over a drawer that would still cover the screen.
+    val onChainFromDrawer: () -> Unit = {
+        scope.launch {
+            drawerState.close()
+            if (chain.status == AppState.ChainStatus.CONNECTING ||
+                chain.status == AppState.ChainStatus.CONNECTED
+            ) {
+                // Same dispatch the ring already resolves: ending the chain,
+                // with the plain Tor VPN restored afterwards.
+                onPrimary()
+            } else {
+                AppState.postNoticeBlocks(
+                    AppState.NoticeKind.ChainIntro,
+                    "",
+                    chainIntroNoticeBlocks()
+                )
+            }
+        }
+        Unit
+    }
+
     // A notice is latched on its id and cleared by the UI itself, not by whatever
     // the service does next: these describe an action the app took on the user's
     // behalf, and the restart that action caused is exactly what would otherwise
@@ -605,7 +628,10 @@ private fun MainScreen(
                     onClose = closeDrawer,
                     onUpdateBridges = onUpdateBridges,
                     onOpenLog = { closeDrawer(); onOpenLog() },
-                    onOpenSplitTunnel = { closeDrawer(); onOpenSplitTunnel() }
+                    onOpenSplitTunnel = { closeDrawer(); onOpenSplitTunnel() },
+                    chain = chain,
+                    connected = state.connected,
+                    onChainTap = onChainFromDrawer
                 )
             }
         }
@@ -683,20 +709,9 @@ private fun MainScreen(
 
             BottomPanel(
                 state = state,
-                chain = chain,
                 onPrimary = onPrimary,
                 onStopVpn = onStopVpn,
                 onDisconnect = onDisconnect,
-                // The card's tap never jumps straight to the list: it first
-                // raises the three-language warning, and the sheet follows
-                // wherever that dialog is dismissed.
-                onOpenChain = {
-                    AppState.postNoticeBlocks(
-                        AppState.NoticeKind.ChainIntro,
-                        "",
-                        chainIntroNoticeBlocks()
-                    )
-                },
                 modifier = Modifier.align(Alignment.BottomCenter)
             )
         }
@@ -1089,7 +1104,10 @@ private fun ControlDrawer(
     onClose: () -> Unit,
     onUpdateBridges: () -> Unit,
     onOpenLog: () -> Unit,
-    onOpenSplitTunnel: () -> Unit
+    onOpenSplitTunnel: () -> Unit,
+    chain: AppState.ChainState,
+    connected: Boolean,
+    onChainTap: () -> Unit
 ) {
     val uriHandler = LocalUriHandler.current
     val clipboard = LocalClipboard.current
@@ -1209,6 +1227,32 @@ private fun ControlDrawer(
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
+            // The chain card opens the drawer's flow. It keeps the main screen's
+            // rule - a card only exists once Tor is connected or the chain is
+            // doing something - because the service refuses a chain connect
+            // without Tor's SOCKS bridge running.
+            if (chain.status != AppState.ChainStatus.IDLE || connected) {
+                item(key = "chain") {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 20.dp, end = 20.dp, top = 14.dp)
+                    ) {
+                        ProxyChainCard(
+                            chain = chain,
+                            connected = connected,
+                            onClick = onChainTap,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+                item(key = "div-chain") {
+                    Column {
+                        Spacer(Modifier.height(6.dp))
+                        DividerLine()
+                    }
+                }
+            }
             item(key = "loc-head") {
                 DrawerSection(
                     title = "LOCATION",
@@ -2047,11 +2091,9 @@ private fun RingButton(
 @Composable
 private fun BottomPanel(
     state: AppState.VpnState,
-    chain: AppState.ChainState,
     onPrimary: () -> Unit,
     onStopVpn: () -> Unit,
     onDisconnect: () -> Unit,
-    onOpenChain: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // The one law this panel obeys: it is exactly one third of the app's
@@ -2067,28 +2109,6 @@ private fun BottomPanel(
             .padding(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // The chain card sits first, right where the finger already is: it is
-        // only meaningful once Tor is connected, and its own state decides what
-        // a tap does - open the sheet while idle, end the chain while in flight.
-        if (chain.status != AppState.ChainStatus.IDLE || state.connected) {
-            ProxyChainCard(
-                chain = chain,
-                connected = state.connected,
-                onClick = {
-                    if (chain.status == AppState.ChainStatus.CONNECTING ||
-                        chain.status == AppState.ChainStatus.CONNECTED
-                    ) {
-                        // Same dispatch the ring already resolves: ending the
-                        // chain, with the plain Tor VPN restored afterwards.
-                        onPrimary()
-                    } else {
-                        onOpenChain()
-                    }
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(8.dp))
-        }
         // The row is never removed. During teardown the left pill keeps its slot
         // and just relabels to START VPN, dimmed until the cores are gone: a
         // start click there would race the teardown for the ports, but hiding
