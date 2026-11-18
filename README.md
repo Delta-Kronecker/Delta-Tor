@@ -1,5 +1,11 @@
 # DeltaTor
 
+<p align="center">
+  <a href="https://delta-tor-official.github.io">
+    <img src="assets/download-button.svg" alt="Download from official site" width="460">
+  </a>
+</p>
+
 DeltaTor is a free Tor client for Android and Windows built on one idea: **connecting should
 just work, and it should be fast — even on networks that try to block Tor.** Instead of
 gambling on a single bridge, it races several connection methods at the same time, it

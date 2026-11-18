@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="460" height="76" viewBox="0 0 460 76" role="img" aria-label="Download from official site">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A375FF"/>
+      <stop offset="0.5" stop-color="#7A4BEE"/>
+      <stop offset="1" stop-color="#5230C0"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="round">
+      <rect x="1" y="1" width="458" height="74" rx="20"/>
+    </clipPath>
+  </defs>
+
+  <rect x="1" y="1" width="458" height="74" rx="20" fill="url(#body)"
+        stroke="#CDB8FF" stroke-opacity="0.5" stroke-width="1.5"/>
+
+  <g clip-path="url(#round)">
+    <rect x="0" y="0" width="460" height="38" fill="url(#shine)"/>
+  </g>
+
+  <circle cx="45" cy="38" r="21" fill="#FFFFFF" fill-opacity="0.16"/>
+
+  <g fill="none" stroke="#FFFFFF" stroke-width="3"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M45 26v18"/>
+    <path d="M37 37l8 8 8-8"/>
+    <path d="M34 52h22"/>
+  </g>
+
+  <text x="84" y="46"
+        font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="22" font-weight="700" fill="#FFFFFF"
+        letter-spacing="0.2">Download from official site</text>
+</svg>
