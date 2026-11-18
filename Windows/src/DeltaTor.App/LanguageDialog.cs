@@ -98,6 +98,14 @@ public sealed class LanguageDialog : Form
         LayoutButtons();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Dark system frame, like MainForm: the default border reads as a
+        // white edge around the dark card on Win11.
+        DarkTitleBar.Apply(Handle);
+    }
+
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);

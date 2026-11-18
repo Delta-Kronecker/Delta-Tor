@@ -63,8 +63,10 @@ public sealed class ChainWarningDialog : Form
         };
 
         Controls.Add(_card);
-        Controls.Add(_confirm);
-        Controls.Add(_dismiss);
+        // Children of the card, so the transparent corners of the pills ask
+        // the card to paint its gradient behind them (see GradientPill).
+        _card.Controls.Add(_confirm);
+        _card.Controls.Add(_dismiss);
         _confirm.BringToFront();
         _dismiss.BringToFront();
 
@@ -87,6 +89,14 @@ public sealed class ChainWarningDialog : Form
 
         Width = _dialogW;
         LayoutDialog();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Dark system frame, like MainForm: the default border reads as a
+        // white edge around the dark card on Win11.
+        DarkTitleBar.Apply(Handle);
     }
 
     private static Size MeasureBody(int w) =>

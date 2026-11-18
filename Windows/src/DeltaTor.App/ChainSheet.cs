@@ -92,6 +92,14 @@ public sealed class ChainSheet : Form
         };
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Borderless windows still get a system frame; match MainForm so it
+        // does not read as a white edge.
+        DarkTitleBar.Apply(Handle);
+    }
+
     protected override void OnLoad(EventArgs e)
     {
         base.OnLoad(e);

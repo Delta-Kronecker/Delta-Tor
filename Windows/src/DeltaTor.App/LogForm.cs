@@ -97,6 +97,14 @@ public sealed class LogForm : Form
         // No Rebuild() here — see the note on the fields above.
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Borderless windows still get a system frame; match MainForm so it
+        // does not read as a white edge.
+        DarkTitleBar.Apply(Handle);
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         _tick.Stop();

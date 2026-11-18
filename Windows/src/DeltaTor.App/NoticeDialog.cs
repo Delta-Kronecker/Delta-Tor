@@ -67,7 +67,12 @@ public sealed class NoticeDialog : Form
         MeasureBlocks(_dialogW - Pad * 2);
 
         Controls.Add(_card);
-        Controls.Add(_ok);
+        // The pill is a child of the card, not of the form: its transparent
+        // corners ask the parent to paint the background, and the parent has
+        // to be the panel that draws the card gradient. As a sibling of the
+        // card it could only ask the form, whose flat background would show as
+        // a dark ring around the button.
+        _card.Controls.Add(_ok);
         _ok.BringToFront();
 
         _ok.Clicked += (_, _) => Close();
@@ -78,6 +83,15 @@ public sealed class NoticeDialog : Form
 
         Width = _dialogW;
         LayoutDialog();
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // A borderless form still gets a system-drawn frame on Win11. Left at
+        // the default it reads as a white edge on the dark card; this gives it
+        // the same tint as the main window.
+        DarkTitleBar.Apply(Handle);
     }
 
     /// <summary>Re-measure the rows at the current content width. Uses

@@ -16,8 +16,16 @@ public sealed class GradientPill : Control
 
     public GradientPill()
     {
+        // The corners outside the rounded path must show whatever is behind
+        // the pill, not the control's default system colour: on the dark card
+        // that default painted a light ring, and an uncleared double buffer
+        // painted a black one. Transparent + an explicit background pass in
+        // OnPaint lets the parent (the card gradient, the drawer, the main
+        // window) paint those corners.
         SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
-                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+                 ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw |
+                 ControlStyles.SupportsTransparentBackColor, true);
+        BackColor = Color.Transparent;
         Height = 40;
         Cursor = Cursors.Hand;
     }
@@ -75,6 +83,11 @@ public sealed class GradientPill : Control
 
     protected override void OnPaint(PaintEventArgs e)
     {
+        // UserPaint + AllPaintingInWmPaint does not promise the background
+        // pass, and the four corners outside the rounded path are exactly where
+        // an unpainted buffer shows as a black frame. Painting the transparent
+        // background here makes the parent's gradient show through instead.
+        base.OnPaintBackground(e);
         var g = e.Graphics;
         g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
