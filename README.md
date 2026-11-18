@@ -81,7 +81,7 @@ that still gets through on heavily filtered networks.
 - **Stays out of your way** — live up/down speed and totals in the notification (even
   with the app swiped away, with disconnect actions right in the notification), a
   per-transport log viewer with filters, and a startup language picker (English,
-  Russian or Persian) that the first-run and proxy-chain notices follow.
+  Russian or Persian) that the first-run, route-speed and proxy-chain notices follow.
 - **A portable Windows twin** — the same app, same race engine, same memory and settings,
   with system-proxy and full-tunnel modes and a tray icon, shipped as a zip you unpack
   anywhere.

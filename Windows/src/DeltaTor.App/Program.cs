@@ -65,9 +65,28 @@ internal static class Program
             using var picker = new LanguageDialog();
             picker.ShowDialog();
         }
-        MaybeShowFirstRunNotice();
+        ShowStartupNotices();
 
         Application.Run(new MainForm());
+    }
+
+    /// <summary>
+    /// Show whichever onboarding notice is due after the language is known.
+    ///
+    /// A fresh install gets the first-run explainer; an install that already
+    /// saw it (including an update from before the route-speed tip existed)
+    /// gets the tip directly. When the first-run notice is the one posted, the
+    /// tip follows when that dialog is dismissed, so the two are never on
+    /// screen together and neither replaces the other.
+    /// </summary>
+    private static void ShowStartupNotices()
+    {
+        if (!Config.FirstRunNoticeShown)
+        {
+            MaybeShowFirstRunNotice();
+            return;
+        }
+        MaybeShowRouteSpeedNotice();
     }
 
     /// <summary>MainActivity.maybeShowFirstRunNotice (line 195).</summary>
@@ -96,5 +115,35 @@ internal static class Program
             Text: "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
             Rtl: true,
             Lead: "لطفاً در اولین اتصال صبور باشید")
+    );
+
+    /// <summary>
+    /// MainActivity.maybeShowRouteSpeedNotice: the tip that follows the
+    /// first-run notice. Internal because the main window posts it when the
+    /// first-run dialog closes, so the two are sequential rather than one
+    /// replacing the other.
+    /// </summary>
+    internal static void MaybeShowRouteSpeedNotice()
+    {
+        if (Config.RouteSpeedNoticeShown) return;
+        Config.RouteSpeedNoticeShown = true;
+        AppState.PostNoticeBlocks(NoticeKind.RouteSpeed, "", RouteSpeedNoticeBlocks());
+    }
+
+    private static IReadOnlyList<NoticeBlock> RouteSpeedNoticeBlocks() => NoticeLocalization.Pick(
+        english: new NoticeBlock(
+            Lead: "The best route is chosen every 30 seconds",
+            Text: "While connected, DeltaTor checks the connection paths every 30 seconds and " +
+                "uses the best ones, so download and upload speeds go up."),
+        russian: new NoticeBlock(
+            Lead: "Лучший маршрут выбирается каждые 30 секунд",
+            Text: "Во время подключения DeltaTor каждые 30 секунд проверяет маршруты " +
+                "подключения и использует самые быстрые из них, поэтому скорость загрузки и " +
+                "выгрузки возрастает."),
+        persian: new NoticeBlock(
+            Lead: "هر 30 ثانیه بهترین مسیر انتخاب می‌شود",
+            Text: "پس از اتصال، دلتاتور هر 30 ثانیه مسیرهای اتصال را بررسی می‌کند و از " +
+                "بهترین آن‌ها استفاده می‌کند. به همین دلیل سرعت دانلود و آپلود افزایش می‌یابد.",
+            Rtl: true)
     );
 }

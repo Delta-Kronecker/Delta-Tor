@@ -14,6 +14,13 @@ public enum NoticeKind
     FirstRun,
 
     /// <summary>
+    /// The one-time tip that follows <see cref="FirstRun"/>: the connection
+    /// paths are re-measured every 30 seconds, so the fastest ones carry the
+    /// traffic.
+    /// </summary>
+    RouteSpeed,
+
+    /// <summary>
     /// What the proxy chain is for, and what it costs, raised the first time
     /// the chain card is tapped. Dismissing it opens the server sheet; the two
     /// are deliberately split so the warning is never skipped.

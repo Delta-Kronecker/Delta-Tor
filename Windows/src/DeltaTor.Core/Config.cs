@@ -180,6 +180,18 @@ public static class Config
         set => SetBool("first_run_notice_v1", value);
     }
 
+    /// <summary>
+    /// Whether the one-time "the best route is chosen every 30 seconds" tip
+    /// has been shown. Its own key, not part of the first-run flag: an install
+    /// that saw the first-run notice before this tip existed (everyone
+    /// updating to it) still gets the tip once.
+    /// </summary>
+    public static bool RouteSpeedNoticeShown
+    {
+        get => GetBool("route_speed_notice_v1", false);
+        set => SetBool("route_speed_notice_v1", value);
+    }
+
     /// <summary>The three languages the notices are written in.</summary>
     public const string LanguageEnglish = "en";
     public const string LanguageRussian = "ru";

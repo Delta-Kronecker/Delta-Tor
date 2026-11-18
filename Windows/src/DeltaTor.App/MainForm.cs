@@ -368,6 +368,15 @@ public sealed class MainForm : Form
             // (button, Esc - all of them mean "understood") is what opens the
             // server sheet.
             if (notice.Kind == NoticeKind.ChainIntro) OpenChainSheet();
+            // The first-run explainer leads into the route-speed tip: posting
+            // it here, after this dialog has closed, makes them two dialogs in
+            // sequence instead of the second replacing the first before it is
+            // read. Re-read the state so the loop sees the new notice.
+            if (notice.Kind == NoticeKind.FirstRun)
+            {
+                Program.MaybeShowRouteSpeedNotice();
+                _state = AppState.State;
+            }
         }
     }
 

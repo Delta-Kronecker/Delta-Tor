@@ -192,6 +192,16 @@ object Config {
         get() = prefs.getBoolean("first_run_notice_v1", false)
         set(value) = prefs.edit().putBoolean("first_run_notice_v1", value).apply()
 
+    /**
+     * Whether the one-time "the best route is chosen every 30 seconds" tip has
+     * been shown. Its own key, not part of the first-run flag: an install that
+     * saw the first-run notice before this tip existed (everyone updating to
+     * it) still gets the tip once.
+     */
+    var routeSpeedNoticeShown: Boolean
+        get() = prefs.getBoolean("route_speed_notice_v1", false)
+        set(value) = prefs.edit().putBoolean("route_speed_notice_v1", value).apply()
+
     /** The three languages the notices are written in. */
     const val LANGUAGE_EN = "en"
     const val LANGUAGE_RU = "ru"
