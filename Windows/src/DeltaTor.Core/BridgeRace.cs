@@ -491,6 +491,7 @@ public static class BridgeRace
             // Not a recovery the service can perform; posted by the UI instead.
             case NoticeKind.FirstRun:
             case NoticeKind.RouteSpeed:
+            case NoticeKind.SystemProxy:
                 return;
         }
 

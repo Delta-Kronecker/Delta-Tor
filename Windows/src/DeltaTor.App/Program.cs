@@ -78,10 +78,10 @@ internal static class Program
     /// Show whichever onboarding notice is due after the language is known.
     ///
     /// A fresh install gets the first-run explainer; an install that already
-    /// saw it (including an update from before the route-speed tip existed)
-    /// gets the tip directly. When the first-run notice is the one posted, the
-    /// tip follows when that dialog is dismissed, so the two are never on
-    /// screen together and neither replaces the other.
+    /// saw it gets the next unseen tip directly. When the first-run notice is
+    /// the one posted, the rest follow as each dialog is dismissed (see
+    /// <see cref="MaybeShowNextStartupNotice"/>), so they never replace each
+    /// other and none is skipped.
     /// </summary>
     private static void ShowStartupNotices()
     {
@@ -90,7 +90,22 @@ internal static class Program
             MaybeShowFirstRunNotice();
             return;
         }
-        MaybeShowRouteSpeedNotice();
+        MaybeShowNextStartupNotice();
+    }
+
+    /// <summary>
+    /// Post the next onboarding notice in order, if any is still unseen.
+    /// Internal because the main window calls it when a notice dialog closes:
+    /// that keeps the tips sequential instead of stacking them.
+    /// </summary>
+    internal static void MaybeShowNextStartupNotice()
+    {
+        if (!Config.RouteSpeedNoticeShown)
+        {
+            MaybeShowRouteSpeedNotice();
+            return;
+        }
+        MaybeShowSystemProxyNotice();
     }
 
     /// <summary>MainActivity.maybeShowFirstRunNotice (line 195).</summary>
@@ -148,6 +163,39 @@ internal static class Program
             Lead: "هر 30 ثانیه بهترین مسیر انتخاب می‌شود",
             Text: "پس از اتصال، دلتاتور هر 30 ثانیه مسیرهای اتصال را بررسی می‌کند و از " +
                 "بهترین آن‌ها استفاده می‌کند. به همین دلیل سرعت دانلود و آپلود افزایش می‌یابد.",
+            Rtl: true)
+    );
+
+    /// <summary>
+    /// The last of the startup tips: the default mode only carries apps that
+    /// use the Windows system proxy, so anything else needs Tun. Internal for
+    /// the same reason as the route-speed tip.
+    /// </summary>
+    internal static void MaybeShowSystemProxyNotice()
+    {
+        if (Config.SystemProxyNoticeShown) return;
+        Config.SystemProxyNoticeShown = true;
+        AppState.PostNoticeBlocks(NoticeKind.SystemProxy, "", SystemProxyNoticeBlocks());
+    }
+
+    private static IReadOnlyList<NoticeBlock> SystemProxyNoticeBlocks() => NoticeLocalization.Pick(
+        english: new NoticeBlock(
+            Lead: "DeltaTor starts in System Proxy mode",
+            Text: "By default DeltaTor runs in System Proxy mode. Only apps that use the " +
+                "system proxy, such as your browser and Telegram, send their traffic " +
+                "through DeltaTor. For every other app, turn on the Tun option in " +
+                "Settings (use it only when you need to)."),
+        russian: new NoticeBlock(
+            Lead: "DeltaTor запускается в режиме системного прокси",
+            Text: "По умолчанию DeltaTor работает в режиме системного прокси. Через DeltaTor " +
+                "идут только приложения, использующие системный прокси, — браузер, Telegram " +
+                "и подобные. Для остальных приложений включите в настройках опцию Tun " +
+                "(используйте её только при необходимости)."),
+        persian: new NoticeBlock(
+            Lead: "دلتاتور به صورت پیش‌فرض روی حالت System Proxy است",
+            Text: "فقط مرورگر و تلگرام و... برنامه‌هایی که به پروکسی سیستم متصل می‌شوند " +
+                "ترافیک‌شان از دلتاتور عبور می‌کند. برای بقیه برنامه‌ها از تنظیمات گزینه Tun " +
+                "را فعال کنید (فقط در صورت لزوم استفاده کنید).",
             Rtl: true)
     );
 }

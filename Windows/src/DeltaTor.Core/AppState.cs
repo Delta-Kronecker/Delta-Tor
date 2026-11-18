@@ -21,6 +21,13 @@ public enum NoticeKind
     RouteSpeed,
 
     /// <summary>
+    /// The one-time explainer that follows <see cref="RouteSpeed"/>: by default
+    /// only apps that use the Windows system proxy go through DeltaTor, so
+    /// everything else needs the Tun option turned on.
+    /// </summary>
+    SystemProxy,
+
+    /// <summary>
     /// What the proxy chain is for, and what it costs, raised the first time
     /// the chain card is tapped. Dismissing it opens the server sheet; the two
     /// are deliberately split so the warning is never skipped.

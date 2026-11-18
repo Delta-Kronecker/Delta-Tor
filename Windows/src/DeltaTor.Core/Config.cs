@@ -194,6 +194,17 @@ public static class Config
         set => SetBool("route_speed_notice_v1", value);
     }
 
+    /// <summary>
+    /// Whether the one-time "only system-proxy apps go through DeltaTor" tip
+    /// has been shown. Its own key for the same reason as the route-speed tip:
+    /// installs that have already seen the older notices still get it once.
+    /// </summary>
+    public static bool SystemProxyNoticeShown
+    {
+        get => GetBool("system_proxy_notice_v1", false);
+        set => SetBool("system_proxy_notice_v1", value);
+    }
+
     /// <summary>The three languages the notices are written in.</summary>
     public const string LanguageEnglish = "en";
     public const string LanguageRussian = "ru";
