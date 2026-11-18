@@ -166,9 +166,25 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()
         ExitNodes.loadDirectory(this)
-        maybeShowFirstRunNotice()
+        // The picker owns the first screen when no language is stored, and the
+        // first-run notice is posted only after it closes: two dialogs at once
+        // would put the notice behind or on top of the picker, and it would be
+        // written in a language the user has not chosen yet.
+        if (Config.languageChosen) maybeShowFirstRunNotice()
         setContent {
             DeltaTorTheme {
+                // Read once per composition: picking a language flips this and
+                // retires the picker without waiting for an activity restart.
+                var languageChosen by remember { mutableStateOf(Config.languageChosen) }
+                if (!languageChosen) {
+                    LanguagePickerDialog(
+                        onPick = { code ->
+                            Config.language = code
+                            languageChosen = true
+                            maybeShowFirstRunNotice()
+                        }
+                    )
+                }
                 DeltaTorScreen(
                     onPrimary = {
                         val s = AppState.state.value
@@ -224,8 +240,8 @@ class MainActivity : ComponentActivity() {
         if (Config.firstRunNoticeShown) return
         Config.firstRunNoticeShown = true
         // No title. The heading lines that used to sit above this body said the
-        // same thing three times in three languages, and the body below already
-        // opens with the instruction in all three.
+        // same thing once per language, and the block below already carries the
+        // instruction in the language picked at startup.
         AppState.postNoticeBlocks(
             AppState.NoticeKind.FirstRun,
             "",
@@ -233,23 +249,23 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
-        AppState.NoticeBlock(
-            text = "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
-            rtl = true,
-            lead = "لطفاً در اولین اتصال صبور باشید"
-        ),
-        AppState.NoticeBlock(
+    private fun firstRunNoticeBlocks(): List<AppState.NoticeBlock> = Config.localizedNoticeBlocks(
+        english = AppState.NoticeBlock(
             text = "After every successful connection, DeltaTor remembers the connection " +
                 "paths it used on your network, and after about 2 to 3 connections the time " +
                 "a connect takes comes down.",
             lead = "Please be patient on your first connection"
         ),
-        AppState.NoticeBlock(
+        russian = AppState.NoticeBlock(
             text = "После каждого успешного подключения DeltaTor запоминает пути подключения, " +
                 "которые он использовал в вашей сети, и после примерно 2-3 подключений время, " +
                 "необходимое для подключения, сокращается.",
             lead = "Пожалуйста, будьте терпеливы при первом подключении"
+        ),
+        persian = AppState.NoticeBlock(
+            text = "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
+            rtl = true,
+            lead = "لطفاً در اولین اتصال صبور باشید"
         )
     )
 
@@ -317,23 +333,23 @@ class MainActivity : ComponentActivity() {
 
 /**
  * The ProXY CHAIN warning: what the chain is for, and what it costs, in the
- * three languages the app speaks. Kept to three sentences on purpose; the
- * NoticeDialog lays each block out in its own direction. File-level so the
+ * language picked at startup. Kept to three sentences on purpose; the
+ * NoticeDialog lays the block out in its own direction. File-level so the
  * composables can reach it.
  */
-private fun chainIntroNoticeBlocks(): List<AppState.NoticeBlock> = listOf(
-    AppState.NoticeBlock(
-        lead = "فقط برای سرویس‌هایی مثل جمنای",
-        text = "این قابلیت فقط برای دسترسی به سرویس‌هایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم می‌کند؛ فقط در صورت نیاز استفاده کنید.",
-        rtl = true
-    ),
-    AppState.NoticeBlock(
+private fun chainIntroNoticeBlocks(): List<AppState.NoticeBlock> = Config.localizedNoticeBlocks(
+    english = AppState.NoticeBlock(
         lead = "Only for services like Gemini",
         text = "This feature exists to reach services like Gemini that Tor cannot access. It slows the connection down; use it only when you need it."
     ),
-    AppState.NoticeBlock(
+    russian = AppState.NoticeBlock(
         lead = "Только для сервисов вроде Gemini",
         text = "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно."
+    ),
+    persian = AppState.NoticeBlock(
+        lead = "فقط برای سرویسهایی مثل جمنای",
+        text = "این قابلیت فقط برای دسترسی به سرویسهایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم میکند؛ فقط در صورت نیاز استفاده کنید.",
+        rtl = true
     )
 )
 
@@ -681,6 +697,79 @@ private const val REPO_URL = "https://github.com/Delta-Kronecker/Delta-Tor"
 private const val EXIT_PICKER_TOP = 25
 
 /**
+ * The language picker: the first thing a fresh install and an update of an
+ * older install both see, because neither has a stored language.
+ *
+ * It cannot be dismissed without a choice and has no close action: the two
+ * notices that follow are written in the language picked here, and a default
+ * nobody picked would be the wrong answer for the user who needs the picker
+ * in the first place. Each language is offered in its own script, so the
+ * choice is legible before the UI has a language at all.
+ */
+@Composable
+private fun LanguagePickerDialog(onPick: (String) -> Unit) {
+    Dialog(
+        onDismissRequest = {},
+        properties = DialogProperties(
+            dismissOnBackPress = false,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(22.dp))
+                .background(
+                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    RoundedCornerShape(22.dp)
+                )
+                .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+        ) {
+            Text(
+                "Choose your language",
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Bold),
+                color = DeltaTor.Text
+            )
+            Spacer(Modifier.height(6.dp))
+            // One line per script, each in its own direction: the Persian line
+            // would lay out left-to-right inside the dialog's LTR column, and
+            // the Russian line is only here so nobody has to recognise the
+            // English heading to find their own language.
+            CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
+                Text(
+                    "زبان خود را انتخاب کنید",
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Start,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = DeltaTor.Muted
+                )
+            }
+            Text(
+                "Выберите язык",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.Start,
+                style = MaterialTheme.typography.bodyMedium,
+                color = DeltaTor.Muted
+            )
+            Spacer(Modifier.height(18.dp))
+            NoticeButton(label = "English", primary = false) {
+                onPick(Config.LANGUAGE_EN)
+            }
+            Spacer(Modifier.height(8.dp))
+            NoticeButton(label = "Русский", primary = false) {
+                onPick(Config.LANGUAGE_RU)
+            }
+            Spacer(Modifier.height(8.dp))
+            NoticeButton(label = "فارسی", primary = false) {
+                onPick(Config.LANGUAGE_FA)
+            }
+        }
+    }
+}
+
+/**
  * A modal notice the user never asked for: the app changed the connection mode by
  * itself, or this is the first time it has been opened.
  *
@@ -690,9 +779,8 @@ private const val EXIT_PICKER_TOP = 25
  * word is read past by definition, and this is exactly the moment that must not be
  * read past.
  *
- * The body scrolls and is height-capped because the first-run explainer is three
- * languages long; without a cap a long body on a small screen would push the
- * button off the bottom and the notice could not be dismissed at all.
+ * The body scrolls and is height-capped so a long body on a small screen cannot
+ * push the button off the bottom and leave the notice impossible to dismiss.
  */
 @Composable
 private fun NoticeDialog(

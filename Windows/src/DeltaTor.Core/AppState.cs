@@ -23,9 +23,10 @@ public enum NoticeKind
 
 /// <summary>
 /// One block of a notice body, with the direction it has to be laid out in.
-/// A notice can carry more than one script (the first-run explainer is
-/// English, Persian and Russian in the same dialog); each block is laid out
-/// in its own direction, which is the only way the Persian one reads RTL.
+/// A notice can carry more than one script, and each block is laid out in its
+/// own direction — that is the only way the Persian one reads RTL. The
+/// first-run and chain-intro notices now carry the single block for the
+/// language picked at startup, but the direction still has to be carried.
 /// </summary>
 /// <param name="Lead">Optional opening line, drawn bolder than the rest.</param>
 public sealed record NoticeBlock(string Text, bool Rtl = false, string Lead = "");

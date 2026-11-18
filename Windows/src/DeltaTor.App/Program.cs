@@ -36,7 +36,6 @@ internal static class Program
         ProxyChainManager.Init();
         _ = Task.Run(ProxyChainManager.UpdateIfNeededAsync);
         _ = Task.Run(() => ProxyChainManager.DailyLoopAsync());
-        MaybeShowFirstRunNotice();
 
         // The tun2socks engine behind TunnelEngine: Se7enTun owns the Wintun
         // adapter, its catch-all routes, adapter DNS and split rules, and tears
@@ -56,6 +55,18 @@ internal static class Program
         // Null here would make every chain connect report "adapter unavailable".
         SstpTun.Factory = () => new WintunTun();
 
+        // The language picker runs before the first-run notice and after the
+        // engine is wired up: a fresh install stores no language, and neither
+        // does an update of an install that predates the key (its first-run
+        // flag is long set). Neither notice can be worded until that choice
+        // exists, and the picker must not sit in the middle of engine startup.
+        if (!Config.LanguageChosen)
+        {
+            using var picker = new LanguageDialog();
+            picker.ShowDialog();
+        }
+        MaybeShowFirstRunNotice();
+
         Application.Run(new MainForm());
     }
 
@@ -69,25 +80,21 @@ internal static class Program
         AppState.PostNoticeBlocks(NoticeKind.FirstRun, "", FirstRunNoticeBlocks());
     }
 
-    /// <summary>First-run instruction, shown in all three languages at once (MainActivity 208).</summary>
-    private static IReadOnlyList<NoticeBlock> FirstRunNoticeBlocks() => new[]
-    {
-        // Persian first. It is the app's own language and the one this notice
-        // was written in; the other two are there because the people who need
-        // it are not all reading the same script.
-        new NoticeBlock(
-            Text: "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
-            Rtl: true,
-            Lead: "لطفاً در اولین اتصال صبور باشید"),
-        new NoticeBlock(
+    /// <summary>First-run instruction, in the language picked at startup (MainActivity 223).</summary>
+    private static IReadOnlyList<NoticeBlock> FirstRunNoticeBlocks() => NoticeLocalization.Pick(
+        english: new NoticeBlock(
             Text: "After every successful connection, DeltaTor remembers the connection " +
                 "paths it used on your network, and after about 2 to 3 connections the time " +
                 "a connect takes comes down.",
             Lead: "Please be patient on your first connection"),
-        new NoticeBlock(
+        russian: new NoticeBlock(
             Text: "После каждого успешного подключения DeltaTor запоминает пути подключения, " +
                 "которые он использовал в вашей сети, и после примерно 2-3 подключений время, " +
                 "необходимое для подключения, сокращается.",
-            Lead: "Пожалуйста, будьте терпеливы при первом подключении")
-    };
+            Lead: "Пожалуйста, будьте терпеливы при первом подключении"),
+        persian: new NoticeBlock(
+            Text: "دلتاتور پس از هر اتصال موفق مسیر های اتصال روی شبکه اینترنت شما را به خاطر می سپارد و پس از حدود 2 یا 3 اتصال، زمان لازم برای اتصال کاهش می یابد.",
+            Rtl: true,
+            Lead: "لطفاً در اولین اتصال صبور باشید")
+    );
 }

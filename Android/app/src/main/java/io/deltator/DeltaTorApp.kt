@@ -192,6 +192,54 @@ object Config {
         get() = prefs.getBoolean("first_run_notice_v1", false)
         set(value) = prefs.edit().putBoolean("first_run_notice_v1", value).apply()
 
+    /** The three languages the notices are written in. */
+    const val LANGUAGE_EN = "en"
+    const val LANGUAGE_RU = "ru"
+    const val LANGUAGE_FA = "fa"
+
+    /**
+     * The language the user picked from the startup picker, or an empty string
+     * until they pick one.
+     *
+     * Unset is the trigger for the picker, not a default: a fresh install and an
+     * update of an install that predates this key both arrive here with it empty
+     * and have to choose before either notice is shown. Anything unrecognised
+     * reads back as unset so a hand-edited file cannot leave the notices with no
+     * language to render in.
+     */
+    var language: String
+        get() {
+            val value = prefs.getString("language", "") ?: ""
+            return if (value == LANGUAGE_EN || value == LANGUAGE_RU || value == LANGUAGE_FA) {
+                value
+            } else {
+                ""
+            }
+        }
+        set(value) = prefs.edit().putString("language", value).apply()
+
+    val languageChosen: Boolean get() = language.isNotEmpty()
+
+    /**
+     * The blocks of a notice in the one language the user picked.
+     *
+     * A notice used to hold all three languages at once, because there was no
+     * way to know which one to show. Now the picker answers that, and showing
+     * the other two would be exactly the wall of text the picker exists to
+     * avoid.
+     */
+    fun localizedNoticeBlocks(
+        english: AppState.NoticeBlock,
+        russian: AppState.NoticeBlock,
+        persian: AppState.NoticeBlock
+    ): List<AppState.NoticeBlock> = listOf(
+        when (language) {
+            LANGUAGE_RU -> russian
+            LANGUAGE_FA -> persian
+            else -> english
+        }
+    )
+
     /**
      * Run Tor as a plain local SOCKS5 proxy and never bring up the VPN interface.
      *

@@ -509,22 +509,21 @@ public sealed class MainForm : Form
     }
 
     /// <summary>chainIntroNoticeBlocks (MainActivity 324): what the chain is
-    /// for, and what it costs, in the three languages the app speaks.</summary>
-    private static IReadOnlyList<NoticeBlock> ChainIntroNoticeBlocks() => new[]
-    {
-        new NoticeBlock(
-            Lead: "فقط برای سرویسهایی مثل جمنای",
-            Text: "این قابلیت فقط برای دسترسی به سرویسهایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم میکند؛ فقط در صورت نیاز استفاده کنید.",
-            Rtl: true),
-        new NoticeBlock(
+    /// for, and what it costs, in the language picked at startup.</summary>
+    private static IReadOnlyList<NoticeBlock> ChainIntroNoticeBlocks() => NoticeLocalization.Pick(
+        english: new NoticeBlock(
             Lead: "Only for services like Gemini",
             Text: "This feature exists to reach services like Gemini that Tor cannot access. " +
                 "It slows the connection down; use it only when you need it."),
-        new NoticeBlock(
+        russian: new NoticeBlock(
             Lead: "Только для сервисов вроде Gemini",
             Text: "Эта функция нужна для доступа к сервисам вроде Gemini, которые через Tor " +
-                "недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно.")
-    };
+                "недоступны. Она замедляет соединение — пользуйтесь ею только когда нужно."),
+        persian: new NoticeBlock(
+            Lead: "فقط برای سرویسهایی مثل جمنای",
+            Text: "این قابلیت فقط برای دسترسی به سرویسهایی مانند جمنای است که از طریق تور در دسترس نیستند. سرعت اتصال را کم میکند؛ فقط در صورت نیاز استفاده کنید.",
+            Rtl: true)
+    );
 
     /// <summary>MainScreen's onPrimary (MainActivity 162): each state gets
     /// the only action that actually does something.</summary>

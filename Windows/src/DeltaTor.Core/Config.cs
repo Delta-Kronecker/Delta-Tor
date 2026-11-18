@@ -180,6 +180,33 @@ public static class Config
         set => SetBool("first_run_notice_v1", value);
     }
 
+    /// <summary>The three languages the notices are written in.</summary>
+    public const string LanguageEnglish = "en";
+    public const string LanguageRussian = "ru";
+    public const string LanguagePersian = "fa";
+
+    /// <summary>
+    /// The language the user picked from the startup picker, or null until
+    /// they pick one. Null is the trigger for the picker, not a default: a
+    /// fresh install and an update of an install that predates this key both
+    /// arrive here unset and have to choose before either notice is shown.
+    /// Anything unrecognised reads back as null, so a hand-edited file cannot
+    /// leave the notices with no language to render in.
+    /// </summary>
+    public static string? Language
+    {
+        get
+        {
+            var v = GetString("language", "");
+            return v == LanguageEnglish || v == LanguageRussian || v == LanguagePersian
+                ? v
+                : null;
+        }
+        set => SetString("language", value ?? "");
+    }
+
+    public static bool LanguageChosen => Language is not null;
+
     /// <summary>
     /// Run Tor as a plain local SOCKS5 proxy and never bring up the tunnel.
     /// The engine side is identical either way: Tor bootstraps through the same

@@ -28,8 +28,8 @@ object AppState {
         FirstRun,
 
         /**
-         * The three-language warning that sits between a tap on the PROXY CHAIN
-         * card and its server list, so nobody chains by reflex.
+         * The warning that sits between a tap on the PROXY CHAIN card and its
+         * server list, so nobody chains by reflex.
          */
         ChainIntro
     }
@@ -37,14 +37,15 @@ object AppState {
     /**
      * One block of a notice body, with the direction it has to be laid out in.
      *
-     * A notice can carry more than one script. The first-run explainer is
-     * English, Persian and Russian in the same dialog, and one Text cannot lay
-     * that out correctly: paragraph direction is resolved from the paragraph's
+     * A notice can carry more than one script, and one Text cannot lay that
+     * out correctly: paragraph direction is resolved from the paragraph's
      * own content, so a Persian paragraph that happens to start with a Latin
      * word or a bracketed term is laid out left-to-right and its sentences end
      * up reordered, with the punctuation on the wrong side. Splitting the body
      * into blocks lets each be laid out in its own direction, which is the only
-     * way to get the Persian one to read right-to-left.
+     * way to get the Persian one to read right-to-left. The first-run and
+     * chain-intro notices now carry the one block for the language picked at
+     * startup, but the direction still has to be carried explicitly.
      */
     /**
      * @param lead an optional opening line, drawn bolder than the rest. Used by
