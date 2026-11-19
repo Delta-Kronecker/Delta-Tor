@@ -103,7 +103,7 @@ CircuitsAvailableTimeout 4320
 CircuitStreamTimeout 60
 CircuitBuildTimeout 40
 NumPrimaryGuards 15
-Schedulers Vanilla
+Schedulers KISTLite,KIST,Vanilla
 MaxClientCircuitsPending 128
 CircuitPriorityHalflife 5
 SocksTimeout 120

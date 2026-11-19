@@ -125,8 +125,10 @@ CircuitsAvailableTimeout 4320
 CircuitStreamTimeout 60
 CircuitBuildTimeout 40
 NumPrimaryGuards 15
-# KISTLite is the best scheduler available on Android; Vanilla is only fallback.
-Schedulers KIST,KISTLite,Vanilla
+# KISTLite first: it is the scheduler the client actually gets on Android and it
+# paces writes across the Conflux legs. KIST only where the kernel exposes usable
+# TCP_INFO; Vanilla (no batching) is the last resort.
+Schedulers KISTLite,KIST,Vanilla
 MaxClientCircuitsPending 256
 CircuitPriorityHalflife 5
 SocksTimeout 30
