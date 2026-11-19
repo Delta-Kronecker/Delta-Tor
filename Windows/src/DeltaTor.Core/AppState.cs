@@ -14,14 +14,7 @@ public enum NoticeKind
     FirstRun,
 
     /// <summary>
-    /// The one-time tip that follows <see cref="FirstRun"/>: the connection
-    /// paths are re-measured every 30 seconds, so the fastest ones carry the
-    /// traffic.
-    /// </summary>
-    RouteSpeed,
-
-    /// <summary>
-    /// The one-time explainer that follows <see cref="RouteSpeed"/>: by default
+    /// The one-time explainer that follows <see cref="FirstRun"/>: by default
     /// only apps that use the Windows system proxy go through DeltaTor, so
     /// everything else needs the Tun option turned on.
     /// </summary>

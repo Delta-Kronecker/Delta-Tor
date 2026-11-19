@@ -28,12 +28,6 @@ object AppState {
         FirstRun,
 
         /**
-         * The one-time tip that follows [FirstRun]: the connection paths are
-         * re-measured every 30 seconds, so the fastest ones carry the traffic.
-         */
-        RouteSpeed,
-
-        /**
          * The warning that sits between a tap on the PROXY CHAIN card and its
          * server list, so nobody chains by reflex.
          */

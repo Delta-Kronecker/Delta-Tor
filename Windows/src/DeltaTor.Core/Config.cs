@@ -183,21 +183,9 @@ public static class Config
     }
 
     /// <summary>
-    /// Whether the one-time "the best route is chosen every 30 seconds" tip
-    /// has been shown. Its own key, not part of the first-run flag: an install
-    /// that saw the first-run notice before this tip existed (everyone
-    /// updating to it) still gets the tip once.
-    /// </summary>
-    public static bool RouteSpeedNoticeShown
-    {
-        get => GetBool("route_speed_notice_v1", false);
-        set => SetBool("route_speed_notice_v1", value);
-    }
-
-    /// <summary>
     /// Whether the one-time "only system-proxy apps go through DeltaTor" tip
-    /// has been shown. Its own key for the same reason as the route-speed tip:
-    /// installs that have already seen the older notices still get it once.
+    /// has been shown. Its own key, so installs that have already seen the
+    /// older notices still get it once.
     /// </summary>
     public static bool SystemProxyNoticeShown
     {

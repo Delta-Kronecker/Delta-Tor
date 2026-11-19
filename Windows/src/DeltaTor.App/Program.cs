@@ -252,11 +252,6 @@ internal static class Program
     /// </summary>
     internal static void MaybeShowNextStartupNotice()
     {
-        if (!Config.RouteSpeedNoticeShown)
-        {
-            MaybeShowRouteSpeedNotice();
-            return;
-        }
         MaybeShowSystemProxyNotice();
     }
 
@@ -288,40 +283,11 @@ internal static class Program
             Lead: "لطفاً در اولین اتصال صبور باشید")
     );
 
-    /// <summary>
-    /// MainActivity.maybeShowRouteSpeedNotice: the tip that follows the
-    /// first-run notice. Internal because the main window posts it when the
-    /// first-run dialog closes, so the two are sequential rather than one
-    /// replacing the other.
-    /// </summary>
-    internal static void MaybeShowRouteSpeedNotice()
-    {
-        if (Config.RouteSpeedNoticeShown) return;
-        Config.RouteSpeedNoticeShown = true;
-        AppState.PostNoticeBlocks(NoticeKind.RouteSpeed, "", RouteSpeedNoticeBlocks());
-    }
-
-    private static IReadOnlyList<NoticeBlock> RouteSpeedNoticeBlocks() => NoticeLocalization.Pick(
-        english: new NoticeBlock(
-            Lead: "The best route is chosen every 30 seconds",
-            Text: "While connected, DeltaTor checks the connection paths every 30 seconds and " +
-                "uses the best ones, so download and upload speeds go up."),
-        russian: new NoticeBlock(
-            Lead: "Лучший маршрут выбирается каждые 30 секунд",
-            Text: "Во время подключения DeltaTor каждые 30 секунд проверяет маршруты " +
-                "подключения и использует самые быстрые из них, поэтому скорость загрузки и " +
-                "выгрузки возрастает."),
-        persian: new NoticeBlock(
-            Lead: "هر 30 ثانیه بهترین مسیر انتخاب می‌شود",
-            Text: "پس از اتصال، دلتاتور هر 30 ثانیه مسیرهای اتصال را بررسی می‌کند و از " +
-                "بهترین آن‌ها استفاده می‌کند. به همین دلیل سرعت دانلود و آپلود افزایش می‌یابد.",
-            Rtl: true)
-    );
 
     /// <summary>
     /// The last of the startup tips: the default mode only carries apps that
     /// use the Windows system proxy, so anything else needs Tun. Internal for
-    /// the same reason as the route-speed tip.
+    /// the same reason as the other tips.
     /// </summary>
     internal static void MaybeShowSystemProxyNotice()
     {

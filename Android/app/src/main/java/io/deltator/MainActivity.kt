@@ -229,19 +229,14 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Show whichever onboarding notice is due after the language is known.
+     * Show the onboarding notice that is due after the language is known.
      *
-     * A fresh install gets the first-run explainer; an install that already
-     * saw it (including an update from before the route-speed tip existed)
-     * gets the tip directly. When the first-run notice is the one posted, the
-     * tip follows when that dialog is dismissed, so the two are never on
-     * screen together and neither replaces the other.
+     * Only the first-run explainer exists now, so this is simply its gate: an
+     * install that already saw it (or updated past it) starts without a dialog.
      */
     private fun showStartupNotices() {
         if (!Config.firstRunNoticeShown) {
             maybeShowFirstRunNotice()
-        } else {
-            maybeShowRouteSpeedNotice()
         }
     }
 
@@ -347,45 +342,6 @@ class MainActivity : ComponentActivity() {
         ContextCompat.startForegroundService(this, intent)
     }
 }
-
-/**
- * The tip that follows the first-run notice: why a live connection keeps
- * getting faster — the paths are re-measured every 30 seconds and the best
- * ones are used.
- *
- * File-level because the main screen dismisses the first-run dialog and posts
- * this one; the flag is written before posting for the same reason as the
- * first-run flag.
- */
-private fun maybeShowRouteSpeedNotice() {
-    if (Config.routeSpeedNoticeShown) return
-    Config.routeSpeedNoticeShown = true
-    AppState.postNoticeBlocks(
-        AppState.NoticeKind.RouteSpeed,
-        "",
-        routeSpeedNoticeBlocks()
-    )
-}
-
-private fun routeSpeedNoticeBlocks(): List<AppState.NoticeBlock> = Config.localizedNoticeBlocks(
-    english = AppState.NoticeBlock(
-        lead = "The best route is chosen every 30 seconds",
-        text = "While connected, DeltaTor checks the connection paths every 30 seconds and " +
-            "uses the best ones, so download and upload speeds go up."
-    ),
-    russian = AppState.NoticeBlock(
-        lead = "Лучший маршрут выбирается каждые 30 секунд",
-        text = "Во время подключения DeltaTor каждые 30 секунд проверяет маршруты " +
-            "подключения и использует самые быстрые из них, поэтому скорость загрузки и " +
-            "выгрузки возрастает."
-    ),
-    persian = AppState.NoticeBlock(
-        lead = "هر 30 ثانیه بهترین مسیر انتخاب می‌شود",
-        text = "پس از اتصال، دلتاتور هر 30 ثانیه مسیرهای اتصال را بررسی می‌کند و از " +
-            "بهترین آن‌ها استفاده می‌کند. به همین دلیل سرعت دانلود و آپلود افزایش می‌یابد.",
-        rtl = true
-    )
-)
 
 /**
  * The ProXY CHAIN warning: what the chain is for, and what it costs, in the
@@ -566,11 +522,6 @@ private fun MainScreen(
                     // (button, back, tap outside - all of them mean "understood")
                     // is what opens the server sheet.
                     AppState.NoticeKind.ChainIntro -> showChainSheet = true
-                    // The first-run explainer is followed by the route-speed
-                    // tip. Posting here, after this notice is cleared, is what
-                    // makes them two dialogs in sequence instead of one
-                    // replacing the other before it is read.
-                    AppState.NoticeKind.FirstRun -> maybeShowRouteSpeedNotice()
                     else -> Unit
                 }
             }

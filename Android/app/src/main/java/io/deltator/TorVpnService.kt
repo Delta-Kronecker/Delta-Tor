@@ -608,9 +608,6 @@ class TorVpnService : VpnService() {
             }
             // Not a recovery the service can perform; posted by the UI instead.
             AppState.NoticeKind.FirstRun -> return
-            // The route-speed tip is also UI-only, posted after the first-run
-            // notice is dismissed.
-            AppState.NoticeKind.RouteSpeed -> return
             // Posted directly on the card's tap, never by a recovery.
             AppState.NoticeKind.ChainIntro -> return
         }
@@ -638,7 +635,6 @@ class TorVpnService : VpnService() {
                         "Auto is now your connection mode. If you would rather pick " +
                         "the transport yourself again, change it in Settings."
                 AppState.NoticeKind.FirstRun -> ""
-                AppState.NoticeKind.RouteSpeed -> ""
                 AppState.NoticeKind.ChainIntro -> ""
             }
         )

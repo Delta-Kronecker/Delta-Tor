@@ -496,13 +496,12 @@ public sealed class MainForm : Form
             // (button, Esc - all of them mean "understood") is what opens the
             // server sheet.
             if (notice.Kind == NoticeKind.ChainIntro) OpenChainSheet();
-            // The first-run explainer leads into the route-speed tip, and that
-            // tip in turn leads into the proxy-mode explainer: posting the
-            // next one here, after this dialog has closed, makes them a
-            // sequence of dialogs instead of later ones replacing a dialog
-            // before it is read. Re-read the state so the loop sees the new
-            // notice.
-            if (notice.Kind is NoticeKind.FirstRun or NoticeKind.RouteSpeed)
+            // The first-run explainer leads into the proxy-mode explainer:
+            // posting the next one here, after this dialog has closed, makes
+            // them a sequence of dialogs instead of the later one replacing a
+            // dialog before it is read. Re-read the state so the loop sees the
+            // new notice.
+            if (notice.Kind == NoticeKind.FirstRun)
             {
                 Program.MaybeShowNextStartupNotice();
                 _state = AppState.State;
