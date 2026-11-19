@@ -130,7 +130,11 @@ public sealed class MainForm : Form
         _tray = new TrayIcon(this);
         _tray.DisconnectRequested += () => Task.Run(BridgeRace.Disconnect);
         _tray.StopVpnRequested += () => Task.Run(BridgeRace.StopVpn);
-        _tray.StartVpnRequested += () => Task.Run(BridgeRace.StartVpn);
+        _tray.StartVpnRequested += () =>
+        {
+            Task.Run(ConnectCounter.CountConnect);
+            Task.Run(BridgeRace.StartVpn);
+        };
         BridgeRace.NotificationChanged += OnEngineNotification;
         ReleaseChecker.NotificationRaised += OnReleaseNotice;
         _tray.UpdateMenu(_state);
@@ -605,9 +609,11 @@ public sealed class MainForm : Form
         }
         if (s.TorRunning)
         {
+            Task.Run(ConnectCounter.CountConnect);
             Task.Run(BridgeRace.StartVpn);
             return;
         }
+        Task.Run(ConnectCounter.CountConnect);
         Task.Run(BridgeRace.Connect);
     }
 
@@ -1125,11 +1131,13 @@ public sealed class MainForm : Form
                     if (warn.ShowDialog(this) == DialogResult.OK)
                     {
                         Config.ProxyOnlyMode = false;
+                        Task.Run(ConnectCounter.CountConnect);
                         Task.Run(() => BridgeRace.ChainConnect(host, port));
                     }
                 }
                 else
                 {
+                    Task.Run(ConnectCounter.CountConnect);
                     Task.Run(() => BridgeRace.ChainConnect(host, port));
                 }
             }

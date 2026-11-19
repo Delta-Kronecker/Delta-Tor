@@ -12,15 +12,14 @@ namespace DeltaTor.Core;
 /// the install count. The asset is never stored and never parsed, only the
 /// counter matters.
 ///
-/// The flag is written only after a successful response, so a launch without
-/// connectivity does not consume the one attempt: the next launch tries again
-/// and a failed request never inflates the counter either.
+/// The done flag is written only after a request actually reached the asset, so
+/// the number is exactly one per installation: every launch before that
+/// success retries (with backoff, see <see cref="StatBeacon"/>), every launch
+/// after it does nothing at all.
 /// </summary>
 public static class InstallCounter
 {
     private const string TAG = "InstallCounter";
-    private const int MaxAttempts = 5;
-    private const int TimeoutMs = 8_000;
 
     /// <summary>
     /// The Windows counter asset, separate from Android's so the two platforms
@@ -28,35 +27,18 @@ public static class InstallCounter
     /// </summary>
     private const string AssetUrl =
         "https://github.com/Delta-Kronecker/ForInstallationStatistics/releases/download/" +
-        "ForInstallationStatistics/DeltaTorWindows";
+        "ForInstallationStatistics/DeltaTorwindows213";
 
     public static void CountInstall()
     {
         var state = LoadState();
         if (state.Counted) return;
-        if (state.Attempts >= MaxAttempts) return;
-        state.Attempts++;
-        SaveState(state);
 
-        try
+        if (StatBeacon.Hit(TAG, AssetUrl, "DeltaTor-Windows"))
         {
-            using var resp = Http.GetAsync(AssetUrl).GetAwaiter().GetResult();
-            var code = (int)resp.StatusCode;
-            resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult();
-            if (code is >= 200 and <= 399)
-            {
-                state.Counted = true;
-                SaveState(state);
-                AppLog.I(TAG, $"Install counted (HTTP {code})");
-            }
-            else
-            {
-                AppLog.W(TAG, $"Install count HTTP {code}");
-            }
-        }
-        catch (Exception e)
-        {
-            AppLog.W(TAG, $"Install count failed: {e.Message}");
+            state.Counted = true;
+            SaveState(state);
+            AppLog.I(TAG, "Install counted");
         }
     }
 
@@ -65,9 +47,6 @@ public static class InstallCounter
     {
         [JsonPropertyName("counted_v1")]
         public bool Counted { get; set; }
-
-        [JsonPropertyName("attempts_v1")]
-        public int Attempts { get; set; }
     }
 
     private static InstallState LoadState()
@@ -98,14 +77,5 @@ public static class InstallCounter
         {
             AppLog.W(TAG, $"state write failed: {e.Message}");
         }
-    }
-
-    private static readonly HttpClient Http = CreateClient();
-
-    private static HttpClient CreateClient()
-    {
-        var c = new HttpClient { Timeout = TimeSpan.FromMilliseconds(TimeoutMs) };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("DeltaTor-Windows");
-        return c;
     }
 }

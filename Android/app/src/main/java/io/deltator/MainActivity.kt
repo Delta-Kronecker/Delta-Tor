@@ -206,11 +206,11 @@ class MainActivity : ComponentActivity() {
                                 sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.connecting || s.connected -> sendAction(TorVpnService.ACTION_DISCONNECT)
                             s.torRunning -> {
-                                ConnectCounter.countConnect(applicationContext)
+                                ConnectCounter.countConnect()
                                 sendAction(TorVpnService.ACTION_START_VPN)
                             }
                             else -> {
-                                ConnectCounter.countConnect(applicationContext)
+                                ConnectCounter.countConnect()
                                 requestVpnPermissionAndConnect()
                             }
                         }
