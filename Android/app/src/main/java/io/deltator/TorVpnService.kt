@@ -1010,6 +1010,12 @@ class TorVpnService : VpnService() {
      */
     fun onChainExhausted(reason: String) {
         Log.w(TAG, "chain exhausted: $reason — restoring plain Tor VPN")
+        // A chain that ran out of servers is a connection failure the user can
+        // hand over; keep the first line for the prompt (the full text is in
+        // the log).
+        val firstLine = reason.lineSequence().firstOrNull()?.trim()
+            ?.takeUnless { it.isEmpty() } ?: "the chain could not connect"
+        LogReporter.reportConnection(firstLine)
         AppState.updateChain {
             it.copy(status = AppState.ChainStatus.FAILED, message = "back to Tor: $reason")
         }
@@ -1830,6 +1836,10 @@ class TorVpnService : VpnService() {
         }
         Log.e(TAG, message)
         Log.endSession("failed \u00b7 $message")
+        // Offer the log: a connect that failed is exactly the error the user can
+        // hand over for review. The dialog is app-wide and shows as soon as the
+        // screen is up.
+        LogReporter.reportConnection(message)
         AppState.update { it.copy(connecting = false, connected = false, reconnecting = false, torRunning = false, stopping = false, error = message, socksEndpoint = "") }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

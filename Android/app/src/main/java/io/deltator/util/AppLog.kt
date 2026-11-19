@@ -48,6 +48,21 @@ object AppLog {
     private val nextId = AtomicLong(0)
     private val buffer = ArrayDeque<LogEntry>()
 
+    /**
+     * A small always-on ring kept only for error reports (see `LogReporter`).
+     *
+     * The recording toggle owns the visible log: off means the buffer and the
+     * log screen stay empty. That is the wrong behaviour for a report, where the
+     * user is asking for help with an error that just happened and would have no
+     * history to send if recording happened to be off. This ring is capped far
+     * lower than [MAX_LINES] and stores level/tag/message rather than a rendered
+     * line, so keeping it costs one small object per log call and nothing else.
+     */
+    private const val REPORT_LINES = 800
+    private val reportBuffer = ArrayDeque<ReportLine>()
+
+    private data class ReportLine(val at: Long, val level: Char, val tag: String, val msg: String)
+
     /** Live entry count per transport ("" = shared lines), used for fair trimming. */
     private val perTransport = HashMap<String, Int>()
 
@@ -60,8 +75,9 @@ object AppLog {
      * A bootstrap is a few thousand Tor lines and every one of them costs an id,
      * a string and a slot in the ring buffer, on a phone that is also running
      * three Tor cores. The user decides whether to pay that: off means nothing
-     * is kept, and the first line after it is turned back on is the first one
-     * recorded again, so what the switch does is visible immediately.
+     * is kept in the visible log (the small report ring above is separate), and
+     * the first line after it is turned back on is the first one recorded
+     * again, so what the switch does is visible immediately.
      *
      * This is about recording, not about Tor. Tor's own output still has to be
      * read, because the bootstrap percentage and the proven bridges are parsed
@@ -133,6 +149,7 @@ object AppLog {
         runnerTag.find(tag)?.groupValues?.get(1)?.takeIf { it in TRANSPORTS }
 
     private fun appendFor(level: Char, tag: String, msg: String, transport: String?) {
+        rememberForReport(level, tag, msg)
         if (!enabled) return
         val id = nextId.getAndIncrement()
         val entry = if (observerCount > 0) {
@@ -290,6 +307,35 @@ object AppLog {
             buffer.clear()
             perTransport.clear()
             _lines.value = emptyList()
+        }
+    }
+
+    /**
+     * Append to the always-on report ring, independent of the recording toggle
+     * (see [REPORT_LINES]). Kept tiny on purpose: one object and one timestamp
+     * per log call, trimmed to the newest lines.
+     */
+    private fun rememberForReport(level: Char, tag: String, msg: String) {
+        val line = ReportLine(System.currentTimeMillis(), level, tag, msg)
+        synchronized(reportBuffer) {
+            reportBuffer.addLast(line)
+            while (reportBuffer.size > REPORT_LINES) reportBuffer.removeFirst()
+        }
+    }
+
+    /**
+     * The full report ring, oldest first, one timestamped line each. This is
+     * what goes into the archive a user sends when the app hits an error; it is
+     * not the on-screen log and is not affected by the recording toggle.
+     */
+    fun dumpReport(): String = synchronized(reportBuffer) {
+        val fmt = dateFormat.get()!!
+        buildString {
+            for (line in reportBuffer) {
+                append(fmt.format(Date(line.at))).append(' ')
+                append(line.level).append('/').append(line.tag).append(": ")
+                append(line.msg).append('\n')
+            }
         }
     }
 

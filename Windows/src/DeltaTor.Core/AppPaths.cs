@@ -28,8 +28,14 @@ public static class AppPaths
     /// <summary>InstallCounter one-shot state (Android: prefs file "deltator_install").</summary>
     public static readonly string InstallStateFile = Path.Combine(Root, "install-state.json");
 
-    /// <summary>Bridge export zips (Android: cacheDir/exports).</summary>
+    /// <summary>Bridge export and error-report zips (Android: cacheDir/exports).</summary>
     public static readonly string ExportDir = Path.Combine(Root, "cache", "exports");
+
+    /// <summary>
+    /// A crash report written before the process died and turned into a
+    /// "send the log" prompt on the next launch (Android: filesDir/crash-pending.txt).
+    /// </summary>
+    public static readonly string PendingCrashFile = Path.Combine(Root, "crash-pending.txt");
 
     /// <summary>
     /// Recorded connection logs, one subfolder per transport category and one

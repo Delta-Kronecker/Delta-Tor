@@ -23,6 +23,9 @@ class DeltaTorApp : Application() {
         super.onCreate()
         Config.init(this)
         AppLog.enabled = Config.loggingEnabled
+        // Catch a crash before the process ends so its log can be offered for
+        // sending on the next launch (LogReporter).
+        LogReporter.init(this)
         TorrcSettings.init(this)
         ExitNodes.init(this)
         createNotificationChannels()

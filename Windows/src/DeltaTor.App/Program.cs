@@ -12,6 +12,16 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        // Crash reporting, installed before any window exists so nothing escapes
+        // it. A fatal exception is persisted first and turned into a "send the
+        // log" prompt on the next launch; an exception on the UI thread is
+        // reported in place, while the app is still alive to show the dialog.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) =>
+            LogReporter.ReportCrash(e.Exception, "UI thread");
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            LogReporter.WriteCrashFile(e.ExceptionObject as Exception, "AppDomain");
+
         // Portable first: any data an earlier (AppData-based) build left
         // behind is copied next to the exe before anything reads a path.
         AppPaths.MigrateLegacy();

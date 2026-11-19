@@ -8,9 +8,11 @@ namespace DeltaTor.Core.Util;
 /// and, while recording is on (<see cref="Enabled"/>), appended to the daily
 /// file of its category by <see cref="LogFiles"/>.
 ///
-/// There is no in-memory buffer or log screen any more; the files under
-/// <see cref="LogFiles.Root"/> are the log. Session headers still delimit every
-/// connect attempt so a file can be read as a timeline.
+/// There is no in-memory log screen any more; the files under
+/// <see cref="LogFiles.Root"/> are the visible log. The one buffer left is the
+/// small always-on report ring (see <see cref="DumpReport"/>), kept so an error
+/// can be handed over even when recording is off. Session headers still delimit
+/// every connect attempt so a file can be read as a timeline.
 /// </summary>
 public static class AppLog
 {
@@ -82,8 +84,44 @@ public static class AppLog
 
     private static void AppendFor(char level, string tag, string msg, string? transport)
     {
+        RememberForReport(level, tag, msg);
         if (!Enabled) return;
         LogFiles.Write(transport, SessionOf(), level, tag, msg);
+    }
+
+    /// <summary>
+    /// A small always-on ring kept only for error reports (see
+    /// <see cref="LogReporter"/>).
+    ///
+    /// The recording toggle owns the files: off means nothing reaches the disk.
+    /// That is the wrong behaviour for a report, where the user is asking for
+    /// help with an error that just happened and would have nothing to send if
+    /// recording happened to be off. This ring is capped far lower than a day's
+    /// file and holds one rendered line each, so keeping it costs one string per
+    /// log call.
+    /// </summary>
+    private const int ReportLines = 800;
+    private static readonly Queue<string> ReportRing = new();
+    private static readonly object ReportLock = new();
+
+    private static void RememberForReport(char level, string tag, string msg)
+    {
+        var line = $"{DateTime.Now:HH:mm:ss.fff} {level}/{tag}: {msg}";
+        lock (ReportLock)
+        {
+            ReportRing.Enqueue(line);
+            while (ReportRing.Count > ReportLines) ReportRing.Dequeue();
+        }
+    }
+
+    /// <summary>
+    /// The full report ring, oldest first, one timestamped line each. This is
+    /// what goes into the archive a user sends when the app hits an error; it is
+    /// not the recorded files and is not affected by the recording toggle.
+    /// </summary>
+    public static string DumpReport()
+    {
+        lock (ReportLock) return string.Join('\n', ReportRing);
     }
 
     /// <summary>Tags whose messages contain sensitive config details (hosts, ports, credentials).</summary>

@@ -873,6 +873,9 @@ public static class BridgeRace
         // text in the log above.
         var firstLine = reason.Split('\n')[0].Trim();
         if (firstLine.Length == 0) firstLine = "the chain could not connect";
+        // A chain that ran out of servers is a connection failure the user can
+        // hand over; the full text is already in the log above.
+        LogReporter.ReportConnection(firstLine);
         AppState.UpdateChain(state => state with
         {
             Status = ChainStatus.Failed,
@@ -1608,6 +1611,9 @@ public static class BridgeRace
         }
         AppLog.E(TAG, message);
         AppLog.EndSession($"failed \u00b7 {message}");
+        // Offer the log: a connect that failed is exactly the error the user can
+        // hand over for review (the window is raised by MainForm).
+        LogReporter.ReportConnection(message);
         AppState.Update(s => s with
         {
             Connecting = false,

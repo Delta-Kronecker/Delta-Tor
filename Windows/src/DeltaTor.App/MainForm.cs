@@ -53,6 +53,11 @@ public sealed class MainForm : Form
     private RectangleF _bannerRect;
     private bool _noticeOpen;
     private bool _closeNoticeOpen;
+    // A "send the log" prompt can be raised from an engine thread at any time.
+    // One is queued at most (the newest error wins) and shown once no other
+    // modal owns the message loop.
+    private ErrorReport? _pendingReport;
+    private bool _reportOpen;
 
     // Bottom-panel action pills: live controls laid over the painted rows.
     private readonly GradientPill _pillAction = new()
@@ -137,6 +142,7 @@ public sealed class MainForm : Form
         };
         BridgeRace.NotificationChanged += OnEngineNotification;
         ReleaseChecker.NotificationRaised += OnReleaseNotice;
+        LogReporter.Raised += OnErrorReport;
         _tray.UpdateMenu(_state);
 
         _tick.Tick += (_, _) => AnimationFrame();
@@ -147,6 +153,7 @@ public sealed class MainForm : Form
             AppState.Changed -= OnStateChanged;
             BridgeRace.NotificationChanged -= OnEngineNotification;
             ReleaseChecker.NotificationRaised -= OnReleaseNotice;
+            LogReporter.Raised -= OnErrorReport;
             _tray.Dispose();
             _tick.Stop();
             _tick.Dispose();
@@ -161,6 +168,12 @@ public sealed class MainForm : Form
             _pendingRelease = null;
             _tray.ShowRelease(pending);
         }
+        // A crash from the previous run could not be shown while the process was
+        // dying, so its persisted log is turned into a report now, when the
+        // window exists. RefreshFromState below shows it once no modal is up. A
+        // report already queued during startup keeps its place when there is no
+        // crash to show.
+        if (LogReporter.ConsumePendingCrash() is { } crash) _pendingReport = crash;
         RefreshFromState();
     }
 
@@ -295,6 +308,64 @@ public sealed class MainForm : Form
         }
     }
 
+    // A report arrives on whatever thread noticed the failure; the dialog is UI.
+    private void OnErrorReport(ErrorReport report)
+    {
+        if (IsDisposed) return;
+        if (!IsHandleCreated)
+        {
+            _pendingReport = report;
+            return;
+        }
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => QueueReport(report));
+            else QueueReport(report);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+            // The handle went away between the check and the post.
+        }
+    }
+
+    private void QueueReport(ErrorReport report)
+    {
+        _pendingReport = report;
+        ShowPendingReportIfAny();
+    }
+
+    /// <summary>
+    /// Show a queued report once no other modal owns the message loop. Called
+    /// from a state change too, so a report raised while a notice or the chain
+    /// sheet was up is not lost: it opens when that modal closes.
+    /// </summary>
+    private void ShowPendingReportIfAny()
+    {
+        if (_reportOpen || _modalChildOpen || _noticeOpen) return;
+        if (_pendingReport is not { } report) return;
+        _pendingReport = null;
+        _reportOpen = true;
+        // Held like any other modal child: a notice queued underneath waits for
+        // this dialog instead of opening a second modal loop.
+        _modalChildOpen = true;
+        try
+        {
+            using var dialog = new SendLogDialog(report);
+            dialog.ShowDialog(this);
+        }
+        finally
+        {
+            _reportOpen = false;
+            _modalChildOpen = false;
+        }
+        // A notice queued underneath was held by the modal latch; show it now
+        // that the dialog is gone.
+        RefreshFromState();
+    }
+
     // The release check runs before the window is up: hold its toast for OnShown.
     private void OnReleaseNotice(ReleaseChecker.ReleaseNotice notice)
     {
@@ -390,6 +461,7 @@ public sealed class MainForm : Form
         _tray.UpdateMenu(_state);
         Invalidate();
         ShowNoticeIfAny();
+        ShowPendingReportIfAny();
     }
 
     /// <summary>

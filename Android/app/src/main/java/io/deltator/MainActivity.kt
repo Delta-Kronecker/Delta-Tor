@@ -167,6 +167,10 @@ class MainActivity : ComponentActivity() {
         // would put the notice behind or on top of the picker, and it would be
         // written in a language the user has not chosen yet.
         if (Config.languageChosen) showStartupNotices()
+        // A crash from the previous run could not be shown while the process
+        // was dying, so its persisted log is turned into a report now, when
+        // there is a screen to show it on.
+        LogReporter.postPendingCrash(this)
         setContent {
             DeltaTorTheme {
                 // Read once per composition: picking a language flips this and
@@ -423,6 +427,12 @@ fun DeltaTorScreen(
 ) {
     var screen by remember { mutableStateOf(Screen.Main) }
 
+    // An error report is app-wide: a failed connect can raise it while the log
+    // or split-tunnel screen is up, so it lives here rather than in MainScreen.
+    val context = LocalContext.current
+    val reportScope = rememberCoroutineScope()
+    val errorReport by LogReporter.report.collectAsStateWithLifecycle()
+
     // Stable navigation callbacks. Written inline they are a new lambda on every
     // recomposition, which makes them unequal params and re-runs the whole screen
     // body each time AppState ticks (the speed counter does, once a second).
@@ -444,6 +454,23 @@ fun DeltaTorScreen(
             Screen.Log -> LogScreen(onBack = goMain)
             Screen.SplitTunnel -> SplitTunnelScreen(onBack = goMain)
         }
+    }
+
+    val report = errorReport
+    if (report != null) {
+        SendLogDialog(
+            report = report,
+            onSend = {
+                // Build the archive off the main thread; only the share hand-off
+                // has to be on it.
+                LogReporter.dismiss()
+                reportScope.launch {
+                    val zip = withContext(Dispatchers.IO) { LogReporter.buildZip(context, report) }
+                    if (zip != null) LogReporter.openShare(context, zip)
+                }
+            },
+            onDismiss = { LogReporter.dismiss() }
+        )
     }
 }
 
@@ -522,7 +549,12 @@ private fun MainScreen(
     // the service does next: these describe an action the app took on the user's
     // behalf, and the restart that action caused is exactly what would otherwise
     // wipe them.
-    val notice = state.notice
+    //
+    // An error report owns the screen while it is up (it is composed at the app
+    // level, above this screen): holding the notice here keeps the two dialogs
+    // from stacking. The notice shows once the report is dismissed.
+    val errorReport by LogReporter.report.collectAsStateWithLifecycle()
+    val notice = if (errorReport == null) state.notice else null
     if (notice != null) {
         NoticeDialog(
             notice = notice,
@@ -931,6 +963,9 @@ private fun NoticeButton(
     onClick: () -> Unit
 ) {
     val shape = RoundedCornerShape(13.dp)
+    // Letter spacing breaks the joined letterforms of Persian script, so a label
+    // laid out right-to-left drops it.
+    val spaced = LocalLayoutDirection.current != LayoutDirection.Rtl
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -952,7 +987,7 @@ private fun NoticeButton(
         Text(
             label,
             style = MaterialTheme.typography.labelSmall.copy(
-                letterSpacing = 1.2.sp,
+                letterSpacing = if (spaced) 1.2.sp else 0.sp,
                 fontWeight = FontWeight.Bold
             ),
             color = if (primary) Color.White else DeltaTor.Text,
@@ -1033,6 +1068,139 @@ private fun UpdateAvailableDialog(
                 primary = false,
                 onClick = onLater
             )
+        }
+    }
+}
+
+/** Localized copy for [SendLogDialog], one language at a time (Config.language). */
+private data class LogReportStrings(
+    val title: String,
+    val body: String,
+    val hint: String,
+    val send: String,
+    val later: String
+)
+
+private fun logReportStrings(language: String): LogReportStrings = when (language) {
+    Config.LANGUAGE_RU -> LogReportStrings(
+        title = "Отправить журнал подключения",
+        body = "Пожалуйста, отправьте журнал подключения в Delta. Мы изучим его и устраним " +
+            "ошибку, из-за которой она возникла.",
+        hint = "Откроется Telegram со сжатым журналом. Отправьте файл в ${LogReporter.BOT_NAME}.",
+        send = "ОТПРАВИТЬ",
+        later = "ПОЗЖЕ"
+    )
+    Config.LANGUAGE_FA -> LogReportStrings(
+        title = "ارسال لاگ اتصال",
+        body = "لطفاً لاگ اتصال خود را برای دلتا ارسال کنید تا بررسی شود و مشکل این خطا حل شود.",
+        hint = "تلگرام با فایل فشردهٔ لاگ باز می‌شود. آن را برای ${LogReporter.BOT_NAME} بفرستید.",
+        send = "ارسال",
+        later = "بعداً"
+    )
+    else -> LogReportStrings(
+        title = "Send connection log",
+        body = "Please send your connection log to Delta. We will review it and fix the " +
+            "problem that caused this error.",
+        hint = "Telegram opens with the compressed log. Send the file to ${LogReporter.BOT_NAME}.",
+        send = "SEND",
+        later = "LATER"
+    )
+}
+
+/**
+ * Shown when a connect fails or a crash is reported: asks the user to send the
+ * connection log and offers a single SEND action. A hint, not a gate -- back, a
+ * tap outside and LATER all dismiss it, because an error the user cannot
+ * postpone is exactly the kind of coercion Play Protect reads as hostile.
+ */
+@Composable
+private fun SendLogDialog(
+    report: ErrorReport,
+    onSend: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val persian = Config.language == Config.LANGUAGE_FA
+    val strings = remember(persian) { logReportStrings(Config.language) }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
+    ) {
+        CompositionLocalProvider(
+            if (persian) {
+                LocalLayoutDirection provides LayoutDirection.Rtl
+            } else {
+                LocalLayoutDirection provides LayoutDirection.Ltr
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(
+                        Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                        RoundedCornerShape(22.dp)
+                    )
+                    .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier
+                            .size(34.dp)
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(DeltaTor.Red.copy(alpha = 0.16f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        WarnIcon(color = DeltaTor.Red)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Text(
+                        strings.title,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            letterSpacing = if (persian) 0.sp else 1.5.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = DeltaTor.Red
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    strings.body,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        lineHeight = 20.sp
+                    ),
+                    color = DeltaTor.Text
+                )
+                val message = report.message
+                if (!message.isNullOrBlank()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        message,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = TextStyle(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = DeltaTor.Red
+                        ),
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    strings.hint,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 17.sp),
+                    color = DeltaTor.Muted
+                )
+                Spacer(Modifier.height(20.dp))
+                NoticeButton(label = strings.send, onClick = onSend)
+                Spacer(Modifier.height(10.dp))
+                NoticeButton(label = strings.later, primary = false, onClick = onDismiss)
+            }
         }
     }
 }

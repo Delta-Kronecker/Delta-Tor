@@ -6,4 +6,10 @@
     <cache-path
         name="bridge_exports"
         path="exports/" />
+
+    <!-- Error-report archives (see LogReporter), also built in the cache and
+         shared only through this provider. -->
+    <cache-path
+        name="log_exports"
+        path="log_exports/" />
 </paths>
