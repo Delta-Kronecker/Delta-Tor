@@ -95,7 +95,9 @@ that still gets through on heavily filtered networks.
 - **A portable Windows twin** — the same app, same race engine, same memory and settings,
   with system-proxy and full-tunnel modes and a tray icon, shipped as a zip you unpack
   anywhere.
-- **No accounts, no analytics, no telemetry, no crash reporting** on the main builds.
+- **No accounts, no analytics, no telemetry, no automatic crash reporting** on the main builds.
+  If a connection fails, the app offers to hand you a log archive to send to the maintainer, and
+  only you can send it.
 
 ## Install
 
@@ -112,9 +114,15 @@ Grab the asset you need from the
 Requirements: Android 7.0 (API 24) or newer, or 64-bit Windows 10/11. `x86` Android payloads
 only contain the tunnel component, so the app is meant for real ARM devices, not emulators.
 
-The Windows zip is portable: unpack it anywhere and run `DeltaTor.exe` — all state lives
-next to the exe. Full-tunnel mode asks Windows for administrator rights when it starts
-(the route table and the TUN adapter need them); the other modes run without elevation.
+The Windows zip is portable: unpack it anywhere and run `DeltaTor.exe`. The exe
+stays at the root (with the managed entry assembly and the two small host files
+the .NET runtime reads before any app code runs); everything else — the managed
+libraries, Tor, the bundled assets, the Wintun data plane and all state — lives
+in the `data/` folder next to it. Move or back up that one folder and the app
+travels with it. Upgrading in place is supported: state an older build left next
+to the exe is copied into `data/` on first launch. Full-tunnel mode asks Windows
+for administrator rights when it starts (the route table and the TUN adapter need
+them); the other modes run without elevation.
 
 ## Using the app (Android)
 

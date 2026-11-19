@@ -1,3 +1,7 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Loader;
 using DeltaTor.Core;
 using DeltaTor.Core.Util;
 using DeltaTor.Native;
@@ -6,8 +10,142 @@ namespace DeltaTor.App;
 
 internal static class Program
 {
+    /// <summary>
+    /// The folder next to the exe that holds everything except the program
+    /// itself: the other managed assemblies, the Tor bundle, the bundled
+    /// assets, the Wintun data plane and the app's own state.
+    /// </summary>
+    private const string DataFolderName = "data";
+
+    /// <summary>Absolute path of <see cref="DataFolderName"/>; set once at startup.</summary>
+    private static string _dataDir = "";
+
     [STAThread]
     private static void Main(string[] args)
+    {
+        // Deliberately System-only: the JIT resolves what a method body
+        // references *before* its first line runs, and every DeltaTor
+        // assembly lives in data/ — reachable only after the resolver below
+        // is installed. Splitting the startup is what keeps that ordering
+        // true, so this method may not touch any type from the app.
+        PrepareAppDirectory();
+        Run(args);
+    }
+
+    /// <summary>
+    /// Point the app at &lt;exe&gt;\data and make the runtime find the assemblies
+    /// and the one native library that live there. System-only by design (see
+    /// <see cref="Main"/>).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void PrepareAppDirectory()
+    {
+        var exeDir = AppContext.BaseDirectory;
+        var dataDir = Path.Combine(exeDir, DataFolderName);
+        var usable = true;
+        try
+        {
+            Directory.CreateDirectory(dataDir);
+        }
+        catch
+        {
+            // A read-only install (an exe dropped somewhere the user cannot
+            // write) keeps the old layout rather than failing to start.
+            usable = false;
+        }
+        if (!usable) dataDir = exeDir;
+        // A new exe dropped into an old (pre-data) install, with no data/ next
+        // to it: keep the old layout instead of pointing the app at a folder
+        // that does not have its assemblies.
+        if (usable && !File.Exists(Path.Combine(dataDir, "DeltaTor.Core.dll")))
+            dataDir = exeDir;
+        _dataDir = dataDir;
+
+        // AppContext.BaseDirectory is the one lever every path helper in the
+        // app reads (AppPaths.Root, TorBinaries, AppAssets, LogFiles, and
+        // Se7enTun's Resources lookup), so moving it moves all of them.
+        // Keep the trailing separator the runtime normally reports.
+        AppContext.SetData(
+            "APP_CONTEXT_BASE_DIRECTORY", dataDir + Path.DirectorySeparatorChar);
+
+        // The host probes assemblies relative to the exe; they ship in data.
+        // The default probe failing is what raises this event.
+        AssemblyLoadContext.Default.Resolving += ResolveFromData;
+
+        // wintun.dll is the only native file loaded by name. Preloading it from
+        // data makes the later LoadLibrary("wintun.dll") resolve to the module
+        // already in memory; SetDllDirectory covers anything a dependency
+        // pulls in by name.
+        try
+        {
+            SetDllDirectory(dataDir);
+        }
+        catch
+        {
+            // Best effort; the preload below is the primary path.
+        }
+        TryPreload(Path.Combine(dataDir, "wintun.dll"));
+
+        // Updating by extracting over an older portable install leaves its
+        // DLLs next to the exe, and the host's probe there runs before the
+        // resolver above: a stale DeltaTor.Core.dll would win over the one in
+        // data and fail with a version mismatch. The copies in data are the
+        // ones that belong to this build, so remove the duplicates.
+        if (!string.Equals(
+                Path.TrimEndingDirectorySeparator(dataDir),
+                Path.TrimEndingDirectorySeparator(exeDir),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            RemoveStaleRootAssemblies(exeDir, dataDir);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Assembly? ResolveFromData(AssemblyLoadContext context, AssemblyName name)
+    {
+        if (string.IsNullOrEmpty(name.Name)) return null;
+        var path = Path.Combine(_dataDir, name.Name + ".dll");
+        return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
+    }
+
+    private static void TryPreload(string path)
+    {
+        try
+        {
+            if (File.Exists(path)) NativeLibrary.Load(path);
+        }
+        catch
+        {
+            // The P/Invoke still gets a chance through the DLL search path.
+        }
+    }
+
+    private static void RemoveStaleRootAssemblies(string exeDir, string dataDir)
+    {
+        try
+        {
+            foreach (var dll in Directory.EnumerateFiles(exeDir, "*.dll"))
+            {
+                var shipped = Path.Combine(dataDir, Path.GetFileName(dll));
+                if (!File.Exists(shipped)) continue;
+                try { File.Delete(dll); }
+                catch { /* locked by something else; the resolver is the fallback */ }
+            }
+        }
+        catch
+        {
+            // Best effort: a failure here only affects an in-place upgrade.
+        }
+    }
+
+    // SetDllDirectoryW adds one directory to the native search path used by
+    // LoadLibrary for the rest of the process.
+    [DllImport("kernel32.dll", EntryPoint = "SetDllDirectoryW",
+        CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool SetDllDirectory(string path);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static void Run(string[] args)
     {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
@@ -22,6 +160,10 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) =>
             LogReporter.WriteCrashFile(e.ExceptionObject as Exception, "AppDomain");
 
+        // One-time move of the state an older build kept next to the exe: data/
+        // is the root now, and a plain upgrade must not look like a fresh
+        // install. Before MigrateLegacy, so the AppData copy cannot shadow it.
+        AppPaths.MigratePortableLayout();
         // Portable first: any data an earlier (AppData-based) build left
         // behind is copied next to the exe before anything reads a path.
         AppPaths.MigrateLegacy();

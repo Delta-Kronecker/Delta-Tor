@@ -150,11 +150,13 @@ jobs:
           dotnet build Windows/DeltaTor.sln -c Release --nologo
           -p:Version=${{ steps.version.outputs.version }}
 
-      # Se7enTun resolves its data plane from the exe folder's Resources
-      # subfolder, never from its own folder, and TorrcSettings reads the fetched
-      # default torrc from <exe folder>\torrc-default. A missing copy of either
-      # only surfaces at runtime on a user's machine, so gate them here.
-      - name: Verify the fetched data plane and default torrc shipped next to the exe
+      # Se7enTun resolves its data plane from the base dir's Resources
+      # subfolder (data/ at runtime), never from its own folder, and
+      # TorrcSettings reads the fetched default torrc from <base dir>\torrc-default.
+      # A missing copy of either only surfaces at runtime on a user's machine,
+      # so gate their presence in the build output here (the packaging step
+      # re-checks them after moving them to data/).
+      - name: Verify the fetched data plane and default torrc are in the build output
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -285,8 +287,46 @@ jobs:
           # over whatever directory the user happened to be in.
           $stage = "dist/stage/DeltaTor"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
-          Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
+
+          # Only DeltaTor.exe (plus the managed entry assembly, deps and runtime
+          # config that the .NET host reads before any app code runs) stays at
+          # the root; the rest of the app ships under data/ and the loader in
+          # Program.PrepareAppDirectory points the runtime there.
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $data = "$stage/data"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          $rootFiles = @(
+            "DeltaTor.exe", "DeltaTor.dll",
+            "DeltaTor.deps.json", "DeltaTor.runtimeconfig.json")
+          foreach ($f in $rootFiles) { Copy-Item "$out/$f" $stage }
+          Get-ChildItem -Force $out | Where-Object { $_.Name -notin $rootFiles } |
+            ForEach-Object { Copy-Item -Recurse $_.FullName $data }
+          Copy-Item -Recurse "Windows/vendor" "$data/vendor"
+
+          # Same layout gate as the build workflow: a silent fall back to the
+          # old shape would only fail on a user's machine.
+          foreach ($f in @(
+            "$stage/DeltaTor.exe",
+            "$stage/DeltaTor.dll",
+            "$stage/DeltaTor.deps.json",
+            "$stage/DeltaTor.runtimeconfig.json",
+            "$data/DeltaTor.Core.dll",
+            "$data/DeltaTor.Native.dll",
+            "$data/Se7enTun.dll",
+            "$data/wintun.dll",
+            "$data/Resources/tun2socks/tun2socks.exe",
+            "$data/Resources/tun2socks/wintun.dll",
+            "$data/flags/de.png",
+            "$data/torrc-default")) {
+            if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
+          }
+          $stray = @(Get-ChildItem -Force $stage -File |
+            Where-Object { $_.Name -notin $rootFiles })
+          if ($stray.Count -gt 0) {
+            Write-Host "::error::unexpected files at the root: $($stray.Name -join ', ')"
+            exit 1
+          }
+
           Compress-Archive -Path "dist/stage/DeltaTor" -DestinationPath "dist/deltator-$($env:TAG_NAME)-windows-x64.zip" -Force
           Get-ChildItem dist/*.zip
 

@@ -32,11 +32,13 @@ jobs:
       - name: Build
         run: dotnet build Windows/DeltaTor.sln -c Release --nologo
 
-      # Se7enTun resolves its data plane from <exe folder>\Resources\tun2socks\,
-      # never from its own folder, and TorrcSettings reads the fetched default
-      # torrc from <exe folder>\torrc-default. A missing copy of either only
-      # surfaces at runtime on a user's machine, so gate them here instead.
-      - name: Verify the fetched data plane and default torrc shipped next to the exe
+      # Se7enTun resolves its data plane from <base dir>\Resources\tun2socks\
+      # (at runtime the base dir is the packaged data/ folder), never from its
+      # own folder, and TorrcSettings reads the fetched default torrc from
+      # <base dir>\torrc-default. A missing copy of either only surfaces at
+      # runtime on a user's machine, so gate their presence in the build output
+      # here (the packaging step re-checks them after moving them to data/).
+      - name: Verify the fetched data plane and default torrc are in the build output
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -62,15 +64,49 @@ jobs:
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Force -Path dist/stage | Out-Null
 
-          # 1. The portable app itself (exe + managed DLLs + the fetched vendor
-          #    bundle), the same shape a user unpacks. Staged as a plain folder,
-          #    NOT a zip: upload-artifact wraps everything in its own zip, so
-          #    zipping here too would make users extract twice (zip inside zip
-          #    inside folder).
+          # 1. The portable app itself, in the layout a user unpacks: only
+          #    DeltaTor.exe (plus the three files the .NET host reads before any
+          #    app code runs — the managed entry assembly, deps and runtime
+          #    config) at the root, everything else under data/. Staged as a
+          #    plain folder, NOT a zip: upload-artifact wraps everything in its
+          #    own zip, so zipping here too would make users extract twice (zip
+          #    inside zip inside folder).
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
           $stage = "dist/stage/deltator-debug-windows"
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/*" $stage
-          Copy-Item -Recurse "Windows/vendor" "$stage/vendor"
+          $data = "$stage/data"
+          New-Item -ItemType Directory -Force -Path $data | Out-Null
+          $rootFiles = @(
+            "DeltaTor.exe", "DeltaTor.dll",
+            "DeltaTor.deps.json", "DeltaTor.runtimeconfig.json")
+          foreach ($f in $rootFiles) { Copy-Item "$out/$f" $stage }
+          Get-ChildItem -Force $out | Where-Object { $_.Name -notin $rootFiles } |
+            ForEach-Object { Copy-Item -Recurse $_.FullName $data }
+          Copy-Item -Recurse "Windows/vendor" "$data/vendor"
+
+          # The layout is load-bearing: Program.PrepareAppDirectory reads the
+          # assemblies and wintun.dll from data/, so silently shipping the old
+          # shape would only fail on a user's machine.
+          foreach ($f in @(
+            "$stage/DeltaTor.exe",
+            "$stage/DeltaTor.dll",
+            "$stage/DeltaTor.deps.json",
+            "$stage/DeltaTor.runtimeconfig.json",
+            "$data/DeltaTor.Core.dll",
+            "$data/DeltaTor.Native.dll",
+            "$data/Se7enTun.dll",
+            "$data/wintun.dll",
+            "$data/Resources/tun2socks/tun2socks.exe",
+            "$data/Resources/tun2socks/wintun.dll",
+            "$data/flags/de.png",
+            "$data/torrc-default")) {
+            if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
+          }
+          $stray = @(Get-ChildItem -Force $stage -File |
+            Where-Object { $_.Name -notin $rootFiles })
+          if ($stray.Count -gt 0) {
+            Write-Host "::error::unexpected files at the root: $($stray.Name -join ', ')"
+            exit 1
+          }
 
           # 2. The sources of the commit that was built, so the zip and the
           #    app cannot disagree about what "this build" was.

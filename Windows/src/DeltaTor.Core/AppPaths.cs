@@ -1,22 +1,34 @@
 namespace DeltaTor.Core;
 
 /// <summary>
-/// Where the app keeps its data: the folder it was extracted to, next to
-/// DeltaTor.exe. A portable app writes nothing outside its own folder — this
-/// is the Windows counterpart of Android's app-private filesDir.
+/// Where the app keeps its files: the <c>data</c> folder next to DeltaTor.exe.
+/// A portable app writes nothing outside its own folder — this is the Windows
+/// counterpart of Android's app-private filesDir.
+///
+/// The folder is the single movers' lever: the exe (plus the small files the
+/// .NET host must read before any app code runs) sits at the root, and every
+/// other shipped file — the managed assemblies, the Tor bundle, the bundled
+/// assets, the Wintun data plane — lives under <c>data</c> too, so moving the
+/// runtime's base directory at startup (see <c>Program.PrepareAppDirectory</c>)
+/// makes the whole app follow.
 ///
 /// Everything stateful lives under <see cref="Root"/>: prefs.json,
 /// torrc.template, the bridge caches, the memory pool, the route snapshot,
 /// the recorded logs and the per-runner tor data. Subfolders (bridges/, tor/,
 /// cache/, logs/) keep the top level from filling up.
 ///
-/// <see cref="MigrateLegacy"/> copies the pre-portable locations
-/// (%APPDATA%\DeltaTor, %LOCALAPPDATA%\DeltaTor) in on first launch, so an
-/// install that used the AppData locations keeps its settings and caches.
+/// <see cref="MigratePortableLayout"/> moves the state an older build kept next
+/// to the exe into <see cref="Root"/>, and <see cref="MigrateLegacy"/> copies
+/// the pre-portable locations (%APPDATA%\DeltaTor, %LOCALAPPDATA%\DeltaTor) in
+/// on first launch, so an install that used either older layout keeps its
+/// settings and caches.
 /// </summary>
 public static class AppPaths
 {
-    /// <summary>Portable data root: the directory the exe runs from.</summary>
+    /// <summary>
+    /// Portable data root: the <c>data</c> folder next to the exe. Set through
+    /// APP_CONTEXT_BASE_DIRECTORY at startup, so this is just a read of it.
+    /// </summary>
     public static readonly string Root = AppContext.BaseDirectory;
 
     /// <summary>Cached bridge list files (Android: filesDir/bridges).</summary>
@@ -50,6 +62,65 @@ public static class AppPaths
         Directory.CreateDirectory(dir);
         return dir;
     }
+
+    /// <summary>
+    /// One-time copy of the state an older build kept next to the exe into
+    /// <see cref="Root"/>. Between that layout and the pre-portable AppData
+    /// one, this is the third place the app has stored itself; a plain
+    /// upgrade must not look like a fresh install.
+    ///
+    /// Only missing files are copied and directories merge file-by-file, so a
+    /// fresh install (whose data/ already holds the shipped defaults) is left
+    /// untouched. Runs before <see cref="MigrateLegacy"/> so the AppData copy
+    /// cannot shadow the newer state that was actually next to the exe.
+    /// </summary>
+    public static void MigratePortableLayout()
+    {
+        try
+        {
+            // The exe sits at the root and the entry assembly next to it; using
+            // its location (not ProcessPath) also covers `dotnet DeltaTor.dll`.
+            var entry = System.Reflection.Assembly.GetEntryAssembly()?.Location;
+            if (string.IsNullOrEmpty(entry)) return;
+            var oldRoot = Path.GetDirectoryName(entry);
+            if (string.IsNullOrEmpty(oldRoot)) return;
+            if (string.Equals(
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(oldRoot)),
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(Root)),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            foreach (var name in LegacyRootFiles)
+                CopyFileIfMissing(Path.Combine(oldRoot, name), Path.Combine(Root, name));
+            foreach (var name in LegacyRootDirs)
+            {
+                var from = Path.Combine(oldRoot, name);
+                if (Directory.Exists(from)) MergeDirectory(from, Path.Combine(Root, name));
+            }
+        }
+        catch
+        {
+            // Migration is best-effort; the app must start either way.
+        }
+    }
+
+    /// <summary>State files an older build wrote directly next to the exe.</summary>
+    private static readonly string[] LegacyRootFiles =
+    {
+        "prefs.json",
+        "bridge-memory.json",
+        "install-state.json",
+        "crash-pending.txt",
+        "proxy_chain.json",
+        "torrc.template",
+        "tor_last.torrc",
+        "tunlog.txt"
+    };
+
+    /// <summary>State folders an older build kept next to the exe.</summary>
+    private static readonly string[] LegacyRootDirs = { "bridges", "logs", "cache", "tor" };
 
     /// <summary>
     /// One-time copy from the pre-portable locations into the app folder.
