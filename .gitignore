@@ -38,17 +38,6 @@ runs.json
 # local scratch trees
 /portable/
 
-# Windows port: fetched Tor Expert Bundle (extracted dir + archive), never committed
-/tor-expert-bundle-*
-/Windows/vendor/
-
-# Windows port: fetched fork core archive (moving 'latest' tag), never committed
-/tor-windows-x86_64.zip
-
-# Windows port: fetched Se7enTun engine (extracted dir + archive), never committed
-/Windows/libs/se7entun/
-/Se7enTun-*.zip
-
 # Android port: fetched fork core (libtor.so) + default torrc + archive and
 # digest marker, never committed. libobfs4proxy.so (lyrebird) is not part of
 # those releases and stays tracked. Android/fetch-tor.sh repopulates libtor.so
@@ -57,7 +46,3 @@ runs.json
 /Android/app/src/main/jniLibs/.libtor-digest
 /Android/app/src/main/assets/torrc
 /tor-android-*.zip
-
-# Windows port: fetched default torrc (from the fork's branch), never committed
-# Windows/fetch-binaries.ps1 repopulates it on every build.
-/Windows/assets/torrc-default

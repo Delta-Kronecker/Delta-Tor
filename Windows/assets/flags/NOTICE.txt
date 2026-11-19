@@ -1,9 +1,0 @@
-Country flag images in this folder (flags/*.png)
-
-Source: https://flagcdn.com (flag artwork derived from Wikipedia /
-Wikimedia Commons, which are free to use).
-Terms: flagcdn.com offers these flag images free for personal and
-commercial use.
-Codes follow ISO 3166-1 alpha-2, matching countries.tsv in assets/geoip/.
-They are rendered by the app instead of flag emoji, which show as plain
-letters on Windows machines without the emoji font.
