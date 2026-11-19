@@ -1,11 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.DeltaTor" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#FF12141C</item>
+    <!-- Light look. This is the window the user sees for the instant before Compose
+         draws, so it matches DeltaTorTheme's light background (see values-night for
+         the dark twin). An in-app Light/Dark choice is painted by Compose over this. -->
+    <style name="Theme.DeltaTor" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#FFF4F3FA</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
         <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
     </style>
 </resources>

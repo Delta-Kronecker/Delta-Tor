@@ -618,7 +618,7 @@ private fun MainScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = Color(0xFF14171F),
+                drawerContainerColor = DeltaTor.Sheet,
                 modifier = Modifier.fillMaxSize()
             ) {
                 ControlDrawer(
@@ -785,7 +785,7 @@ private fun LanguagePickerDialog(onPick: (String) -> Unit) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(22.dp))
                 .background(
-                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                     RoundedCornerShape(22.dp)
                 )
                 .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
@@ -864,7 +864,7 @@ private fun NoticeDialog(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(22.dp))
                 .background(
-                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                     RoundedCornerShape(22.dp)
                 )
                 .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
@@ -1012,7 +1012,7 @@ private fun UpdateAvailableDialog(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(22.dp))
                 .background(
-                    Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                    Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                     RoundedCornerShape(22.dp)
                 )
                 .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
@@ -1137,7 +1137,7 @@ private fun SendLogDialog(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(22.dp))
                     .background(
-                        Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                        Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                         RoundedCornerShape(22.dp)
                     )
                     .border(1.dp, DeltaTor.BorderLight, RoundedCornerShape(22.dp))
@@ -1837,13 +1837,13 @@ private fun AirBackground(glow: Color, connecting: Boolean) {
     Canvas(Modifier.fillMaxSize()) {
         drawRect(
             Brush.verticalGradient(
-                listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15))
+                listOf(DeltaTor.BgTop, DeltaTor.Bg, DeltaTor.BgBottom)
             )
         )
         // soft key light in the top-left corner
         drawCircle(
             brush = Brush.radialGradient(
-                listOf(Color.White.copy(alpha = 0.05f), Color.Transparent),
+                listOf(DeltaTor.KeyLight, Color.Transparent),
                 center = Offset(size.width * 0.16f, size.height * 0.1f),
                 radius = size.width * 0.55f
             ),
@@ -2012,7 +2012,7 @@ private fun StateBlock(
                     letterSpacing = 2.5.sp,
                     color = sc,
                     textAlign = TextAlign.Center,
-                    shadow = Shadow(Color.Black.copy(alpha = 0.45f), Offset(0f, 4f), 10f)
+                    shadow = Shadow(DeltaTor.TextShadow, Offset(0f, 4f), 10f)
                 )
             )
         }
@@ -2155,7 +2155,7 @@ private fun RingButton(
             val inner = r - 9.dp.toPx()
             drawCircle(
                 brush = Brush.radialGradient(
-                    listOf(DeltaTor.Surface, Color(0xFF0F1119)),
+                    listOf(DeltaTor.Surface, DeltaTor.SurfaceBottom),
                     center = c,
                     radius = inner
                 ),
@@ -2434,7 +2434,7 @@ private fun ProxyChainSheet(
 
     ModalBottomSheet(
         onDismissRequest = onClose,
-        containerColor = Color(0xFF14171F)
+        containerColor = DeltaTor.Sheet
     ) {
         Column(
             Modifier
@@ -2635,7 +2635,7 @@ private fun ChainProxyModeWarning(
 ) {
     AlertDialog(
         onDismissRequest = onKeep,
-        containerColor = Color(0xFF14171F),
+        containerColor = DeltaTor.Sheet,
         title = { Text("The chain needs the VPN", color = DeltaTor.Text) },
         text = {
             Text(
@@ -2814,7 +2814,7 @@ private fun BridgeCard(
             .fillMaxWidth()
             .clip(shape)
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                 shape
             )
             .border(1.dp, DeltaTor.Border, shape)
@@ -3297,7 +3297,7 @@ private fun SplitTunnelScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
+                Brush.verticalGradient(listOf(DeltaTor.BgTop, DeltaTor.Bg, DeltaTor.BgBottom))
             )
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -3499,7 +3499,7 @@ private fun SplitTunnelScreen(onBack: () -> Unit) {
                                     Text(
                                         "\u2713",
                                         fontSize = 12.sp,
-                                        color = Color(0xFF08111A)
+                                        color = DeltaTor.OnBright
                                     )
                                 }
                             }
@@ -3556,7 +3556,7 @@ private fun RowScope.ModeChip(
             letterSpacing = 0.8.sp,
             fontWeight = FontWeight.Bold
         ),
-        color = if (active) Color(0xFF08111A) else DeltaTor.Muted,
+        color = if (active) DeltaTor.OnBright else DeltaTor.Muted,
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
             .background(if (active) activeColor else Color.Transparent)
@@ -3632,7 +3632,7 @@ private fun UpdateBanner(
             .padding(horizontal = 20.dp)
             .clip(shape)
             .background(
-                Brush.horizontalGradient(listOf(Color(0xFF2A2140), DeltaTor.Surface)),
+                Brush.horizontalGradient(listOf(DeltaTor.BannerTop, DeltaTor.Surface)),
                 shape
             )
             .border(1.dp, DeltaTor.Accent.copy(alpha = 0.45f), shape)
@@ -3847,7 +3847,7 @@ private fun CountryRow(
 }
 
 @Composable
-private fun CheckIcon(modifier: Modifier = Modifier, color: Color = Color(0xFF14171F)) {
+private fun CheckIcon(modifier: Modifier = Modifier, color: Color = DeltaTor.OnBright) {
     Canvas(modifier) {
         val stroke = 1.7.dp.toPx()
         val p = Path()
@@ -3880,7 +3880,7 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {    Colum
             .padding(horizontal = 20.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF20242F), DeltaTor.Surface)),
+                Brush.verticalGradient(listOf(DeltaTor.SurfaceTop, DeltaTor.Surface)),
                 RoundedCornerShape(18.dp)
             )
             .border(1.dp, DeltaTor.Border, RoundedCornerShape(18.dp))
@@ -4974,7 +4974,7 @@ private fun LogScreen(onBack: () -> Unit) {
             .fillMaxSize()
             .windowInsetsPadding(WindowInsets.systemBars)
             .background(
-                Brush.verticalGradient(listOf(Color(0xFF1B2030), DeltaTor.Bg, Color(0xFF0C0E15)))
+                Brush.verticalGradient(listOf(DeltaTor.BgTop, DeltaTor.Bg, DeltaTor.BgBottom))
             )
     ) {
         Column(Modifier.fillMaxSize()) {

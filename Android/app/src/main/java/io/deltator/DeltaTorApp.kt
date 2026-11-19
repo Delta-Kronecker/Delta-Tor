@@ -152,6 +152,15 @@ object Config {
         set(value) = prefs.edit().putBoolean("debug_mode", value).apply()
 
     /**
+     * Which look the app wears: "system" (follow the device, the default), "light"
+     * or "dark". Stored as the key of [io.deltator.ui.ThemeMode]; an unknown value
+     * is read back as "system".
+     */
+    var themeMode: String
+        get() = prefs.getString("theme_mode", "system") ?: "system"
+        set(value) = prefs.edit().putString("theme_mode", value).apply()
+
+    /**
      * Whether the connection log is recorded.
      *
      * Off by default. Recording every Tor line of every connect attempt across
