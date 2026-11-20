@@ -490,7 +490,7 @@ public static class BridgeRace
                 break;
             // Not a recovery the service can perform; posted by the UI instead.
             case NoticeKind.FirstRun:
-            case NoticeKind.SystemProxy:
+            case NoticeKind.TunMode:
             case NoticeKind.CloseBlocked:
                 return;
         }

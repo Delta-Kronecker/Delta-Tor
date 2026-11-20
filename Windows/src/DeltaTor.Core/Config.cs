@@ -183,14 +183,15 @@ public static class Config
     }
 
     /// <summary>
-    /// Whether the one-time "only system-proxy apps go through DeltaTor" tip
+    /// Whether the one-time "DeltaTor now connects as a full Tun tunnel" tip
     /// has been shown. Its own key, so installs that have already seen the
-    /// older notices still get it once.
+    /// older system-proxy notice still get this one once — the default mode
+    /// changed, so the tip has to be said again.
     /// </summary>
-    public static bool SystemProxyNoticeShown
+    public static bool TunNoticeShown
     {
-        get => GetBool("system_proxy_notice_v1", false);
-        set => SetBool("system_proxy_notice_v1", value);
+        get => GetBool("tun_notice_v1", false);
+        set => SetBool("tun_notice_v1", value);
     }
 
     /// <summary>The three languages the notices are written in.</summary>
@@ -238,16 +239,19 @@ public static class Config
 
     /// <summary>
     /// How a connect hands Tor to the machine: "tun" routes everything through
-    /// the Se7enTun adapter; "system_proxy" (the default) runs Tor as a local
-    /// SOCKS and points WinINET at it once bootstrap reaches 100%. The choice
-    /// takes effect on the next connect.
+    /// the Se7enTun adapter; "system_proxy" runs Tor as a local SOCKS and points
+    /// WinINET at it once bootstrap reaches 100%. The choice takes effect on the
+    /// next connect. Tun is the default: a full tunnel that captures every
+    /// app, which is what a VPN client is expected to do. System Proxy is the
+    /// lighter opt-in for a user who only needs their browser and similar
+    /// apps routed.
     /// </summary>
     public static string ConnectionMode
     {
         get
         {
-            var v = GetString("connection_mode", ModeSystemProxy);
-            return v == ModeTun ? ModeTun : ModeSystemProxy;
+            var v = GetString("connection_mode", ModeTun);
+            return v == ModeSystemProxy ? ModeSystemProxy : ModeTun;
         }
         set => SetString("connection_mode", value);
     }

@@ -90,7 +90,7 @@ that still gets through on heavily filtered networks.
   with the app swiped away, with disconnect actions right in the notification), a
   per-transport log viewer with filters on Android (Windows writes the same categories
   to daily files under `logs/`), and a startup language picker (English,
-  Russian or Persian) that the first-run, system-proxy and proxy-chain notices follow.
+  Russian or Persian) that the first-run, Tun-mode and proxy-chain notices follow.
 - **A portable Windows twin** — the same app, same race engine, same memory and settings,
   with system-proxy and full-tunnel modes and a tray icon, shipped as a zip you unpack
   anywhere.
@@ -143,9 +143,10 @@ them); the other modes run without elevation.
 The Windows client is the same app — same race engine, same memory runner, same settings —
 ported to .NET 8 / WinForms and shipped as a portable zip:
 
-- **System proxy** (default) — Tor runs and the system points at it; no elevation needed.
-- **Full tunnel** — the whole machine routes through Tor over a TUN adapter, with bypass
-  routes for Tor's own traffic so the tunnel never loops into itself. Asks for elevation.
+- **Full tunnel** (default) — the whole machine routes through Tor over a TUN adapter, with
+  bypass routes for Tor's own traffic so the tunnel never loops into itself. Asks for elevation.
+- **System proxy** — Tor runs and the system points at it; the lighter option that carries only
+  apps using the Windows system proxy, and needs no elevation.
 - **Proxy chain over VPN Gate** — the same second hop as on Android: Tor → SSTP → a public
   VPN Gate server, with the country-sorted server sheet, live per-server latency tests and
   automatic fallback. Runs on its own Wintun adapter; asks for elevation.

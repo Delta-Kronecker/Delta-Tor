@@ -59,11 +59,18 @@ public sealed class MainForm : Form
     private ErrorReport? _pendingReport;
     private bool _reportOpen;
 
-    // Bottom-panel action pills: live controls laid over the painted rows.
-    private readonly GradientPill _pillAction = new()
-    { Label = "START VPN", Filled = false, ShowBorder = false };
-    private readonly GradientPill _pillDisconnect = new()
-    { Label = "DISCONNECT", Filled = false, ShowBorder = false };
+    // Bottom-panel action pills. They are painted by this form rather than
+    // laid out as child controls. A child owns its own window above the
+    // drawer's, so an open (or still-closing) drawer could never cover it, and
+    // a child first shown while this form's own paint is clipped by that
+    // drawer never receives a first paint and stays a black rectangle.
+    // Painting them here keeps the drawer's window above them by construction
+    // and re-lays them from ClientSize on every frame, so a resize cannot
+    // leave them at stale coordinates either. This is the Android
+    // BottomPanel's pills, one paint pass instead of two controls.
+    private RectangleF _pillActionRect;
+    private RectangleF _pillDisconnectRect;
+    private bool _pillsEnabled = true;
     private bool _proxyLive;
 
     // A modal child (the chain sheet or a dialog) owns the message loop while it
@@ -72,7 +79,8 @@ public sealed class MainForm : Form
     // under the first one.
     private bool _modalChildOpen;
 
-    // The control drawer sits over everything, pills included.
+    // The control drawer: a child window, so it always draws over the pills
+    // this form paints.
     private readonly DrawerPanel _drawer = new();
 
     // Tray/toast surface (Android foreground notification equivalent).
@@ -103,29 +111,9 @@ public sealed class MainForm : Form
         _scCurrent = _scFrom = _scTo = UiHelpers.StateColor(_state);
         _subCurrent = _subFrom = _subTo = SubColor(_state);
 
-        Controls.Add(_pillAction);
-        Controls.Add(_pillDisconnect);
         Controls.Add(_drawer);
-        _pillAction.Clicked += (_, _) =>
-        {
-            // System proxy mode is live: this pill is the machine-proxy
-            // switch — ON points Windows at the bridge, OFF puts the old
-            // values back. The tunnel path below does not apply here.
-            if (_proxyLive && SysProxyLive(_state))
-            {
-                if (SystemProxy.IsApplied) SystemProxy.Clear();
-                else SystemProxy.Apply("127.0.0.1", BridgeRace.ActiveHttpProxyPort);
-                Invalidate();
-                return;
-            }
-            // In no-VPN proxy mode the left pill shows the endpoint and does
-            // nothing; pressing it would offer a start the engine declines.
-            if (_proxyLive) return;
-            StopOrStartVpn();
-        };
-        _pillDisconnect.Clicked += (_, _) => Task.Run(BridgeRace.Disconnect);
-        // The bottom pills step aside while the drawer owns the screen and
-        // come back on the first paint after it has slid away.
+        // The drawer is a child window and covers the painted pills; this
+        // repaint puts them back on the first frame after it has slid away.
         _drawer.Closed += () => Invalidate();
         // The chain card moved into the drawer; the drawer closes itself and
         // then this runs, so its notice/sheet is never stacked over it.
@@ -608,8 +596,9 @@ public sealed class MainForm : Form
 
         if (_menuRect.Contains(e.Location))
         {
+            // The drawer is a child window, so opening it covers the pills
+            // without this form having to hide anything.
             _drawer.Open();
-            Invalidate(); // the bottom pills vanish under the open drawer
             return;
         }
 
@@ -621,10 +610,55 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (_pillsEnabled && _pillActionRect.Width > 0 && _pillActionRect.Contains(e.Location))
+        {
+            PillActionClicked();
+            return;
+        }
+
+        if (_pillsEnabled && _pillDisconnectRect.Width > 0 &&
+            _pillDisconnectRect.Contains(e.Location))
+        {
+            Task.Run(BridgeRace.Disconnect);
+            return;
+        }
+
         if (_ringRect.Contains(e.Location))
         {
             PrimaryAction();
         }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        // The pills are painted, not child controls, so the hand cursor the
+        // old GradientPill set for itself is restored here.
+        var overPill = _pillsEnabled &&
+            ((_pillActionRect.Width > 0 && _pillActionRect.Contains(e.Location)) ||
+             (_pillDisconnectRect.Width > 0 && _pillDisconnectRect.Contains(e.Location)));
+        var want = overPill ? Cursors.Hand : Cursors.Default;
+        if (Cursor != want) Cursor = want;
+    }
+
+    /// <summary>MainScreen's action-pill onClick, the GradientPill.Clicked this
+    /// replaced.</summary>
+    private void PillActionClicked()
+    {
+        // System proxy mode is live: this pill is the machine-proxy switch —
+        // ON points Windows at the bridge, OFF puts the old values back. The
+        // tunnel path below does not apply here.
+        if (_proxyLive && SysProxyLive(_state))
+        {
+            if (SystemProxy.IsApplied) SystemProxy.Clear();
+            else SystemProxy.Apply("127.0.0.1", BridgeRace.ActiveHttpProxyPort);
+            Invalidate();
+            return;
+        }
+        // In no-VPN proxy mode the left pill shows the endpoint and does
+        // nothing; pressing it would offer a start the engine declines.
+        if (_proxyLive) return;
+        StopOrStartVpn();
     }
 
     /// <summary>ProxyChainCard's onClick (MainActivity 1826): a live chain is
@@ -1103,45 +1137,32 @@ public sealed class MainForm : Form
         // gone: a start click there would race the teardown for the ports, but
         // hiding the row made both buttons blink out and back in on every stop.
         // In proxy mode it becomes the endpoint pill instead of a lying
-        // START VPN the engine would decline. An open drawer owns the screen,
-        // so the row steps aside while it is up and returns on the next paint
-        // after it closes.
-        var pillsVisible = (s.Connected || s.TorRunning || s.Stopping) && !_drawer.IsOpen;
+        // START VPN the engine would decline.
+        var pillsVisible = s.Connected || s.TorRunning || s.Stopping;
         var pillsH = pillsVisible ? 34f + 6f : 0f;
         var total = 4f + pillsH + statH + 6f + statH + 6f + infoH + 10f;
         var y = ClientSize.Height - total + 4f;
 
+        _pillActionRect = RectangleF.Empty;
+        _pillDisconnectRect = RectangleF.Empty;
+        _pillsEnabled = !busy;
         if (pillsVisible)
         {
             // Live endpoint: system-proxy mode turns this pill into the
             // machine-proxy switch (no address dump); no-VPN mode keeps
             // showing where to point the apps.
-            _pillAction.Label = _proxyLive
+            var actionLabel = _proxyLive
                 ? SysProxyLive(s)
                     ? (SystemProxy.IsApplied ? "SYSTEM PROXY ON" : "SYSTEM PROXY OFF")
                     : "SOCKS5 " + StripScheme(s.SocksEndpoint)
                 : s.Connected && !s.Stopping
                     ? "STOP VPN"
                     : "START VPN";
-            _pillAction.Visible = true;
-            _pillAction.Enabled = !busy;
-            _pillAction.SetBounds((int)padX, (int)y, (int)halfW, 34);
-            _pillDisconnect.Visible = true;
-            _pillDisconnect.Enabled = !busy;
-            _pillDisconnect.SetBounds(
-                (int)(padX + halfW + 10f), (int)y, (int)halfW, 34);
-            // A pill that became visible during this paint is not guaranteed a
-            // paint message of its own; the action pill invalidates itself
-            // through its label assignment above, the disconnect one has a
-            // constant label. Without this it can be left at its never-painted
-            // (black) buffer in proxy modes.
-            _pillDisconnect.Invalidate();
+            _pillActionRect = new RectangleF(padX, y, halfW, 34f);
+            _pillDisconnectRect = new RectangleF(padX + halfW + 10f, y, halfW, 34f);
+            DrawPill(g, _pillActionRect, actionLabel, !busy);
+            DrawPill(g, _pillDisconnectRect, "DISCONNECT", !busy);
             y += 34f + 6f;
-        }
-        else
-        {
-            _pillAction.Visible = false;
-            _pillDisconnect.Visible = false;
         }
 
         // Speed: live on the home screen itself, not only in a notification.
@@ -1301,5 +1322,39 @@ public sealed class MainForm : Form
         using (var brush = new SolidBrush(DeltaTorTheme.Text))
             DrawUtil.DrawSpaced(g, valueText, valueFont, brush,
                 valueX, valueY, x + w - 10f - valueX, 0f);
+    }
+
+    /// <summary>BottomPanel's action pill, painted by this form (the Android
+    /// GradientPill look: 34px tall, fully rounded, Surface→SurfaceAlt
+    /// horizontal gradient, no hairline, bold letter-spaced label). It is
+    /// painted here instead of living as a child GradientPill so the drawer —
+    /// itself a child window — always covers it, and so it can never be left
+    /// at a never-painted (black) child buffer when it first becomes visible
+    /// while this form's own paint is clipped by the drawer.</summary>
+    private static void DrawPill(Graphics g, RectangleF rect, string label, bool enabled)
+    {
+        // Half-height radius makes the ends fully round; the 0.5px inset keeps
+        // the anti-aliased fill inside the layout rect instead of straddling
+        // its edge.
+        var box = new RectangleF(rect.X + 0.5f, rect.Y + 0.5f,
+            rect.Width - 1f, rect.Height - 1f);
+        using (var path = DrawUtil.RoundedRect(box, rect.Height / 2f))
+        using (var brush = new System.Drawing.Drawing2D.LinearGradientBrush(
+            box, DeltaTorTheme.Surface, DeltaTorTheme.SurfaceAlt, 0f))
+        {
+            g.FillPath(brush, path);
+            // No hairline: on the dark panel the outline reads as a stray box
+            // around the button (these pills set GradientPill.ShowBorder=false).
+        }
+
+        // A dimmed label (Text 40%) is the only cue while inert, so the pill
+        // keeps its size instead of blinking out of the row during a teardown.
+        var color = enabled ? DeltaTorTheme.Text : Color.FromArgb(102, DeltaTorTheme.Text);
+        using var font = new Font(
+            DeltaTorTheme.FontFamilyName, DeltaTorTheme.BodyPt, FontStyle.Bold);
+        var spacing = rect.Height * (1.2f / 40f);
+        var inner = new RectangleF(rect.X + 6f, rect.Y, rect.Width - 12f, rect.Height);
+        using var textBrush = new SolidBrush(color);
+        DrawUtil.DrawSpacedCentered(g, label, font, textBrush, inner, spacing);
     }
 }

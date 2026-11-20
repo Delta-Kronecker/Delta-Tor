@@ -252,7 +252,7 @@ internal static class Program
     /// </summary>
     internal static void MaybeShowNextStartupNotice()
     {
-        MaybeShowSystemProxyNotice();
+        MaybeShowTunNotice();
     }
 
     /// <summary>MainActivity.maybeShowFirstRunNotice (line 195).</summary>
@@ -285,35 +285,41 @@ internal static class Program
 
 
     /// <summary>
-    /// The last of the startup tips: the default mode only carries apps that
-    /// use the Windows system proxy, so anything else needs Tun. Internal for
-    /// the same reason as the other tips.
+    /// The last of the startup tips: the default mode is now the full Tun
+    /// tunnel, which carries every app; System Proxy is the lighter opt-in for
+    /// users who only want the apps that use the Windows system proxy routed.
+    /// Internal for the same reason as the other tips.
     /// </summary>
-    internal static void MaybeShowSystemProxyNotice()
+    internal static void MaybeShowTunNotice()
     {
-        if (Config.SystemProxyNoticeShown) return;
-        Config.SystemProxyNoticeShown = true;
-        AppState.PostNoticeBlocks(NoticeKind.SystemProxy, "", SystemProxyNoticeBlocks());
+        if (Config.TunNoticeShown) return;
+        Config.TunNoticeShown = true;
+        AppState.PostNoticeBlocks(NoticeKind.TunMode, "", TunNoticeBlocks());
     }
 
-    private static IReadOnlyList<NoticeBlock> SystemProxyNoticeBlocks() => NoticeLocalization.Pick(
+    private static IReadOnlyList<NoticeBlock> TunNoticeBlocks() => NoticeLocalization.Pick(
         english: new NoticeBlock(
-            Lead: "DeltaTor starts in System Proxy mode",
-            Text: "By default DeltaTor runs in System Proxy mode. Only apps that use the " +
-                "system proxy, such as your browser and Telegram, send their traffic " +
-                "through DeltaTor. For every other app, turn on the Tun option in " +
-                "Settings (use it only when you need to)."),
+            Lead: "DeltaTor now connects as a full Tun tunnel",
+            Text: "By default DeltaTor connects in Tun mode: it opens a virtual network " +
+                "adapter and routes every app on your PC through Tor, the way a VPN does. " +
+                "If you would rather route only the apps that use the Windows system " +
+                "proxy, such as your browser and Telegram, switch to System Proxy mode " +
+                "in Settings. The new mode takes effect on the next connect."),
         russian: new NoticeBlock(
-            Lead: "DeltaTor запускается в режиме системного прокси",
-            Text: "По умолчанию DeltaTor работает в режиме системного прокси. Через DeltaTor " +
-                "идут только приложения, использующие системный прокси, — браузер, Telegram " +
-                "и подобные. Для остальных приложений включите в настройках опцию Tun " +
-                "(используйте её только при необходимости)."),
+            Lead: "DeltaTor теперь подключается как полный туннель Tun",
+            Text: "По умолчанию DeltaTor подключается в режиме Tun: он создаёт виртуальный " +
+                "сетевой адаптер и направляет через Tor трафик всех приложений на " +
+                "компьютере — как обычный VPN. Если вы хотите направлять через DeltaTor " +
+                "только приложения, использующие системный прокси, — браузер и Telegram, — " +
+                "переключитесь в настройках на режим System Proxy. Новый режим вступит в " +
+                "силу при следующем подключении."),
         persian: new NoticeBlock(
-            Lead: "دلتاتور به صورت پیش‌فرض روی حالت System Proxy است",
-            Text: "فقط مرورگر و تلگرام و... برنامه‌هایی که به پروکسی سیستم متصل می‌شوند " +
-                "ترافیک‌شان از دلتاتور عبور می‌کند. برای بقیه برنامه‌ها از تنظیمات گزینه Tun " +
-                "را فعال کنید (فقط در صورت لزوم استفاده کنید).",
+            Lead: "دلتاتور اکنون به صورت تانل کامل Tun وصل م‌شود",
+            Text: "دلتاتور به صورت پیش‌فرض روی حالت Tun وصل م‌شود: یک آداپتور شبکه مجازی " +
+                "می‌سازد و ترافیک همه برنامه‌های کامپیوتر را مانند یک VPN از تور عبور " +
+                "می‌دهد. اگر می‌خواهید فقط برنامه‌هایی که از پروکسی سیستم استفاده می‌کنند " +
+                "(مرورگر و تلگرام) از دلتاتور عبور کنند، از تنظیمات حالت System Proxy را " +
+                "انتخاب کنید. حالت جدید از اتصال بعدی اعمال می‌شود.",
             Rtl: true)
     );
 }

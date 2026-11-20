@@ -243,7 +243,7 @@ public sealed partial class DrawerPanel
         "connection is ready. Nothing else is routed.";
 
     /// <summary>Two exclusive ON/OFF rows (Tun Mode / System proxy), the
-    /// Android mode picker as the drawer draws it. Default is System proxy.</summary>
+    /// Android mode picker as the drawer draws it. Default is Tun.</summary>
     private void AddConnectionModeCard(Flow flow)
     {
         var w = flow.W;

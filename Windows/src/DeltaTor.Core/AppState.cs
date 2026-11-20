@@ -14,11 +14,12 @@ public enum NoticeKind
     FirstRun,
 
     /// <summary>
-    /// The one-time explainer that follows <see cref="FirstRun"/>: by default
-    /// only apps that use the Windows system proxy go through DeltaTor, so
-    /// everything else needs the Tun option turned on.
+    /// The one-time explainer that follows <see cref="FirstRun"/>: the app now
+    /// connects in Tun mode by default, a full tunnel that carries every app.
+    /// System Proxy is the lighter option for routing only the apps that use
+    /// the Windows system proxy.
     /// </summary>
-    SystemProxy,
+    TunMode,
 
     /// <summary>
     /// Raised instead of closing the window while the engine is still running:
