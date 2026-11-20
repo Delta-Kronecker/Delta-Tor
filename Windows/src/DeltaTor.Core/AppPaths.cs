@@ -5,12 +5,13 @@ namespace DeltaTor.Core;
 /// A portable app writes nothing outside its own folder — this is the Windows
 /// counterpart of Android's app-private filesDir.
 ///
-/// The folder is the single movers' lever: the exe (plus the small files the
-/// .NET host must read before any app code runs) sits at the root, and every
-/// other shipped file — the managed assemblies, the Tor bundle, the bundled
-/// assets, the Wintun data plane — lives under <c>data</c> too, so moving the
-/// runtime's base directory at startup (see <c>Program.PrepareAppDirectory</c>)
-/// makes the whole app follow.
+/// The folder is the single movers' lever: the self-contained .NET runtime
+/// (the apphost, the entry assembly, the framework assemblies and the host
+/// files the runtime reads before any app code runs) sits at the root, while
+/// every other shipped file — the app's own managed assemblies, the Tor bundle,
+/// the bundled assets, the Wintun data plane — lives under <c>data</c>, so
+/// moving the runtime's base directory at startup (see
+/// <c>Program.PrepareAppDirectory</c>) makes the whole app follow.
 ///
 /// Everything stateful lives under <see cref="Root"/>: prefs.json,
 /// torrc.template, the bridge caches, the memory pool, the route snapshot,

@@ -108,17 +108,17 @@ Grab the asset you need from the
 | `deltator-vX.Y.Z-arm64-v8a.apk` | almost every phone and tablet made in the last decade | ~22 MB |
 | `deltator-vX.Y.Z-armeabi-v7a.apk` | 32-bit ARM devices | ~22 MB |
 | `deltator-vX.Y.Z-universal.apk` | anything else, carries every ABI | ~38 MB |
-| `deltator-vX.Y.Z-windows-x64.zip` | Windows 10/11 on 64-bit Intel/AMD | ~40 MB |
+| `deltator-vX.Y.Z-windows-x64.zip` | Windows 10/11 on 64-bit Intel/AMD | ~90 MB |
 
-Requirements: Android 7.0 (API 24) or newer, or 64-bit Windows 10/11. `x86` Android payloads
+Requirements: Android 7.0 (API 24) or newer, or 64-bit Windows 10/11. The Windows zip
+needs no .NET install — the runtime is bundled inside it. `x86` Android payloads
 only contain the tunnel component, so the app is meant for real ARM devices, not emulators.
 
-The Windows zip is portable: unpack it anywhere and run `DeltaTor.exe`. The exe
-stays at the root (with the managed entry assembly and the two small host files
-the .NET runtime reads before any app code runs); everything else — the managed
-libraries, Tor, the bundled assets, the Wintun data plane and all state — lives
-in the `data/` folder next to it. Move or back up that one folder and the app
-travels with it. Upgrading in place is supported: state an older build left next
+The Windows build is self-contained: unpack it anywhere and run `DeltaTor.exe`; there is
+nothing to install first. The exe plus the .NET runtime files it starts from stay at the
+root; the app's own assemblies, the Tor bundle, the bundled assets, the Wintun data plane
+and all state live in the `data/` folder next to it. Move or back up that whole folder and
+the app travels with it. Upgrading in place is supported: state an older build left next
 to the exe is copied into `data/` on first launch. Full-tunnel mode asks Windows
 for administrator rights when it starts (the route table and the TUN adapter need
 them); the other modes run without elevation.

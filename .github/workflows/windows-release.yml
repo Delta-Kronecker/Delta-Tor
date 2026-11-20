@@ -143,26 +143,38 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-      - name: Build signed release app
-        # The exe version comes from the tag-derived property; the check below
-        # proves the property actually reached the version resource.
+      - name: Publish the signed self-contained release app
+        # Self-contained, so a user installs nothing; the whole .NET runtime
+        # ships next to the exe. The exe version comes from the tag-derived
+        # property; the check below proves the property actually reached the
+        # version resource.
         run: >
-          dotnet build Windows/DeltaTor.sln -c Release --nologo
+          dotnet publish Windows/src/DeltaTor.App/DeltaTor.App.csproj
+          -c Release -r win-x64 --self-contained true --nologo
           -p:Version=${{ steps.version.outputs.version }}
 
-      # Se7enTun resolves its data plane from the base dir's Resources
-      # subfolder (data/ at runtime), never from its own folder, and
-      # TorrcSettings reads the fetched default torrc from <base dir>\torrc-default.
-      # A missing copy of either only surfaces at runtime on a user's machine,
-      # so gate their presence in the build output here (the packaging step
-      # re-checks them after moving them to data/).
-      - name: Verify the fetched data plane and default torrc are in the build output
+      # The app is published self-contained: the .NET runtime must sit next to
+      # DeltaTor.exe, because a user installs nothing. Se7enTun resolves its
+      # data plane from the base dir's Resources subfolder (data/ at runtime),
+      # never from its own folder, and TorrcSettings reads the fetched default
+      # torrc from <base dir>\torrc-default. A missing copy of any of these only
+      # surfaces at runtime on a user's machine, so gate them here (the
+      # packaging step re-checks them in place).
+      - name: Verify the self-contained output and the fetched data plane
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish"
           foreach ($f in @(
             "$out/DeltaTor.exe",
+            "$out/DeltaTor.dll",
+            "$out/DeltaTor.deps.json",
+            "$out/DeltaTor.runtimeconfig.json",
+            "$out/hostfxr.dll",
+            "$out/hostpolicy.dll",
+            "$out/coreclr.dll",
+            "$out/System.Private.CoreLib.dll",
+            "$out/System.Windows.Forms.dll",
             "$out/Se7enTun.dll",
             "$out/Resources/tun2socks/tun2socks.exe",
             "$out/Resources/tun2socks/wintun.dll",
@@ -186,7 +198,7 @@ jobs:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          $appDir = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish"
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $signtool) {
@@ -215,7 +227,7 @@ jobs:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/DeltaTor.exe"
           $vi = (Get-Item $exe).VersionInfo
           $fv = "$($vi.FileVersion)"
           $tri = (($fv -split '\.') | Select-Object -First 3) -join '.'
@@ -237,7 +249,7 @@ jobs:
           PIN_FILE: Windows/release-signing-cert.sha256
         run: |
           $ErrorActionPreference = 'Stop'
-          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/DeltaTor.exe"
+          $exe = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish/DeltaTor.exe"
           $sig = Get-AuthenticodeSignature -FilePath $exe
           if (-not $sig.SignerCertificate) {
             Write-Host "::error::$exe has no signer certificate"
@@ -288,19 +300,30 @@ jobs:
           $stage = "dist/stage/DeltaTor"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
-          # Only DeltaTor.exe (plus the managed entry assembly, deps and runtime
-          # config that the .NET host reads before any app code runs) stays at
-          # the root; the rest of the app ships under data/ and the loader in
-          # Program.PrepareAppDirectory points the runtime there.
-          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0"
+          # The exe and the whole self-contained .NET runtime it starts from
+          # (apphost, entry assembly, deps and runtime config, hostfxr /
+          # hostpolicy / coreclr and every framework assembly) stay at the
+          # root: the host resolves them before any app code runs, and a user
+          # installs nothing. Our own managed assemblies and all data files
+          # ship under data/, where Program.PrepareAppDirectory points the app.
+          $out = "Windows/src/DeltaTor.App/bin/Release/net8.0-windows10.0.19041.0/win-x64/publish"
           $data = "$stage/data"
           New-Item -ItemType Directory -Force -Path $data | Out-Null
-          $rootFiles = @(
-            "DeltaTor.exe", "DeltaTor.dll",
-            "DeltaTor.deps.json", "DeltaTor.runtimeconfig.json")
-          foreach ($f in $rootFiles) { Copy-Item "$out/$f" $stage }
-          Get-ChildItem -Force $out | Where-Object { $_.Name -notin $rootFiles } |
-            ForEach-Object { Copy-Item -Recurse $_.FullName $data }
+
+          # The runtime first: copy the whole publish output to the root, then
+          # move our own files out of it into data/.
+          Get-ChildItem -Force $out | ForEach-Object {
+            Copy-Item -Recurse $_.FullName $stage
+          }
+          $moveToData = @(
+            "DeltaTor.Core.dll", "DeltaTor.Native.dll", "Se7enTun.dll",
+            "DeltaTor.Core.pdb", "DeltaTor.Native.pdb", "Se7enTun.pdb",
+            "DeltaTor.ico", "torrc-default", "wintun.dll",
+            "bridges", "geoip", "flags", "Resources")
+          foreach ($name in $moveToData) {
+            $src = Join-Path $stage $name
+            if (Test-Path $src) { Move-Item -Force $src (Join-Path $data $name) }
+          }
           Copy-Item -Recurse "Windows/vendor" "$data/vendor"
 
           # Same layout gate as the build workflow: a silent fall back to the
@@ -310,6 +333,11 @@ jobs:
             "$stage/DeltaTor.dll",
             "$stage/DeltaTor.deps.json",
             "$stage/DeltaTor.runtimeconfig.json",
+            "$stage/hostfxr.dll",
+            "$stage/hostpolicy.dll",
+            "$stage/coreclr.dll",
+            "$stage/System.Private.CoreLib.dll",
+            "$stage/System.Windows.Forms.dll",
             "$data/DeltaTor.Core.dll",
             "$data/DeltaTor.Native.dll",
             "$data/Se7enTun.dll",
@@ -320,10 +348,12 @@ jobs:
             "$data/torrc-default")) {
             if (-not (Test-Path $f)) { Write-Host "::error::missing $f"; exit 1 }
           }
-          $stray = @(Get-ChildItem -Force $stage -File |
-            Where-Object { $_.Name -notin $rootFiles })
+          # Nothing app-specific may be left at the root: Program's resolver
+          # expects the app assemblies under data/, and a leftover root copy
+          # would shadow the shipped one on an in-place upgrade.
+          $stray = @($moveToData | Where-Object { Test-Path (Join-Path $stage $_) })
           if ($stray.Count -gt 0) {
-            Write-Host "::error::unexpected files at the root: $($stray.Name -join ', ')"
+            Write-Host "::error::app files left at the root: $($stray -join ', ')"
             exit 1
           }
 
